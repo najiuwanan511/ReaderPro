@@ -24,6 +24,48 @@ struct Sel {
     var attrOp: String? = nil
     var attrVal: String? = nil
     var index: Int? = nil
+    // :nth-of-type(an+b) / :nth-child(an+b), stored as (a, b); a=0 means exact b.
+    var nthA: Int? = nil
+    var nthB: Int? = nil
+    var nthLast: Bool = false
+    // Legado "p!-1" suffix: drop the element at that index (-1 = last).
+    var excludeIndex: Int? = nil
+}
+
+func parseNth(_ expr: String) -> (Int, Int)? {
+    let e = expr.trimmingCharacters(in: .whitespaces).lowercased()
+    if e == "odd" { return (2, 1) }
+    if e == "even" { return (2, 0) }
+    if let n = Int(e) { return (0, n) }
+    // Forms: n, n+2, -n+3, 2n+1, 2n-1
+    var s = e
+    var a = 1
+    if s.hasPrefix("-n") { a = -1; s = String(s.dropFirst(2)) }
+    else if s.hasPrefix("n") { s = String(s.dropFirst()) }
+    else if let r = s.range(of: "n") {
+        a = Int(String(s[..<r.lowerBound])) ?? 1
+        s = String(s[r.upperBound...])
+    } else { return nil }
+    if s.isEmpty { return (a, 0) }
+    if let b = Int(s) { return (a, b) }
+    return nil
+}
+
+func filterNth(_ els: [HtmlEl], sel: Sel) -> [HtmlEl] {
+    var out = els
+    if let a = sel.nthA, let b = sel.nthB {
+        out = out.enumerated().filter { (i, _) in
+            let pos = sel.nthLast ? (out.count - i) : (i + 1)
+            if a == 0 { return pos == b }
+            if a > 0 { return pos >= b && (pos - b) % a == 0 }
+            return pos <= b && (b - pos) % (-a) == 0
+        }.map { $0.element }
+    }
+    if let ex = sel.excludeIndex {
+        let idx = ex >= 0 ? ex : out.count + ex
+        if idx >= 0 && idx < out.count { out.remove(at: idx) }
+    }
+    return out
 }
 
 func htmlAttrs(_ open: String) -> [String: String] {
@@ -141,6 +183,23 @@ func parseAttrSelector(_ inside: String) -> (name: String, op: String, val: Stri
 
 func parseSelectorToken(_ token: String) -> Sel {
     var t = token.trimmingCharacters(in: .whitespaces)
+    // Legado "p!-1" / "p!0": drop one element after matching.
+    var excludeIndex: Int? = nil
+    if let bang = t.firstIndex(of: "!") {
+        let after = String(t[t.index(after: bang)...])
+        if let v = Int(after) { excludeIndex = v; t = String(t[..<bang]) }
+    }
+    // Pseudo-classes: :nth-of-type(n+2), :nth-child(1), :first-child, :last-child
+    var nthA: Int? = nil; var nthB: Int? = nil; var nthLast = false
+    if let colon = t.range(of: ":nth-of-type(", options: .backwards) ?? t.range(of: ":nth-child(", options: .backwards) {
+        let after = t[colon.upperBound...]
+        if let close = after.firstIndex(of: ")"), let nth = parseNth(String(after[..<close])) {
+            nthA = nth.0; nthB = nth.1; t = String(t[..<colon.lowerBound])
+        }
+    } else if t.hasSuffix(":first-child") { nthA = 0; nthB = 1; t = String(t.dropLast(":first-child".count)) }
+    else if t.hasSuffix(":last-child") { nthA = 0; nthB = 1; nthLast = true; t = String(t.dropLast(":last-child".count)) }
+    else if t.hasSuffix(":first-of-type") { nthA = 0; nthB = 1; t = String(t.dropLast(":first-of-type".count)) }
+    else if t.hasSuffix(":last-of-type") { nthA = 0; nthB = 1; nthLast = true; t = String(t.dropLast(":last-of-type".count)) }
     var index: Int? = nil
     // Trailing .<int> / .-<int> index, e.g. p.2, class.book_other.0, ul.1
     var parts = t.split(separator: ".", omittingEmptySubsequences: false).map(String.init)
@@ -150,21 +209,21 @@ func parseSelectorToken(_ token: String) -> Sel {
     }
     if t.hasPrefix("class.") {
         let rest = String(t.dropFirst(6))
-        return Sel(tag: nil, classes: rest.split(separator: " ").map(String.init), index: index)
+        return Sel(tag: nil, classes: rest.split(separator: " ").map(String.init), index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
     }
     if t.hasPrefix("tag.") {
-        return Sel(tag: String(t.dropFirst(4)), index: index)
+        return Sel(tag: String(t.dropFirst(4)), index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
     }
     if t.hasPrefix("id.") {
-        return Sel(idVal: String(t.dropFirst(3)), index: index)
+        return Sel(idVal: String(t.dropFirst(3)), index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
     }
     if t.hasPrefix(".") {
-        return Sel(classes: [String(t.dropFirst())], index: index)
+        return Sel(classes: [String(t.dropFirst())], index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
     }
     if t.hasPrefix("[") && t.hasSuffix("]") {
         let inner = String(t.dropFirst().dropLast())
         let a = parseAttrSelector(inner)
-        return Sel(attrName: a.name, attrOp: a.op, attrVal: a.val, index: index)
+        return Sel(attrName: a.name, attrOp: a.op, attrVal: a.val, index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
     }
     // tag, tag.class, tag#id, tag[attr], tag.class[attr]
     var attrName: String? = nil; var attrOp: String? = nil; var attrVal: String? = nil
@@ -189,7 +248,28 @@ func parseSelectorToken(_ token: String) -> Sel {
         }
         classes = Array(dotParts.dropFirst())
     }
-    return Sel(tag: tag, classes: classes, idVal: idVal, attrName: attrName, attrOp: attrOp, attrVal: attrVal, index: index)
+    return Sel(tag: tag, classes: classes, idVal: idVal, attrName: attrName, attrOp: attrOp, attrVal: attrVal, index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
+}
+
+func findElementsSel(_ html: String, _ sel: Sel) -> [HtmlEl] {
+    filterNth(findElements(html, tag: sel.tag, classes: sel.classes, idVal: sel.idVal, attrName: sel.attrName, attrOp: sel.attrOp, attrVal: sel.attrVal), sel: sel)
+}
+
+func cssElements(_ html: String, _ selector: String) -> [HtmlEl] {
+    var els: [HtmlEl] = [HtmlEl(open: "", inner: html, full: html)]
+    for seg in splitCssSelector(selector) {
+        let parsed = parseSelectorToken(seg)
+        var found: [HtmlEl] = []
+        for el in els {
+            if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
+            let searchIn = el.open.isEmpty ? el.full : el.inner
+            found.append(contentsOf: findElementsSel(searchIn, parsed))
+        }
+        els = found
+        if let idx = parsed.index { els = pickIndex(els, idx) }
+        if els.isEmpty { break }
+    }
+    return els
 }
 
 func pickIndex(_ els: [HtmlEl], _ idx: Int) -> [HtmlEl] {
@@ -317,10 +397,23 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
             continue
         }
         var found: [HtmlEl] = []
-        for el in els {
-            if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
-            let searchIn = el.open.isEmpty ? el.full : el.inner
-            found.append(contentsOf: findElements(searchIn, tag: parsed.tag, classes: parsed.classes, idVal: parsed.idVal, attrName: parsed.attrName, attrOp: parsed.attrOp, attrVal: parsed.attrVal))
+        // CSS-style segment with spaces/child combinators, e.g. "#info p:nth-of-type(1) a"
+        // or ".s2 a": the old single-token parser treated the whole string as one
+        // tag and matched nothing, which broke most yckceo/1325 rules.
+        if token.contains(" ") || token.contains(">") {
+            for el in els {
+                let searchIn = el.open.isEmpty ? el.full : el.inner
+                found.append(contentsOf: cssElements(searchIn, token))
+                if !el.open.isEmpty && matchesSelf(el, parsed: parsed) {
+                    // A segment that matches the element itself (rare) is kept too.
+                }
+            }
+        } else {
+            for el in els {
+                if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
+                let searchIn = el.open.isEmpty ? el.full : el.inner
+                found.append(contentsOf: findElementsSel(searchIn, parsed))
+            }
         }
         els = found
         if let idx = parsed.index { els = pickIndex(els, idx) }
@@ -360,18 +453,7 @@ func evalCss(_ html: String, _ selectorAndAttr: String) -> [String] {
         extractor = last; parts.removeLast()
     }
     let selector = parts.joined(separator: "@")
-    var els: [HtmlEl] = [HtmlEl(open: "", inner: html, full: html)]
-    for sel in splitCssSelector(selector) {
-        let parsed = parseSelectorToken(sel)
-        var found: [HtmlEl] = []
-        for el in els {
-            if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
-            let searchIn = el.open.isEmpty ? el.full : el.inner
-            found.append(contentsOf: findElements(searchIn, tag: parsed.tag, classes: parsed.classes, idVal: parsed.idVal, attrName: parsed.attrName, attrOp: parsed.attrOp, attrVal: parsed.attrVal))
-        }
-        els = found
-        if els.isEmpty { break }
-    }
+    let els = cssElements(html, selector)
     if let ext = extractor {
         if ext.hasPrefix("attr(") && ext.hasSuffix(")") {
             let name = String(ext.dropFirst(5).dropLast()).lowercased()
@@ -626,6 +708,21 @@ extension LegadoSource {
         if raw.isEmpty { return [] }
         if raw.hasPrefix("@js:") || raw.hasPrefix("@JS:") || raw.contains("<js>") { return [] }
         let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Legado's other exploreUrl format (used by most yckceo/1325 sources):
+        // one "标题::链接" per line, separated by \n. The old code only knew
+        // JSON arrays and single URLs, so it treated the whole multi-line
+        // string as one URL and discovery always failed.
+        if t.contains("::") {
+            var out: [ExploreCategory] = []
+            for line in t.components(separatedBy: .newlines) {
+                let l = line.trimmingCharacters(in: .whitespaces)
+                guard let r = l.range(of: "::") else { continue }
+                let title = String(l[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+                let url = String(l[r.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !title.isEmpty && !url.isEmpty { out.append(ExploreCategory(title: title, url: url)) }
+            }
+            if !out.isEmpty { return out }
+        }
         if t.hasPrefix("[") {
             guard let data = t.data(using: .utf8),
                   let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
@@ -639,6 +736,20 @@ extension LegadoSource {
         }
         // Plain URL = a single "推荐" category
         return [ExploreCategory(title: "推荐", url: raw)]
+    }
+
+    func postSearchRequest(for key: String) -> (url: String, method: String, body: String)? {
+        guard let comma = searchUrl.firstIndex(of: ",") else { return nil }
+        let rest = String(searchUrl[comma...].dropFirst())
+        guard rest.contains("{"), let data = rest.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let method = (obj["method"] as? String)?.uppercased(), method == "POST",
+              let bodyTemplate = obj["body"] as? String else { return nil }
+        let enc = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+        let body = bodyTemplate.replacingOccurrences(of: "{{key}}", with: enc)
+        var base = String(searchUrl[..<comma])
+        if !base.hasPrefix("http") { base = resolveUrl(base, base: bookSourceUrl) }
+        return (base, "POST", body)
     }
 
     func searchURL(for key: String, page: Int = 1) -> String {
@@ -707,9 +818,18 @@ extension LegadoSource {
     }
 
     func search(key: String) async throws -> [SourceBook] {
-        let url = searchURL(for: key)
-        guard !url.isEmpty else { return [] }
-        let html = try await fetchText(urlString: url)
+        // POST search (common in yckceo/1325): searchUrl carries
+        // ,{"method":"post","body":"searchkey={{key}}"} after the URL.
+        // The old code stripped that part and GET-fetched the bare search
+        // page, so it returned the site's homepage junk, not results.
+        var html = ""
+        if let post = postSearchRequest(for: key) {
+            html = try await fetchText(urlString: post.url, method: post.method, body: post.body)
+        } else {
+            let url = searchURL(for: key)
+            guard !url.isEmpty else { return [] }
+            html = try await fetchText(urlString: url)
+        }
         let trimmed = html.trimmingCharacters(in: .whitespaces)
         var raw: [SourceBook] = []
         if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {

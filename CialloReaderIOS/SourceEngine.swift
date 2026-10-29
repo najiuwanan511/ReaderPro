@@ -118,6 +118,17 @@ func fetchText(urlString: String) async throws -> String {
     return decodeTextData(data)
 }
 
+func fetchText(urlString: String, method: String, body: String) async throws -> String {
+    guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
+    var req = URLRequest(url: url, timeoutInterval: 25)
+    req.httpMethod = method
+    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) CialloReaderIOS/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+    req.httpBody = body.data(using: .utf8)
+    let (data, _) = try await URLSession.shared.data(for: req)
+    return decodeTextData(data)
+}
+
 func resolveUrl(_ raw: String, base: String) -> String {
     if raw.hasPrefix("http") { return raw }
     if raw.hasPrefix("//") { return "https:" + raw }
