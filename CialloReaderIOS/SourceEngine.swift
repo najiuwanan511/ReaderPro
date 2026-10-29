@@ -92,6 +92,20 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     // Legado's real discovery fields are exploreUrl + ruleExplore, not discoverUrl.
     var effectiveDiscoverUrl: String { discoverUrl.isEmpty ? exploreUrl : discoverUrl }
     var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }
+    static var demoGutenberg: LegadoSource {
+        var s = LegadoSource()
+        s.bookSourceName = "Gutenberg（公版书演示源）"
+        s.bookSourceUrl = "https://www.gutenberg.org"
+        s.searchUrl = "https://www.gutenberg.org/ebooks/search/?query={{key}}"
+        s.ruleSearch.bookList = "@css:li.booklink"
+        s.ruleSearch.name = "@css:a.link@text"
+        s.ruleSearch.author = "@css:span.subtitle@text"
+        s.ruleSearch.bookUrl = "@css:a.link@href"
+        s.ruleSearch.intro = "@css:span.extra@text"
+        // Gutenberg 书页没有小说目录结构，留空走通用链接兜底（正文 txt 链接可直接读）
+        s.ruleContent.content = "@css:body@text"
+        return s
+    }
 }
 
 extension KeyedDecodingContainer {
@@ -107,21 +121,6 @@ extension KeyedDecodingContainer {
         if let n = try? decode(Int.self, forKey: key) { return n != 0 }
         if let s = try? decode(String.self, forKey: key) { return s == "true" || s == "1" }
         return defaultValue
-    }
-}
-    static var demoGutenberg: LegadoSource {
-        var s = LegadoSource()
-        s.bookSourceName = "Gutenberg（公版书演示源）"
-        s.bookSourceUrl = "https://www.gutenberg.org"
-        s.searchUrl = "https://www.gutenberg.org/ebooks/search/?query={{key}}"
-        s.ruleSearch.bookList = "@css:li.booklink"
-        s.ruleSearch.name = "@css:a.link@text"
-        s.ruleSearch.author = "@css:span.subtitle@text"
-        s.ruleSearch.bookUrl = "@css:a.link@href"
-        s.ruleSearch.intro = "@css:span.extra@text"
-        // Gutenberg 书页没有小说目录结构，留空走通用链接兜底（正文 txt 链接可直接读）
-        s.ruleContent.content = "@css:body@text"
-        return s
     }
 }
 
