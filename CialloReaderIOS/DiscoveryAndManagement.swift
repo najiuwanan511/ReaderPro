@@ -23,9 +23,16 @@ struct DiscoveryView: View {
                 if sources.isEmpty {
                     Text("没有启用的书源，去“设置 → 书源管理”启用或导入一个。").font(.footnote).foregroundStyle(.secondary).padding()
                 } else {
-                    Picker("书源", selection: $selectedSourceIndex) {
-                        ForEach(sources.indices, id: \.self) { i in Text(sources[i].bookSourceName).tag(i) }
-                    }.pickerStyle(.menu).padding(.horizontal)
+                    Text("发现一次只看一个源：当前第 \(selectedSourceIndex + 1) / \(sources.count) 个启用源，换源请点下面菜单；某源没分类或没结果时点“下一个源”继续试。").font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
+                    HStack {
+                        Picker("书源", selection: $selectedSourceIndex) {
+                            ForEach(sources.indices, id: \.self) { i in Text(sources[i].bookSourceName).tag(i) }
+                        }.pickerStyle(.menu)
+                        Button("下一个源") {
+                            selectedSourceIndex = (selectedSourceIndex + 1) % sources.count
+                            refreshCategories(); load()
+                        }.buttonStyle(.bordered)
+                    }.padding(.horizontal)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
                             if categories.isEmpty {

@@ -257,7 +257,15 @@ func importSourcesDetailed(_ rawText: String) -> ImportResult {
     }
     // Legado enables imported sources by default: a JSON enabled=false must not
     // make 1000 imported sources invisible in search/discovery.
-    return ImportResult(sources: sources.map { var x = $0; x.enabled = true; return x }, skipped: skipped)
+    // Dedupe by name+url: a pack that repeats the same source must not
+    // inflate the count, and the count shown after import is the real count.
+    var seen = Set<String>(); var deduped: [LegadoSource] = []
+    for s in sources {
+        let k = s.bookSourceName + "|" + s.bookSourceUrl
+        if seen.contains(k) { continue }
+        seen.insert(k); deduped.append(s)
+    }
+    return ImportResult(sources: deduped.map { var x = $0; x.enabled = true; return x }, skipped: skipped)
 }
 
 func importSourcesFromText(_ text: String) -> [LegadoSource] {
@@ -305,18 +313,43 @@ func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
     }
     let text = lastText
     // Subscription list: an array of {name, url} entries pointing at other source lists.
-    // Fetch each linked list (cap 20) instead of giving up with "no source found".
+    // Fix for "1000 sources imported, only ~18 show": the old code capped this
+    // at the first 20 links, so a link-pack of hundreds/thousands of sources
+    // silently became ~18-20. Fetch up to 300 linked lists, 20 at a time.
     if let data = extractJSONSubstring(text).data(using: .utf8),
        let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] {
-        var out: [LegadoSource] = []
-        for item in arr.prefix(20) {
-            if let d = item as? [String: Any], let link = d["url"] as? String, link.hasPrefix("http") {
-                if let t2 = try? await fetchText(urlString: normalizeSourceURL(link)) {
-                    out.append(contentsOf: importSourcesDetailed(t2).sources)
-                }
-            }
+        var links: [String] = []
+        for item in arr {
+            if let d = item as? [String: Any], let link = d["url"] as? String, link.hasPrefix("http"), !links.contains(link) { links.append(link) }
         }
-        if !out.isEmpty { return out }
+        var out: [LegadoSource] = []
+        var idx = 0
+        while idx < links.count && idx < 300 {
+            let batch = Array(links[idx..<min(idx + 20, links.count, 300)])
+            idx += batch.count
+            let batchSources = await withTaskGroup(of: [LegadoSource].self) { group in
+                for link in batch {
+                    group.addTask {
+                        if let t2 = try? await fetchText(urlString: normalizeSourceURL(link)) {
+                            return importSourcesDetailed(t2).sources
+                        }
+                        return []
+                    }
+                }
+                var collected: [LegadoSource] = []
+                for await s in group { collected.append(contentsOf: s) }
+                return collected
+            }
+            out.append(contentsOf: batchSources)
+        }
+        // Dedupe by name+url so the same source from several links is not counted twice.
+        var seen = Set<String>(); var deduped: [LegadoSource] = []
+        for s in out {
+            let k = s.bookSourceName + "|" + s.bookSourceUrl
+            if seen.contains(k) { continue }
+            seen.insert(k); deduped.append(s)
+        }
+        if !deduped.isEmpty { return deduped }
     }
     return []
 }

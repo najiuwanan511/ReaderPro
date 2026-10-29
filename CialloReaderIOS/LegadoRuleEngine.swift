@@ -711,14 +711,32 @@ extension LegadoSource {
         guard !url.isEmpty else { return [] }
         let html = try await fetchText(urlString: url)
         let trimmed = html.trimmingCharacters(in: .whitespaces)
+        var raw: [SourceBook] = []
         if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
             let j = booksFromJSON(html, rule: ruleSearch)
-            if !j.isEmpty { return j }
+            if !j.isEmpty { raw = j }
         }
-        if ruleSearch.bookList.isEmpty { return booksFromBlocks([html], nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro) }
-        let blocks = applyRule(html, ruleSearch.bookList, base: bookSourceUrl)
-        if blocks.isEmpty { return [] }
-        return booksFromBlocks(blocks, nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro)
+        if raw.isEmpty {
+            if ruleSearch.bookList.isEmpty { raw = booksFromBlocks([html], nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro) }
+            else {
+                let blocks = applyRule(html, ruleSearch.bookList, base: bookSourceUrl)
+                if !blocks.isEmpty { raw = booksFromBlocks(blocks, nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro) }
+            }
+        }
+        // Fix for "search 仙逆 returns a pile of unrelated books": many sites
+        // return their hot/recommend list when a search misses, or a too-broad
+        // bookList grabs the whole page. Keep only results whose title or
+        // author actually contains the keyword, and cap per-source output so
+        // one junk source cannot fill the whole 500-result budget.
+        let normKey = key.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "").lowercased()
+        if !normKey.isEmpty {
+            let filtered = raw.filter {
+                $0.title.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey) ||
+                $0.author.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey)
+            }
+            return Array(filtered.prefix(30))
+        }
+        return Array(raw.prefix(30))
     }
 
     func discover(category: ExploreCategory? = nil) async throws -> [SourceBook] {

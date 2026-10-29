@@ -587,6 +587,7 @@ struct SourceView: View {
     @State private var selectedResult: SourceBook?
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
+    @State private var detailError = ""
     @State private var detailAlternatives: [SourceBook] = []
     @State private var detailAltIndex = 0
 
@@ -597,10 +598,11 @@ struct SourceView: View {
                     TextField("搜书名 / 作者（多源并发）", text: $key).textFieldStyle(.roundedBorder)
                     Button("搜索") { search() }.disabled(key.isEmpty || searching)
                 }.padding(.horizontal)
+                Text("书源库：\(store.sources.count) 个，启用 \(store.enabledSources.count) 个。导入后先看这个数：1000 个的包导入完这里就该是 1000 左右，不是 18。").font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
                 if searching {
                     ProgressView("正在多源搜索… 已搜 \(store.enabledSources.count) 个启用源")
                 } else if searchedCount > 0 {
-                    Text("共 \(searchedCount) 个启用源，\(results.count) 本（按书名+作者去重，点开可换源）").font(.caption).foregroundStyle(.secondary)
+                    Text("共 \(searchedCount) 个启用源，\(results.count) 本（只留标题/作者含关键词的，点开可换源）").font(.caption).foregroundStyle(.secondary)
                 }
                 List(results) { r in
                     Button {
@@ -659,6 +661,10 @@ struct SourceView: View {
                         }
                         if loadingDetail { ProgressView("正在拉取目录…") }
                         else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
+                        if !detailError.isEmpty { Text(detailError).font(.footnote).foregroundStyle(.red) }
+                        if detailChapters.isEmpty && !loadingDetail {
+                            Text("目录为空时：先点“换源”换一个同名结果再试——原书源的目录规则可能用了本版不支持的 JS/XPath，或该站拒绝了手机访问；换源后仍为空，把书名+书源名发我，我按那个源的真规则修。").font(.footnote).foregroundStyle(.secondary)
+                        }
                         Button("加入书架") {
                             var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
                             book.chapters = detailChapters
@@ -690,12 +696,12 @@ struct SourceView: View {
         }
     }
     func loadDetail(_ r: SourceBook) {
-        loadingDetail = true; detailChapters = []
+        loadingDetail = true; detailChapters = []; detailError = ""
         detailAlternatives = allResults.filter { dedupeKey($0) == dedupeKey(r) }
         if detailAlternatives.isEmpty { detailAlternatives = [r] }
         detailAltIndex = detailAlternatives.firstIndex(where: { $0.url == r.url && $0.sourceName == r.sourceName }) ?? 0
         guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
-            loadingDetail = false; return
+            loadingDetail = false; detailError = "找不到这个书源（可能已被删除），请重新搜索。"; return
         }
         Task {
             do {
@@ -703,9 +709,12 @@ struct SourceView: View {
                 // BookInfo: fetch richer detail when the source provides it, but never lose the search result
                 if let fetched = try? await src.fetchBookInfo(book: r) { info = fetched }
                 let chs = try await src.fetchChapters(book: info)
-                await MainActor.run { detailChapters = chs; loadingDetail = false }
+                await MainActor.run {
+                    detailChapters = chs; loadingDetail = false
+                    if chs.isEmpty { detailError = "该源返回了 0 章：目录规则不匹配或该站拒绝访问，点“换源”换一个同名结果再试。" }
+                }
             } catch {
-                await MainActor.run { loadingDetail = false }
+                await MainActor.run { loadingDetail = false; detailError = "拉取目录失败：\(error.localizedDescription)，换源或换个网络再试。" }
             }
         }
     }
