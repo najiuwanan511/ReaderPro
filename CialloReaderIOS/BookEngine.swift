@@ -388,12 +388,21 @@ class BookStore: ObservableObject {
     init() { load() }
 
     func load() {
+        // Bug fix (2026-10-29): the old code re-added the built-in Gutenberg source
+        // every launch whenever sources was empty, so deleting it never stuck.
+        // Now: no built-in source is ever injected, and the saved demo (if any) is
+        // stripped once on load. Deleted sources stay deleted. Replace-rule defaults
+        // are only added on a true first launch (no meta file yet), not when the
+        // user has deliberately cleared them.
+        let metaExists = FileManager.default.fileExists(atPath: Self.metaURL.path)
         if let d = try? Data(contentsOf: Self.booksURL), let b = try? JSONDecoder().decode([LocalBook].self, from: d) { books = b }
         if let d = try? Data(contentsOf: Self.metaURL), let m = try? JSONDecoder().decode(Meta.self, from: d) {
             bookmarks = m.bookmarks; sources = m.sources; replaceRules = m.replaceRules; fontSize = m.fontSize; lineSpacing = m.lineSpacing; theme = m.theme
         }
-        if sources.isEmpty { sources = [LegadoSource.demoGutenberg] }
-        if replaceRules.isEmpty { replaceRules = ReplaceRule.defaults }
+        let beforeCount = sources.count
+        sources.removeAll { $0.bookSourceName.contains("Gutenberg") && $0.bookSourceUrl.contains("gutenberg.org") }
+        if !metaExists && replaceRules.isEmpty { replaceRules = ReplaceRule.defaults }
+        if metaExists && sources.count != beforeCount { save() }
     }
     func save() {
         if let d = try? JSONEncoder().encode(books) { try? d.write(to: Self.booksURL) }

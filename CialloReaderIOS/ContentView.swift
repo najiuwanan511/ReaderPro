@@ -379,8 +379,7 @@ struct ReaderView: View {
         loading = true
         Task {
             do {
-                // find source by name stored in author field fallback: use first source
-                let src = store.sources.first ?? LegadoSource.demoGutenberg
+                guard let src = store.sources.first else { await MainActor.run { errorText = "没有书源，无法拉取在线章节"; loading = false }; return }
                 let content = try await src.fetchChapterContent(ch)
                 await MainActor.run {
                     if var nb = store.books.first(where: { $0.id == bookId }) {
@@ -407,9 +406,8 @@ struct ReaderView: View {
         }
     }
     func downloadAll() {
-        guard var b = book, b.kind == "web" else { return }
+        guard var b = book, b.kind == "web", let src = store.sources.first else { return }
         downloadingAll = true
-        let src = store.sources.first ?? LegadoSource.demoGutenberg
         Task {
             var updated = b
             for i in 0..<updated.chapters.count {
@@ -558,7 +556,7 @@ struct SourceView: View {
                     }
                 }
                 if results.isEmpty && !searching {
-                    Text("内置源是公版书 Gutenberg（可正常搜索英文公版书）。中文书源请点右上角导入你自己的 Legado JSON 书源，导入后即可搜索。")
+                    Text("没有自带书源了。点右上角导入你自己的 Legado JSON 书源（单个、数组或订阅链接都行），导入后即可搜索；删掉的书源不会再自动回来。")
                         .font(.footnote).foregroundStyle(.secondary).padding()
                 }
             }
