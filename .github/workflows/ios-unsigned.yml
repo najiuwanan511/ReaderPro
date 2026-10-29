@@ -1,0 +1,44 @@
+name: iOS unsigned build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.4"
+
+      - name: Generate Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild archive \
+            -project CialloReaderIOS.xcodeproj \
+            -scheme CialloReaderIOS \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/CialloReaderIOS.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/CialloReaderIOS.xcarchive/Products/Applications/CialloReaderIOS.app Payload/
+          ditto -c -k --keepParent Payload CialloReaderIOS-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: CialloReaderIOS-unsigned.ipa
