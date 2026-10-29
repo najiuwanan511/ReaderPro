@@ -8,6 +8,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: CialloReaderIOS
+    info:
+      path: CialloReaderIOS/Info.plist
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.cialloreader
