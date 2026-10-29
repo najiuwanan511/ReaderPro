@@ -83,7 +83,7 @@ struct BookshelfView: View {
                                     }
                                 }
                                 Text(book.title).font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                                Text("\(book.kind.uppercased()) · \(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
+                                Text(book.sourceName.isEmpty ? "\(book.kind.uppercased()) · \(Int(book.progress * 100))%" : "\(book.sourceName) · \(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
                                 ProgressView(value: book.progress)
                             }
                         }
@@ -372,6 +372,11 @@ struct ReaderView: View {
         b.lastRead = Date()
         store.updateBook(b)
     }
+    func sourceForBook(_ b: LocalBook) -> LegadoSource? {
+        if !b.sourceUrl.isEmpty, let s = store.sources.first(where: { $0.bookSourceUrl == b.sourceUrl }) { return s }
+        if !b.sourceName.isEmpty, let s = store.sources.first(where: { $0.bookSourceName == b.sourceName }) { return s }
+        return nil
+    }
     func loadChapterIfNeeded() {
         guard let b = book, chapterIndex < b.chapters.count else { return }
         let ch = b.chapters[chapterIndex]
@@ -379,7 +384,7 @@ struct ReaderView: View {
         loading = true
         Task {
             do {
-                guard let src = store.sources.first else { await MainActor.run { errorText = "没有书源，无法拉取在线章节"; loading = false }; return }
+                guard let src = sourceForBook(b) else { await MainActor.run { errorText = "这本书的书源已删除或未启用，无法拉取在线章节（请在书源管理里重新导入该书源）"; loading = false }; return }
                 let content = try await src.fetchChapterContent(ch)
                 await MainActor.run {
                     if var nb = store.books.first(where: { $0.id == bookId }) {
@@ -406,7 +411,7 @@ struct ReaderView: View {
         }
     }
     func downloadAll() {
-        guard var b = book, b.kind == "web", let src = store.sources.first else { return }
+        guard var b = book, b.kind == "web", let src = sourceForBook(b) else { return }
         downloadingAll = true
         Task {
             var updated = b
@@ -518,45 +523,52 @@ struct MangaView: View {
     }
 }
 
-// MARK: - Sources
+// MARK: - Sources (Legado-style multi-source search)
 
 struct SourceView: View {
     @ObservedObject var store: BookStore
     @State private var key = ""
     @State private var results: [SourceBook] = []
+    @State private var allResults: [SourceBook] = []
     @State private var searching = false
-    @State private var selectedSourceIndex = 0
+    @State private var searchedCount = 0
     @State private var showImport = false
     @State private var importText = ""
     @State private var importError = ""
     @State private var selectedResult: SourceBook?
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
+    @State private var detailAlternatives: [SourceBook] = []
+    @State private var detailAltIndex = 0
 
     var body: some View {
         NavigationStack {
             VStack {
-                Picker("书源", selection: $selectedSourceIndex) {
-                    ForEach(store.enabledSources.indices, id: \.self) { i in Text(store.enabledSources[i].bookSourceName).tag(i) }
-                }.pickerStyle(.menu).padding(.horizontal)
                 HStack {
-                    TextField("搜书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
+                    TextField("搜书名 / 作者（多源并发）", text: $key).textFieldStyle(.roundedBorder)
                     Button("搜索") { search() }.disabled(key.isEmpty || searching)
                 }.padding(.horizontal)
-                if searching { ProgressView() }
+                if searching {
+                    ProgressView("正在多源搜索… 已搜 \(store.enabledSources.count) 个启用源")
+                } else if searchedCount > 0 {
+                    Text("共 \(searchedCount) 个启用源，\(results.count) 本（按书名+作者去重，点开可换源）").font(.caption).foregroundStyle(.secondary)
+                }
                 List(results) { r in
                     Button {
                         selectedResult = r; loadDetail(r)
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(r.title).font(.headline)
-                            if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
+                            HStack {
+                                if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
+                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.15)).cornerRadius(6) }
+                            }
                             if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
                         }
                     }
                 }
                 if results.isEmpty && !searching {
-                    Text("没有自带书源了。点右上角导入你自己的 Legado JSON 书源（单个、数组或订阅链接都行），导入后即可搜索；删掉的书源不会再自动回来。")
+                    Text("没有自带书源。点右上角导入你自己的 Legado JSON 书源（单个、数组或订阅链接都行，导入即启用），然后在这里一次搜全部启用源；删掉的书源不会再自动回来。")
                         .font(.footnote).foregroundStyle(.secondary).padding()
                 }
             }
@@ -567,7 +579,7 @@ struct SourceView: View {
             .sheet(isPresented: $showImport) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。").font(.footnote).foregroundStyle(.secondary)
+                        Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。导入的书源默认全部启用。").font(.footnote).foregroundStyle(.secondary)
                         TextEditor(text: $importText).border(Color.gray.opacity(0.3))
                         if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
                         Button("导入") { importSource() }
@@ -580,18 +592,31 @@ struct SourceView: View {
             .sheet(item: $selectedResult) { r in
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 12) {
+                        if !r.cover.isEmpty, let url = URL(string: r.cover) {
+                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                .frame(width: 110, height: 150).cornerRadius(10).clipped()
+                        }
                         Text(r.title).font(.title2).bold()
                         if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
+                        if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
                         if !r.intro.isEmpty { Text(r.intro).font(.body) }
+                        if detailAlternatives.count > 1 {
+                            Picker("换源", selection: $detailAltIndex) {
+                                ForEach(detailAlternatives.indices, id: \.self) { i in Text(detailAlternatives[i].sourceName.isEmpty ? "源 \(i + 1)" : detailAlternatives[i].sourceName).tag(i) }
+                            }.pickerStyle(.menu)
+                            .onChange(of: detailAltIndex) { _, v in
+                                if v < detailAlternatives.count { selectedResult = detailAlternatives[v]; loadDetail(detailAlternatives[v]) }
+                            }
+                        }
                         if loadingDetail { ProgressView("正在拉取目录…") }
                         else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
                         Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, fileName: r.title + ".web", kind: "web")
+                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
                             book.chapters = detailChapters
                             store.updateBook(book)
                             selectedResult = nil
                         }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
-                        List(detailChapters.prefix(50)) { c in Text(c.title).font(.caption) }
+                        List(detailChapters.prefix(100)) { c in Text(c.title).font(.caption) }
                     }.padding()
                     .navigationTitle("书籍详情")
                     .toolbar { Button("关闭") { selectedResult = nil } }
@@ -600,25 +625,35 @@ struct SourceView: View {
         }
     }
     func search() {
-        guard selectedSourceIndex < store.enabledSources.count else { return }
-        searching = true
-        let src = store.enabledSources[selectedSourceIndex]
+        let enabled = store.enabledSources
+        guard !enabled.isEmpty else { results = []; allResults = []; return }
+        searching = true; searchedCount = 0
+        let k = key
         Task {
-            do {
-                let res = try await src.search(key: key)
-                await MainActor.run { results = res; searching = false }
-            } catch {
-                await MainActor.run { results = []; searching = false }
+            let raw = await searchAllRawSources(enabled, key: k)
+            var seen = Set<String>(); var deduped: [SourceBook] = []
+            for b in raw {
+                let kk = dedupeKey(b)
+                if seen.contains(kk) { continue }
+                seen.insert(kk); deduped.append(b)
             }
+            await MainActor.run { allResults = raw; results = deduped; searchedCount = enabled.count; searching = false }
         }
     }
     func loadDetail(_ r: SourceBook) {
-        guard selectedSourceIndex < store.enabledSources.count else { return }
         loadingDetail = true; detailChapters = []
-        let src = store.enabledSources[selectedSourceIndex]
+        detailAlternatives = allResults.filter { dedupeKey($0) == dedupeKey(r) }
+        if detailAlternatives.isEmpty { detailAlternatives = [r] }
+        detailAltIndex = detailAlternatives.firstIndex(where: { $0.url == r.url && $0.sourceName == r.sourceName }) ?? 0
+        guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
+            loadingDetail = false; return
+        }
         Task {
             do {
-                let chs = try await src.fetchChapters(book: r)
+                var info = r
+                // BookInfo: fetch richer detail when the source provides it, but never lose the search result
+                if let fetched = try? await src.fetchBookInfo(book: r) { info = fetched }
+                let chs = try await src.fetchChapters(book: info)
                 await MainActor.run { detailChapters = chs; loadingDetail = false }
             } catch {
                 await MainActor.run { loadingDetail = false }
@@ -628,14 +663,16 @@ struct SourceView: View {
     func importSource() {
         let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("http") {
-            // Pasted a subscription link, not JSON: fetch it like a network import.
             importError = "正在拉取链接…"
             Task {
                 do {
                     let arr = try await importSourcesFromURL(trimmed)
                     await MainActor.run {
                         if arr.isEmpty { importError = "这个链接里没有解析到书源：请确认它是返回 Legado 书源 JSON 的直链（GitHub blob 页已自动转 raw，仍失败就换 raw 链接）" }
-                        else { store.sources.append(contentsOf: arr); store.save(); showImport = false; importText = ""; importError = "" }
+                        else {
+                            let enabled = arr.map { var x = $0; x.enabled = true; return x }
+                            store.sources.append(contentsOf: enabled); store.save(); showImport = false; importText = ""; importError = ""
+                        }
                     }
                 } catch {
                     await MainActor.run { importError = "拉取失败：\(error.localizedDescription)" }
@@ -647,8 +684,9 @@ struct SourceView: View {
         if result.sources.isEmpty {
             importError = "这个内容解析失败：请粘贴单个 Legado 书源 JSON、书源数组，或者一个订阅链接；不是 JSON 的文本、只有网址的页面、带 HTML 的页面都会被自动提取 JSON，仍失败就是内容本身不是书源"
         } else {
-            store.sources.append(contentsOf: result.sources); store.save(); showImport = false; importText = ""
-            if result.skipped > 0 { importError = "已导入 \(result.sources.count) 个，跳过 \(result.skipped) 个格式不对的条目" }
+            let enabled = result.sources.map { var x = $0; x.enabled = true; return x }
+            store.sources.append(contentsOf: enabled); store.save(); showImport = false; importText = ""
+            if result.skipped > 0 { importError = "已导入 \(enabled.count) 个，跳过 \(result.skipped) 个格式不对的条目" }
         }
     }
 }

@@ -1,18 +1,20 @@
 import SwiftUI
 import AVFoundation
 
-// MARK: - Discovery (open-reading style: recommendations + categories, per enabled source)
+// MARK: - Discovery (Legado explore: category list from exploreUrl)
 
 struct DiscoveryView: View {
     @ObservedObject var store: BookStore
     @State private var selectedSourceIndex = 0
     @State private var results: [SourceBook] = []
     @State private var loading = false
-    @State private var category = "热门"
+    @State private var categories: [ExploreCategory] = []
+    @State private var selectedCategory: ExploreCategory?
     @State private var selectedResult: SourceBook?
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
-    let categories = ["热门", "玄幻", "言情", "科幻", "历史", "悬疑", "武侠", "都市"]
+    @State private var discoverError = ""
+    let fallbackCategories = ["热门", "玄幻", "言情", "科幻", "历史", "悬疑", "武侠", "都市"]
 
     var sources: [LegadoSource] { store.enabledSources }
     var body: some View {
@@ -26,14 +28,22 @@ struct DiscoveryView: View {
                     }.pickerStyle(.menu).padding(.horizontal)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
-                            ForEach(categories, id: \.self) { c in
-                                Button(c) { category = c; load() }
-                                    .buttonStyle(.bordered)
-                                    .tint(category == c ? .blue : .gray)
+                            if categories.isEmpty {
+                                ForEach(fallbackCategories, id: \.self) { c in
+                                    Button(c) { loadFallback(keyword: c) }
+                                        .buttonStyle(.bordered)
+                                }
+                            } else {
+                                ForEach(categories) { cat in
+                                    Button(cat.title) { selectedCategory = cat; load() }
+                                        .buttonStyle(.bordered)
+                                        .tint(selectedCategory?.id == cat.id ? .blue : .gray)
+                                }
                             }
                         }.padding(.horizontal)
                     }
                     if loading { ProgressView() }
+                    if !discoverError.isEmpty { Text(discoverError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
                     ScrollView {
                         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
                             ForEach(results) { r in
@@ -50,6 +60,7 @@ struct DiscoveryView: View {
                                         }
                                         Text(r.title).font(.subheadline).bold().lineLimit(2).multilineTextAlignment(.leading)
                                         if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                                        if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption2).foregroundStyle(.secondary) }
                                         if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
                                     }
                                 }.buttonStyle(.plain)
@@ -57,27 +68,32 @@ struct DiscoveryView: View {
                         }.padding(.horizontal)
                     }
                     if results.isEmpty && !loading {
-                        Text("这个书源没有发现规则时，发现会按分类关键词搜索；有 exploreUrl（开源阅读的发现地址）的书源会直接拉取推荐列表。")
+                        Text(categories.isEmpty ? "这个书源没有发现分类（exploreUrl 为空或为 JS 规则，本版不支持 JS 发现），上面是按关键词搜索的分类，可直接搜；有 exploreUrl 的书源会显示它自己的分类。" : "这个分类下没有结果：可能该书源的发现规则（ruleExplore）为空或用了本版不支持的 JS/XPath，请换个分类或换源。")
                             .font(.footnote).foregroundStyle(.secondary).padding()
                     }
                 }
             }
             .navigationTitle("发现")
-            .onAppear { if !sources.isEmpty { load() } }
-            .onChange(of: selectedSourceIndex) { _, _ in load() }
+            .onAppear { refreshCategories(); if !sources.isEmpty { load() } }
+            .onChange(of: selectedSourceIndex) { _, _ in refreshCategories(); load() }
             .sheet(item: $selectedResult) { r in
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 12) {
+                        if !r.cover.isEmpty, let url = URL(string: r.cover) {
+                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                .frame(width: 110, height: 150).cornerRadius(10).clipped()
+                        }
                         Text(r.title).font(.title2).bold()
                         if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
+                        if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
                         if !r.intro.isEmpty { Text(r.intro) }
                         if loadingDetail { ProgressView("正在拉取目录…") } else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
                         Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, fileName: r.title + ".web", kind: "web")
+                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
                             book.chapters = detailChapters
                             store.updateBook(book); selectedResult = nil
                         }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
-                        List(detailChapters.prefix(50)) { c in Text(c.title).font(.caption) }
+                        List(detailChapters.prefix(100)) { c in Text(c.title).font(.caption) }
                     }.padding()
                     .navigationTitle("书籍详情")
                     .toolbar { Button("关闭") { selectedResult = nil } }
@@ -85,15 +101,33 @@ struct DiscoveryView: View {
             }
         }
     }
+    func refreshCategories() {
+        guard selectedSourceIndex < sources.count else { categories = []; selectedCategory = nil; return }
+        categories = sources[selectedSourceIndex].exploreCategories()
+        selectedCategory = categories.first
+    }
     func load() {
         guard selectedSourceIndex < sources.count else { return }
-        loading = true; results = []
+        loading = true; results = []; discoverError = ""
         let src = sources[selectedSourceIndex]
+        let cat = selectedCategory
         Task {
             do {
                 var res: [SourceBook] = []
-                if !src.effectiveDiscoverUrl.isEmpty { res = try await src.discover() }
-                if res.isEmpty { res = try await src.search(key: category) }
+                if let cat = cat { res = try await src.discover(category: cat) }
+                await MainActor.run { results = res; loading = false }
+            } catch {
+                await MainActor.run { results = []; loading = false; discoverError = "发现拉取失败：\(error.localizedDescription)" }
+            }
+        }
+    }
+    func loadFallback(keyword: String) {
+        guard selectedSourceIndex < sources.count else { return }
+        loading = true; results = []; discoverError = ""
+        let src = sources[selectedSourceIndex]
+        Task {
+            do {
+                let res = try await src.search(key: keyword)
                 await MainActor.run { results = res; loading = false }
             } catch {
                 await MainActor.run { results = []; loading = false }
@@ -101,9 +135,10 @@ struct DiscoveryView: View {
         }
     }
     func loadDetail(_ r: SourceBook) {
-        guard selectedSourceIndex < sources.count else { return }
         loadingDetail = true; detailChapters = []
-        let src = sources[selectedSourceIndex]
+        guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
+            loadingDetail = false; return
+        }
         Task {
             do {
                 let chs = try await src.fetchChapters(book: r)
@@ -129,15 +164,22 @@ struct SourceManagementView: View {
     @State private var showQR = false
     @State private var qrResult = ""
     @State private var qrError = ""
+    @State private var filterText = ""
 
     var body: some View {
         List {
-            Section("书源列表") {
-                ForEach(store.sources) { src in
+            Section("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") {
+                TextField("按名字/分组过滤", text: $filterText).textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("全部启用") { for i in store.sources.indices { store.sources[i].enabled = true }; store.save() }
+                    Button("全部停用") { for i in store.sources.indices { store.sources[i].enabled = false }; store.save() }
+                }
+                ForEach(store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }) { src in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(src.bookSourceName).font(.headline)
                             Text(src.bookSourceUrl).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if !src.bookSourceGroup.isEmpty { Text("分组：\(src.bookSourceGroup)").font(.caption2).foregroundStyle(.secondary) }
                         }
                         Spacer()
                         Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
@@ -145,7 +187,11 @@ struct SourceManagementView: View {
                         })).labelsHidden()
                     }
                 }
-                .onDelete { idx in store.sources.remove(atOffsets: idx); store.save() }
+                .onDelete { idx in
+                    let filtered = store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }
+                    for i in idx { if i < filtered.count { store.sources.removeAll { $0.id == filtered[i].id } } }
+                    store.save()
+                }
             }
             Section("导入") {
                 Button("粘贴 JSON 导入") { showPaste = true }

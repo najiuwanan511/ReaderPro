@@ -42,6 +42,8 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var title: String
     var author: String = ""
     var coverUrl: String = ""
+    var sourceName: String = ""
+    var sourceUrl: String = ""
     var fileName: String
     var kind: String // txt, epub, cbz, web
     var chapterIndex: Int = 0
@@ -61,6 +63,7 @@ struct SourceBook: Identifiable, Codable, Equatable, Hashable {
     var cover: String = ""
     var intro: String = ""
     var sourceName: String = ""
+    var sourceUrl: String = ""
 }
 
 // MARK: - Pure Swift DEFLATE inflater (ZIP entries use raw deflate)
