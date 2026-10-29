@@ -189,7 +189,7 @@ func ocrImage(_ image: UIImage) async throws -> String {
         req.recognitionLevel = .accurate
         req.recognitionLanguages = ["zh-Hans", "zh-Hant", "en-US"]
         req.usesLanguageCorrection = true
-        let handler = VNImageRequestHandler(cg, options: [:])
+        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
         do { try handler.perform([req]) } catch { cont.resume(throwing: error) }
     }
 }

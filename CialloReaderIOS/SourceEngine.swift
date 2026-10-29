@@ -79,7 +79,7 @@ func cssExtractAll(_ html: String, _ selector: String) -> [String] {
         let full = ns.substring(with: m.range)
         let innerRange = m.numberOfRanges >= 2 ? m.range(at: m.numberOfRanges - 1) : m.range
         let inner = ns.substring(with: innerRange)
-        if let c = cls, !full.lowercased().contains("class=\"") && !full.lowercased().contains("class='") { continue }
+        if cls != nil, !full.lowercased().contains("class=\"") && !full.lowercased().contains("class='") { continue }
         if let c = cls {
             // check class attribute contains c
             let classRe = try? NSRegularExpression(pattern: "class=[\"']([^\"']*)[\"']")
