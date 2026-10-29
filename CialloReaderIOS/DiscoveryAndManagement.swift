@@ -34,26 +34,30 @@ struct DiscoveryView: View {
                         }.padding(.horizontal)
                     }
                     if loading { ProgressView() }
-                    List(results) { r in
-                        Button { selectedResult = r; loadDetail(r) } label: {
-                            HStack(alignment: .top, spacing: 10) {
-                                if !r.cover.isEmpty, let url = URL(string: r.cover) {
-                                    AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                                        .frame(width: 44, height: 60).cornerRadius(6).clipped()
-                                } else {
-                                    RoundedRectangle(cornerRadius: 6).fill(Color.blue.opacity(0.2)).frame(width: 44, height: 60)
-                                        .overlay(Text(String(r.title.prefix(1))).font(.headline))
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(r.title).font(.headline).lineLimit(2)
-                                    if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                    if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
-                                }
+                    ScrollView {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 14) {
+                            ForEach(results) { r in
+                                Button { selectedResult = r; loadDetail(r) } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ZStack {
+                                            if !r.cover.isEmpty, let url = URL(string: r.cover) {
+                                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                                    .frame(height: 150).clipped().cornerRadius(10)
+                                            } else {
+                                                RoundedRectangle(cornerRadius: 10).fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(height: 150)
+                                                    .overlay(Text(String(r.title.prefix(1))).font(.largeTitle).bold().foregroundStyle(.white))
+                                            }
+                                        }
+                                        Text(r.title).font(.subheadline).bold().lineLimit(2).multilineTextAlignment(.leading)
+                                        if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                                        if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
+                                    }
+                                }.buttonStyle(.plain)
                             }
-                        }
+                        }.padding(.horizontal)
                     }
                     if results.isEmpty && !loading {
-                        Text("这个书源没有发现规则时，发现会按分类关键词搜索；有 discoverUrl 的书源会直接拉取推荐列表。")
+                        Text("这个书源没有发现规则时，发现会按分类关键词搜索；有 exploreUrl（开源阅读的发现地址）的书源会直接拉取推荐列表。")
                             .font(.footnote).foregroundStyle(.secondary).padding()
                     }
                 }
@@ -88,7 +92,7 @@ struct DiscoveryView: View {
         Task {
             do {
                 var res: [SourceBook] = []
-                if !src.discoverUrl.isEmpty { res = try await src.discover() }
+                if !src.effectiveDiscoverUrl.isEmpty { res = try await src.discover() }
                 if res.isEmpty { res = try await src.search(key: category) }
                 await MainActor.run { results = res; loading = false }
             } catch {
@@ -158,9 +162,9 @@ struct SourceManagementView: View {
                     TextEditor(text: $pasteText).border(Color.gray.opacity(0.3))
                     if !pasteError.isEmpty { Text(pasteError).foregroundStyle(.red).font(.footnote) }
                     Button("导入") {
-                        let arr = importSourcesFromText(pasteText)
-                        if arr.isEmpty { pasteError = "解析失败：请确认是单个或数组 Legado 书源 JSON" }
-                        else { store.sources.append(contentsOf: arr); store.save(); showPaste = false; pasteText = "" }
+                        let result = importSourcesDetailed(pasteText)
+                        if result.sources.isEmpty { pasteError = "解析失败：请确认是单个或数组 Legado 书源 JSON，或一个订阅链接" }
+                        else { store.sources.append(contentsOf: result.sources); store.save(); showPaste = false; pasteText = ""; if result.skipped > 0 { qrResult = "已导入 \(result.sources.count) 个，跳过 \(result.skipped) 个格式不对的条目" } }
                     }
                     Spacer()
                 }.padding().navigationTitle("粘贴导入").toolbar { Button("关闭") { showPaste = false } }

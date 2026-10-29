@@ -1,6 +1,12 @@
 import Foundation
 
 // MARK: - Legado source (subset of the Legado JSON rule spec, enough for real sources)
+// Import fix (2026-10-29): the old synthesized Codable was all-or-nothing.
+// A real Legado list has null fields, Int/Bool fields, extra fields (exploreUrl,
+// ruleExplore, lastUpdateTime, weight, header, loginUrl, ...) and one bad entry
+// used to kill the whole array. Now every field is read tolerantly (null -> "",
+// number/bool -> string, missing -> default) and every list entry is decoded
+// separately, so one bad source no longer blocks the rest.
 
 struct LegadoSource: Identifiable, Codable, Equatable {
     var id: String = UUID().uuidString
@@ -10,11 +16,13 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var enabled: Bool = true
     var searchUrl: String = ""
     var discoverUrl: String = ""
+    var exploreUrl: String = ""
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
     var ruleToc: RuleSet = RuleSet()
     var ruleContent: RuleSet = RuleSet()
     var ruleDiscover: RuleSet = RuleSet()
+    var ruleExplore: RuleSet = RuleSet()
     struct RuleSet: Codable, Equatable {
         var bookList: String = ""
         var name: String = ""
@@ -28,7 +36,79 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         var chapterUrl: String = ""
         var content: String = ""
         var nextContentUrl: String = ""
+        var nextTocUrl: String = ""
+        var kind: String = ""
+        var wordCount: String = ""
+        var lastChapter: String = ""
+        var replaceRegex: String = ""
+        enum CodingKeys: String, CodingKey {
+            case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex
+        }
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            bookList = c.tolerantString(.bookList); name = c.tolerantString(.name); author = c.tolerantString(.author)
+            bookUrl = c.tolerantString(.bookUrl); coverUrl = c.tolerantString(.coverUrl); intro = c.tolerantString(.intro)
+            tocUrl = c.tolerantString(.tocUrl); chapterList = c.tolerantString(.chapterList); chapterName = c.tolerantString(.chapterName)
+            chapterUrl = c.tolerantString(.chapterUrl); content = c.tolerantString(.content); nextContentUrl = c.tolerantString(.nextContentUrl)
+            nextTocUrl = c.tolerantString(.nextTocUrl); kind = c.tolerantString(.kind); wordCount = c.tolerantString(.wordCount)
+            lastChapter = c.tolerantString(.lastChapter); replaceRegex = c.tolerantString(.replaceRegex)
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(bookList, forKey: .bookList); try c.encode(name, forKey: .name); try c.encode(author, forKey: .author)
+            try c.encode(bookUrl, forKey: .bookUrl); try c.encode(coverUrl, forKey: .coverUrl); try c.encode(intro, forKey: .intro)
+            try c.encode(tocUrl, forKey: .tocUrl); try c.encode(chapterList, forKey: .chapterList); try c.encode(chapterName, forKey: .chapterName)
+            try c.encode(chapterUrl, forKey: .chapterUrl); try c.encode(content, forKey: .content); try c.encode(nextContentUrl, forKey: .nextContentUrl)
+            try c.encode(nextTocUrl, forKey: .nextTocUrl); try c.encode(kind, forKey: .kind); try c.encode(wordCount, forKey: .wordCount)
+            try c.encode(lastChapter, forKey: .lastChapter); try c.encode(replaceRegex, forKey: .replaceRegex)
+        }
     }
+    enum CodingKeys: String, CodingKey {
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore
+    }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id), !s.isEmpty { id = s }
+        bookSourceName = c.tolerantString(.bookSourceName); bookSourceUrl = c.tolerantString(.bookSourceUrl)
+        bookSourceGroup = c.tolerantString(.bookSourceGroup); enabled = c.tolerantBool(.enabled, defaultValue: true)
+        searchUrl = c.tolerantString(.searchUrl); discoverUrl = c.tolerantString(.discoverUrl); exploreUrl = c.tolerantString(.exploreUrl)
+        ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
+        ruleBookInfo = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleBookInfo)) ?? RuleSet()
+        ruleToc = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleToc)) ?? RuleSet()
+        ruleContent = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleContent)) ?? RuleSet()
+        ruleDiscover = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleDiscover)) ?? RuleSet()
+        ruleExplore = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleExplore)) ?? RuleSet()
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(bookSourceName, forKey: .bookSourceName); try c.encode(bookSourceUrl, forKey: .bookSourceUrl)
+        try c.encode(bookSourceGroup, forKey: .bookSourceGroup); try c.encode(enabled, forKey: .enabled); try c.encode(searchUrl, forKey: .searchUrl)
+        try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
+        try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
+        try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore)
+    }
+    // Legado's real discovery fields are exploreUrl + ruleExplore, not discoverUrl.
+    var effectiveDiscoverUrl: String { discoverUrl.isEmpty ? exploreUrl : discoverUrl }
+    var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }
+}
+
+extension KeyedDecodingContainer {
+    func tolerantString(_ key: Key) -> String {
+        if let s = try? decode(String.self, forKey: key) { return s }
+        if let n = try? decode(Int.self, forKey: key) { return "\(n)" }
+        if let n = try? decode(Double.self, forKey: key) { return "\(n)" }
+        if let b = try? decode(Bool.self, forKey: key) { return b ? "true" : "false" }
+        return ""
+    }
+    func tolerantBool(_ key: Key, defaultValue: Bool) -> Bool {
+        if let b = try? decode(Bool.self, forKey: key) { return b }
+        if let n = try? decode(Int.self, forKey: key) { return n != 0 }
+        if let s = try? decode(String.self, forKey: key) { return s == "true" || s == "1" }
+        return defaultValue
+    }
+}
     static var demoGutenberg: LegadoSource {
         var s = LegadoSource()
         s.bookSourceName = "Gutenberg（公版书演示源）"
@@ -271,8 +351,9 @@ extension LegadoSource {
 
 extension LegadoSource {
     func discover() async throws -> [SourceBook] {
-        guard !discoverUrl.isEmpty else { return [] }
-        let html = try await fetchText(urlString: discoverUrl)
+        guard !effectiveDiscoverUrl.isEmpty else { return [] }
+        let html = try await fetchText(urlString: effectiveDiscoverUrl)
+        let ruleDiscover = effectiveDiscoverRule
         if ruleDiscover.bookList.isEmpty { return [] }
         if ruleDiscover.bookList.hasPrefix("@json:") {
             let names = applyRule(html, ruleDiscover.name, base: bookSourceUrl)
@@ -305,19 +386,101 @@ extension LegadoSource {
     }
 }
 
-func importSourcesFromText(_ text: String) -> [LegadoSource] {
-    guard let data = text.data(using: .utf8) else { return [] }
-    if let arr = try? JSONDecoder().decode([LegadoSource].self, from: data) { return arr }
-    if let one = try? JSONDecoder().decode(LegadoSource.self, from: data) { return [one] }
-    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-        if let arrData = obj["sources"] ?? obj["bookSources"] {
-            if let d = try? JSONSerialization.data(withJSONObject: arrData), let arr = try? JSONDecoder().decode([LegadoSource].self, from: d) { return arr }
+struct ImportResult { var sources: [LegadoSource]; var skipped: Int }
+
+func extractJSONSubstring(_ text: String) -> String {
+    var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    if t.hasPrefix("\u{FEFF}") { t = String(t.dropFirst()) }
+    // If the page is HTML, pull the JSON out of a <pre> block or the first [/{ ... ]/}
+    if t.lowercased().contains("<html") || t.lowercased().contains("<pre") {
+        if let preStart = t.range(of: "<pre", options: .caseInsensitive),
+           let gt = t[preStart.upperBound...].firstIndex(of: ">"),
+           let preEnd = t[gt...].range(of: "</pre>", options: .caseInsensitive) {
+            t = String(t[t.index(after: gt)..<preEnd.lowerBound])
+        } else if let first = t.firstIndex(where: { $0 == "[" || $0 == "{" }),
+                  let last = t.lastIndex(where: { $0 == "]" || $0 == "}" }) {
+            t = String(t[first...last])
         }
     }
-    return []
+    if let first = t.firstIndex(where: { $0 == "[" || $0 == "{" }),
+       let last = t.lastIndex(where: { $0 == "]" || $0 == "}" }), first <= last {
+        // Only slice when there is junk outside the JSON (BOM, comments, HTML tail)
+        if first != t.startIndex || last != t.index(before: t.endIndex) { t = String(t[first...last]) }
+    }
+    return t.trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+func decodeOneSource(from dict: [String: Any]) -> LegadoSource? {
+    guard let d = try? JSONSerialization.data(withJSONObject: dict),
+          let s = try? JSONDecoder().decode(LegadoSource.self, from: d),
+          !s.bookSourceName.isEmpty || !s.bookSourceUrl.isEmpty else { return nil }
+    return s
+}
+
+func importSourcesDetailed(_ rawText: String) -> ImportResult {
+    let text = extractJSONSubstring(rawText)
+    guard let data = text.data(using: .utf8),
+          let root = try? JSONSerialization.jsonObject(with: data) else {
+        // Last resort: scan for individual {...} objects (newline-separated sources, no array)
+        var sources: [LegadoSource] = []; var skipped = 0
+        var depth = 0; var start: String.Index? = nil
+        for idx in text.indices {
+            let ch = text[idx]
+            if ch == "{" { if depth == 0 { start = idx }; depth += 1 }
+            else if ch == "}" { depth -= 1; if depth == 0, let s = start {
+                let chunk = String(text[s...idx])
+                if let d = chunk.data(using: .utf8), let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let src = decodeOneSource(from: dict) { sources.append(src) } else { skipped += 1 }
+                start = nil
+            } }
+        }
+        return ImportResult(sources: sources, skipped: skipped)
+    }
+    var dicts: [[String: Any]] = []
+    if let arr = root as? [Any] {
+        dicts = arr.compactMap { $0 as? [String: Any] }
+    } else if let obj = root as? [String: Any] {
+        for key in ["sources", "bookSources", "data", "list", "items", "results"] {
+            if let arr = obj[key] as? [Any] { dicts = arr.compactMap { $0 as? [String: Any] }; break }
+        }
+        if dicts.isEmpty && (obj["bookSourceName"] != nil || obj["bookSourceUrl"] != nil) { dicts = [obj] }
+    }
+    var sources: [LegadoSource] = []; var skipped = 0
+    for dict in dicts {
+        if let s = decodeOneSource(from: dict) { sources.append(s) } else { skipped += 1 }
+    }
+    return ImportResult(sources: sources, skipped: skipped)
+}
+
+func importSourcesFromText(_ text: String) -> [LegadoSource] {
+    importSourcesDetailed(text).sources
+}
+
+func normalizeSourceURL(_ urlString: String) -> String {
+    var u = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+    // GitHub blob page -> raw file (a blob page is HTML, not JSON, and used to make network import always fail)
+    if u.contains("github.com/") && u.contains("/blob/") {
+        u = u.replacingOccurrences(of: "github.com/", with: "raw.githubusercontent.com/").replacingOccurrences(of: "/blob/", with: "/")
+    }
+    return u
 }
 
 func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
-    let text = try await fetchText(urlString: urlString)
-    return importSourcesFromText(text)
+    let text = try await fetchText(urlString: normalizeSourceURL(urlString))
+    let result = importSourcesDetailed(text)
+    if !result.sources.isEmpty { return result.sources }
+    // Subscription list: an array of {name, url} entries pointing at other source lists.
+    // Fetch each linked list (cap 20) instead of giving up with "no source found".
+    if let data = extractJSONSubstring(text).data(using: .utf8),
+       let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+        var out: [LegadoSource] = []
+        for item in arr.prefix(20) {
+            if let d = item as? [String: Any], let link = d["url"] as? String, link.hasPrefix("http") {
+                if let t2 = try? await fetchText(urlString: normalizeSourceURL(link)) {
+                    out.append(contentsOf: importSourcesDetailed(t2).sources)
+                }
+            }
+        }
+        if !out.isEmpty { return out }
+    }
+    return []
 }

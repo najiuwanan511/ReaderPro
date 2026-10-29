@@ -40,6 +40,33 @@ struct BookshelfView: View {
                         Button("载入示例书") { addSample() }
                     }.padding()
                 }
+                if let current = store.books.filter({ $0.progress > 0 }).max(by: { $0.progress < $1.progress }) ?? store.books.first {
+                    Button {
+                        if current.kind == "cbz" { selectedManga = current } else { selectedBook = current }
+                    } label: {
+                        HStack(spacing: 14) {
+                            ZStack {
+                                if !current.coverUrl.isEmpty, let url = URL(string: current.coverUrl) {
+                                    AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
+                                        .frame(width: 72, height: 100).clipped().cornerRadius(10)
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10).fill(coverGradient(for: current.title)).frame(width: 72, height: 100)
+                                        .overlay(Text(String(current.title.prefix(1))).font(.title).bold().foregroundStyle(.white))
+                                }
+                            }
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("继续阅读").font(.caption).foregroundStyle(.secondary)
+                                Text(current.title).font(.headline).lineLimit(2)
+                                if !current.author.isEmpty { Text(current.author).font(.caption).foregroundStyle(.secondary) }
+                                ProgressView(value: current.progress)
+                                Text("已读 \(Int(current.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
+                        }
+                        .padding().background(.ultraThinMaterial).cornerRadius(16)
+                    }.buttonStyle(.plain).padding(.horizontal)
+                }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
                     ForEach(store.books) { book in
                         Button {
@@ -51,8 +78,8 @@ struct BookshelfView: View {
                                         AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
                                             .frame(height: 150).clipped().cornerRadius(8)
                                     } else {
-                                        RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.2)).frame(height: 150)
-                                            .overlay(Text(String(book.title.prefix(1))).font(.largeTitle).bold())
+                                        RoundedRectangle(cornerRadius: 8).fill(coverGradient(for: book.title)).frame(height: 150)
+                                            .overlay(VStack(spacing: 4) { Text(String(book.title.prefix(1))).font(.largeTitle).bold().foregroundStyle(.white); Text(book.title).font(.caption2).foregroundStyle(.white.opacity(0.9)).lineLimit(2).multilineTextAlignment(.center).padding(.horizontal, 4) })
                                     }
                                 }
                                 Text(book.title).font(.caption).lineLimit(2).multilineTextAlignment(.leading)
@@ -83,6 +110,12 @@ struct BookshelfView: View {
             .navigationDestination(item: $selectedBook) { book in ReaderView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedManga) { book in MangaView(store: store, bookId: book.id) }
         }
+    }
+
+    func coverGradient(for title: String) -> LinearGradient {
+        let palettes: [[Color]] = [[.blue, .purple], [.orange, .red], [.teal, .green], [.indigo, .blue], [.pink, .orange], [.brown, .orange]]
+        let idx = abs(title.unicodeScalars.reduce(0) { $0 + Int($1.value) }) % palettes.count
+        return LinearGradient(colors: palettes[idx], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 
     func addSample() {
@@ -175,6 +208,17 @@ struct ReaderView: View {
     @State private var translatedText = ""
     @State private var showTranslation = false
     @State private var translating = false
+    @State private var pageMode = false
+    @State private var pageIndex = 0
+    var pages: [String] {
+        var out: [String] = []; var cur = ""
+        for p in paragraphs {
+            if cur.count + p.count > 900 && !cur.isEmpty { out.append(cur); cur = "" }
+            cur += (cur.isEmpty ? "" : "\n\n") + p
+        }
+        if !cur.isEmpty { out.append(cur) }
+        return out.isEmpty ? [""] : out
+    }
     private let speaker = AVSpeechSynthesizer()
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
@@ -193,22 +237,37 @@ struct ReaderView: View {
             if loading {
                 ProgressView("正在加载章节…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let b = book, let c = chapter {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: CGFloat(store.lineSpacing)) {
-                            Text(c.title).font(.system(size: store.fontSize + 3, weight: .bold)).padding(.bottom, 8)
-                            ForEach(paragraphs.indices, id: \.self) { i in
-                                Text(paragraphs[i])
-                                    .font(.system(size: store.fontSize))
-                                    .lineSpacing(store.lineSpacing)
-                                    .id(i)
-                                    .onTapGesture { paragraphIndex = i; saveProgress() }
-                            }
+                if pageMode {
+                    TabView(selection: $pageIndex) {
+                        ForEach(pages.indices, id: \.self) { i in
+                            ScrollView {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    if i == 0 { Text(c.title).font(.system(size: store.fontSize + 3, weight: .bold)).padding(.bottom, 8) }
+                                    Text(pages[i]).font(.system(size: store.fontSize)).lineSpacing(store.lineSpacing)
+                                    Spacer()
+                                    Text("\(i + 1) / \(pages.count)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
+                                }.padding()
+                            }.tag(i)
                         }
-                        .padding()
+                    }.tabViewStyle(.page(indexDisplayMode: .never))
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: CGFloat(store.lineSpacing)) {
+                                Text(c.title).font(.system(size: store.fontSize + 3, weight: .bold)).padding(.bottom, 8)
+                                ForEach(paragraphs.indices, id: \.self) { i in
+                                    Text(paragraphs[i])
+                                        .font(.system(size: store.fontSize))
+                                        .lineSpacing(store.lineSpacing)
+                                        .id(i)
+                                        .onTapGesture { paragraphIndex = i; saveProgress() }
+                                }
+                            }
+                            .padding()
+                        }
+                        .onChange(of: paragraphIndex) { _, v in withAnimation { proxy.scrollTo(v, anchor: .top) } }
+                        .onAppear { proxy.scrollTo(min(paragraphIndex, max(paragraphs.count - 1, 0)), anchor: .top) }
                     }
-                    .onChange(of: paragraphIndex) { _, v in withAnimation { proxy.scrollTo(v, anchor: .top) } }
-                    .onAppear { proxy.scrollTo(min(paragraphIndex, max(paragraphs.count - 1, 0)), anchor: .top) }
                 }
                 VStack(spacing: 8) {
                     HStack {
@@ -233,6 +292,7 @@ struct ReaderView: View {
                 Button { showChapters = true } label: { Image(systemName: "list.bullet") }
                 Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
                 Button { toggleSpeech() } label: { Image(systemName: isSpeaking ? "stop.circle" : "speaker.wave.2") }
+                Button { pageMode.toggle(); pageIndex = 0 } label: { Image(systemName: pageMode ? "scroll" : "book.pages") }
                 Button { showSettings = true } label: { Image(systemName: "textformat.size") }
                 Button { addBookmark() } label: { Image(systemName: "bookmark") }
                 Button { downloadAll() } label: { Image(systemName: downloadingAll ? "arrow.down.circle.fill" : "arrow.down.circle") }.disabled(downloadingAll || book?.kind != "web")
@@ -509,7 +569,7 @@ struct SourceView: View {
             .sheet(isPresented: $showImport) {
                 NavigationStack {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("粘贴 Legado JSON 书源（bookSourceName、searchUrl、ruleSearch 等字段）").font(.footnote).foregroundStyle(.secondary)
+                        Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。").font(.footnote).foregroundStyle(.secondary)
                         TextEditor(text: $importText).border(Color.gray.opacity(0.3))
                         if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
                         Button("导入") { importSource() }
@@ -568,11 +628,29 @@ struct SourceView: View {
         }
     }
     func importSource() {
-        guard let data = importText.data(using: .utf8) else { return }
-        if let src = try? JSONDecoder().decode(LegadoSource.self, from: data) {
-            store.sources.append(src); store.save(); showImport = false; importText = ""
+        let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("http") {
+            // Pasted a subscription link, not JSON: fetch it like a network import.
+            importError = "正在拉取链接…"
+            Task {
+                do {
+                    let arr = try await importSourcesFromURL(trimmed)
+                    await MainActor.run {
+                        if arr.isEmpty { importError = "这个链接里没有解析到书源：请确认它是返回 Legado 书源 JSON 的直链（GitHub blob 页已自动转 raw，仍失败就换 raw 链接）" }
+                        else { store.sources.append(contentsOf: arr); store.save(); showImport = false; importText = ""; importError = "" }
+                    }
+                } catch {
+                    await MainActor.run { importError = "拉取失败：\(error.localizedDescription)" }
+                }
+            }
+            return
+        }
+        let result = importSourcesDetailed(importText)
+        if result.sources.isEmpty {
+            importError = "这个内容解析失败：请粘贴单个 Legado 书源 JSON、书源数组，或者一个订阅链接；不是 JSON 的文本、只有网址的页面、带 HTML 的页面都会被自动提取 JSON，仍失败就是内容本身不是书源"
         } else {
-            importError = "这个 JSON 解析失败：请确认是单个 Legado 书源对象（含 bookSourceName、searchUrl）"
+            store.sources.append(contentsOf: result.sources); store.save(); showImport = false; importText = ""
+            if result.skipped > 0 { importError = "已导入 \(result.sources.count) 个，跳过 \(result.skipped) 个格式不对的条目" }
         }
     }
 }
