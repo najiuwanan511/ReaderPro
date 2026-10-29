@@ -56,6 +56,7 @@ struct BookshelfView: View {
                     .swipeActions {
                         Button(role: .destructive) { store.deleteBook(book) } label: { Label("删除", systemImage: "trash") }
                         Button { exportBook(book) } label: { Label("导出TXT", systemImage: "square.and.arrow.up") }
+                        Button { exportEpubBook(book) } label: { Label("导出EPUB", systemImage: "book") }
                     }
                     .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出 TXT", item: url) } }
                 }
@@ -110,6 +111,12 @@ struct BookshelfView: View {
         } else if ext == "mobi" || ext == "azw3" || ext == "azw" {
             if let book = parseMobi(data, fileName: fileName) { store.updateBook(book) }
             else { errorText = "这个 MOBI / AZW3 解析失败（可能是带 DRM 的加密文件，或 KF8 结构过于复杂）"; showError = true }
+        } else if ext == "docx" {
+            if let book = parseDocx(data, fileName: fileName) { store.updateBook(book) }
+            else { errorText = "这个 DOCX 解析失败"; showError = true }
+        } else if ext == "fb2" {
+            if let book = parseFb2(data, fileName: fileName) { store.updateBook(book) }
+            else { errorText = "这个 FB2 解析失败"; showError = true }
         } else if ext == "pdf" {
             if let book = parsePdf(data, fileName: fileName) { store.updateBook(book) }
             else { errorText = "这个 PDF 没有可提取的文字层（纯图片 PDF 请用漫画里的 OCR）"; showError = true }
@@ -121,10 +128,17 @@ struct BookshelfView: View {
                 store.updateBook(book)
             } else { errorText = "这个 CBZ 里没有找到图片"; showError = true }
         } else {
-            errorText = "支持 TXT、EPUB、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）"; showError = true
+            errorText = "支持 TXT、EPUB、DOCX、FB2、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）"; showError = true
         }
     }
 
+    func exportEpubBook(_ book: LocalBook) {
+        let data = exportEpubData(book)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(book.title).epub")
+        try? data.write(to: url)
+        exportURL = url
+        showExport = true
+    }
     func exportBook(_ book: LocalBook) {
         let text = book.chapters.map { $0.title + "\n" + $0.text }.joined(separator: "\n\n")
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("\(book.title).txt")
@@ -148,6 +162,8 @@ struct ReaderView: View {
     @State private var loading = false
     @State private var errorText = ""
     @State private var isSpeaking = false
+    @State private var downloadingAll = false
+    @State private var readStart: Date?
     private let speaker = AVSpeechSynthesizer()
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
@@ -207,12 +223,20 @@ struct ReaderView: View {
                 Button { toggleSpeech() } label: { Image(systemName: isSpeaking ? "stop.circle" : "speaker.wave.2") }
                 Button { showSettings = true } label: { Image(systemName: "textformat.size") }
                 Button { addBookmark() } label: { Image(systemName: "bookmark") }
+                Button { downloadAll() } label: { Image(systemName: downloadingAll ? "arrow.down.circle.fill" : "arrow.down.circle") }.disabled(downloadingAll || book?.kind != "web")
             }
         }
         .onAppear {
+            readStart = Date()
             if let b = book { chapterIndex = b.chapterIndex; paragraphIndex = b.paragraphIndex; loadChapterIfNeeded() }
         }
-        .onDisappear { saveProgress(); speaker.stopSpeaking(at: .immediate) }
+        .onDisappear {
+            if let start = readStart, var b = book {
+                b.totalMinutes += max(0, Int(Date().timeIntervalSince(start) / 60))
+                store.updateBook(b)
+            }
+            saveProgress(); speaker.stopSpeaking(at: .immediate)
+        }
         .sheet(isPresented: $showChapters) {
             NavigationStack {
                 List(book?.chapters.indices ?? 0..<0, id: \.self) { i in
@@ -289,6 +313,23 @@ struct ReaderView: View {
             }
         }
     }
+    func downloadAll() {
+        guard var b = book, b.kind == "web" else { return }
+        downloadingAll = true
+        let src = store.sources.first ?? LegadoSource.demoGutenberg
+        Task {
+            var updated = b
+            for i in 0..<updated.chapters.count {
+                if updated.chapters[i].text.hasPrefix("__URL__") {
+                    if let content = try? await src.fetchChapterContent(updated.chapters[i]) {
+                        updated.chapters[i].text = content.isEmpty ? "（本章没有正文）" : content
+                    }
+                }
+            }
+            await MainActor.run { store.updateBook(updated); downloadingAll = false }
+            b = updated
+        }
+    }
     func prevChapter() { if chapterIndex > 0 { chapterIndex -= 1; paragraphIndex = 0; saveProgress(); loadChapterIfNeeded() } }
     func nextChapter() { if let b = book, chapterIndex < b.chapters.count - 1 { chapterIndex += 1; paragraphIndex = 0; saveProgress(); loadChapterIfNeeded() } }
     func addBookmark() {
@@ -316,6 +357,7 @@ struct MangaView: View {
     @State private var ocrText = ""
     @State private var showOcr = false
     @State private var ocrRunning = false
+    @State private var zoom: CGFloat = 1.0
     var book: LocalBook? { store.books.first { $0.id == bookId } }
     func image(_ name: String) -> UIImage? {
         guard let b = book else { return nil }
@@ -350,7 +392,7 @@ struct MangaView: View {
                     TabView(selection: $page) {
                         ForEach(b.imageNames.indices, id: \.self) { i in
                             if let ui = image(b.imageNames[i]) {
-                                Image(uiImage: ui).resizable().scaledToFit().tag(i)
+                                Image(uiImage: ui).resizable().scaledToFit().scaleEffect(zoom).gesture(MagnificationGesture().onChanged { zoom = max(1.0, min(4.0, $0)) }).tag(i)
                             }
                         }
                     }.tabViewStyle(.page(indexDisplayMode: .automatic))
@@ -542,7 +584,7 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("说明") {
-                    Text("自用版，不上架。TXT / EPUB / MOBI / AZW3 / PDF / CBZ、书内搜索、书签、朗读、进度记忆、Legado 书源、整本导出 TXT、漫画增强、图片 OCR、备份互传都已实现。注意两点：带 DRM 的加密 MOBI / AZW3 读不了；漫画增强是本机滤镜（对比度+锐化），不是 MangaJaNai 那种 AI 画质模型；OCR 准确率看原图清晰度。")
+                    Text("自用版，不上架。TXT / EPUB / DOCX / FB2 / MOBI / AZW3 / PDF / CBZ、书内搜索、书签、朗读、进度与阅读时长、Legado 书源、整本下载与导出 EPUB / TXT、漫画增强与缩放、图片 OCR、备份互传都已实现。注意：带 DRM 的加密书读不了；漫画增强是本机滤镜，不是 MangaJaNai AI 画质模型；在线翻译需要翻译服务接口，本版未接。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
