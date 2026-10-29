@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 
 // MARK: - Models
 
-struct BookChapter: Identifiable, Codable, Equatable {
+struct BookChapter: Identifiable, Codable, Equatable, Hashable {
     var id: String
     var title: String
     var text: String
@@ -13,7 +13,7 @@ struct BookChapter: Identifiable, Codable, Equatable {
     }
 }
 
-struct Bookmark: Identifiable, Codable, Equatable {
+struct Bookmark: Identifiable, Codable, Equatable, Hashable {
     var id: String = UUID().uuidString
     var bookId: String
     var chapterIndex: Int
@@ -22,7 +22,7 @@ struct Bookmark: Identifiable, Codable, Equatable {
     var date: Date = Date()
 }
 
-struct LocalBook: Identifiable, Codable, Equatable {
+struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var id: String = UUID().uuidString
     var title: String
     var author: String = ""
@@ -37,7 +37,7 @@ struct LocalBook: Identifiable, Codable, Equatable {
     var imageNames: [String] = []
 }
 
-struct SourceBook: Identifiable, Codable, Equatable {
+struct SourceBook: Identifiable, Codable, Equatable, Hashable {
     var id: String = UUID().uuidString
     var title: String
     var author: String = ""
