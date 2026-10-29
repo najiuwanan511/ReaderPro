@@ -164,6 +164,9 @@ struct ReaderView: View {
     @State private var isSpeaking = false
     @State private var downloadingAll = false
     @State private var readStart: Date?
+    @State private var translatedText = ""
+    @State private var showTranslation = false
+    @State private var translating = false
     private let speaker = AVSpeechSynthesizer()
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
@@ -224,6 +227,7 @@ struct ReaderView: View {
                 Button { showSettings = true } label: { Image(systemName: "textformat.size") }
                 Button { addBookmark() } label: { Image(systemName: "bookmark") }
                 Button { downloadAll() } label: { Image(systemName: downloadingAll ? "arrow.down.circle.fill" : "arrow.down.circle") }.disabled(downloadingAll || book?.kind != "web")
+                Button { translateCurrent() } label: { Image(systemName: "translate") }.disabled(translating)
             }
         }
         .onAppear {
@@ -257,6 +261,13 @@ struct ReaderView: View {
                 }.pickerStyle(.segmented).onChange(of: store.theme) { _, _ in store.save() }
                 Spacer()
             }.padding().presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showTranslation) {
+            NavigationStack {
+                ScrollView { Text(translatedText).padding() }
+                    .navigationTitle("翻译（本段）")
+                    .toolbar { Button("关闭") { showTranslation = false } }
+            }
         }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
@@ -310,6 +321,19 @@ struct ReaderView: View {
                 }
             } catch {
                 await MainActor.run { errorText = error.localizedDescription; loading = false }
+            }
+        }
+    }
+    func translateCurrent() {
+        guard paragraphIndex < paragraphs.count else { return }
+        translating = true
+        let src = paragraphs[paragraphIndex]
+        Task {
+            do {
+                let t = try await translateParagraph(src)
+                await MainActor.run { translatedText = t; translating = false; showTranslation = true }
+            } catch {
+                await MainActor.run { translatedText = "翻译失败：\(error.localizedDescription)"; translating = false; showTranslation = true }
             }
         }
     }

@@ -211,6 +211,12 @@ func enhancedImage(_ image: UIImage) -> UIImage {
         f.setValue(0.6, forKey: kCIInputSharpnessKey)
         if let v = f.outputImage { out = v }
     }
+    if let f = CIFilter(name: "CILanczosScaleTransform") {
+        f.setValue(out, forKey: kCIInputImageKey)
+        f.setValue(1.5, forKey: kCIInputScaleKey)
+        f.setValue(1.0, forKey: kCIInputAspectRatioKey)
+        if let v = f.outputImage { out = v }
+    }
     let ctx = CIContext()
     guard let cg = ctx.createCGImage(out, from: out.extent) else { return image }
     return UIImage(cgImage: cg)

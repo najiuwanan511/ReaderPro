@@ -72,6 +72,25 @@ func parseFb2(_ data: Data, fileName: String) -> LocalBook? {
     return book
 }
 
+// MARK: - Translation (free MyMemory API, no key, paragraph at a time)
+
+func translateParagraph(_ text: String) async throws -> String {
+    let snippet = String(text.prefix(450))
+    guard let q = snippet.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+          let url = URL(string: "https://api.mymemory.translated.net/get?q=\(q)&langpair=auto|zh-CN") else {
+        throw NSError(domain: "translate", code: 1)
+    }
+    var req = URLRequest(url: url, timeoutInterval: 20)
+    req.setValue("CialloReaderIOS/1.0", forHTTPHeaderField: "User-Agent")
+    let (data, _) = try await URLSession.shared.data(for: req)
+    guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+          let resp = obj["responseData"] as? [String: Any],
+          let t = resp["translatedText"] as? String, !t.isEmpty else {
+        throw NSError(domain: "translate", code: 2, userInfo: [NSLocalizedDescriptionKey: "翻译服务没有返回结果（免费额度可能用完，稍后再试）"])
+    }
+    return t.replacingOccurrences(of: "&quot;", with: "\"").replacingOccurrences(of: "&#39;", with: "'").replacingOccurrences(of: "&amp;", with: "&")
+}
+
 // MARK: - EPUB export (for any book in the shelf, including web books after download)
 
 func escapeXML(_ s: String) -> String {
