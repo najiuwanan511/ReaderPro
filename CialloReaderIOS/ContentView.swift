@@ -8,6 +8,8 @@ struct ContentView: View {
         TabView {
             BookshelfView(store: store)
                 .tabItem { Label("书架", systemImage: "books.vertical") }
+            DiscoveryView(store: store)
+                .tabItem { Label("发现", systemImage: "sparkles") }
             SourceView(store: store)
                 .tabItem { Label("书源", systemImage: "magnifyingglass") }
             SettingsView(store: store)
@@ -30,37 +32,43 @@ struct BookshelfView: View {
 
     var body: some View {
         NavigationStack {
-            List {
+            ScrollView {
                 if store.books.isEmpty {
-                    Section {
+                    VStack(alignment: .leading, spacing: 12) {
                         Text("书架是空的。点右上角 + 导入 TXT / EPUB / MOBI / AZW3 / PDF / CBZ，也可以先载入示例书测试阅读器。")
                             .font(.footnote).foregroundStyle(.secondary)
                         Button("载入示例书") { addSample() }
-                    }
+                    }.padding()
                 }
-                ForEach(store.books) { book in
-                    Button {
-                        if book.kind == "cbz" { selectedManga = book } else { selectedBook = book }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(book.title).font(.headline).lineLimit(2)
-                            HStack {
-                                Text(book.kind.uppercased()).font(.caption).foregroundStyle(.secondary)
-                                if !book.author.isEmpty { Text(book.author).font(.caption).foregroundStyle(.secondary) }
-                                Spacer()
-                                Text("\(book.chapters.count) 章 · \(Int(book.progress * 100))%").font(.caption).foregroundStyle(.secondary)
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                    ForEach(store.books) { book in
+                        Button {
+                            if book.kind == "cbz" { selectedManga = book } else { selectedBook = book }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack {
+                                    if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                                        AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
+                                            .frame(height: 150).clipped().cornerRadius(8)
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 8).fill(Color.blue.opacity(0.2)).frame(height: 150)
+                                            .overlay(Text(String(book.title.prefix(1))).font(.largeTitle).bold())
+                                    }
+                                }
+                                Text(book.title).font(.caption).lineLimit(2).multilineTextAlignment(.leading)
+                                Text("\(book.kind.uppercased()) · \(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
+                                ProgressView(value: book.progress)
                             }
-                            ProgressView(value: book.progress)
+                        }
+                        .contextMenu {
+                            Button("导出 TXT") { exportBook(book) }
+                            Button("导出 EPUB") { exportEpubBook(book) }
+                            Button(role: .destructive) { store.deleteBook(book) } label: { Text("删除") }
                         }
                     }
-                    .swipeActions {
-                        Button(role: .destructive) { store.deleteBook(book) } label: { Label("删除", systemImage: "trash") }
-                        Button { exportBook(book) } label: { Label("导出TXT", systemImage: "square.and.arrow.up") }
-                        Button { exportEpubBook(book) } label: { Label("导出EPUB", systemImage: "book") }
-                    }
-                    .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出 TXT", item: url) } }
-                }
+                }.padding()
             }
+            .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
             .toolbar {
                 Button { importing = true } label: { Image(systemName: "plus") }
@@ -176,7 +184,8 @@ struct ReaderView: View {
     }
     var paragraphs: [String] {
         guard let c = chapter else { return [] }
-        return c.text.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+        let cleaned = store.purify(c.text)
+        return cleaned.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
     }
 
     var body: some View {
@@ -470,7 +479,7 @@ struct SourceView: View {
         NavigationStack {
             VStack {
                 Picker("书源", selection: $selectedSourceIndex) {
-                    ForEach(store.sources.indices, id: \.self) { i in Text(store.sources[i].bookSourceName).tag(i) }
+                    ForEach(store.enabledSources.indices, id: \.self) { i in Text(store.enabledSources[i].bookSourceName).tag(i) }
                 }.pickerStyle(.menu).padding(.horizontal)
                 HStack {
                     TextField("搜书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
@@ -519,7 +528,7 @@ struct SourceView: View {
                         if loadingDetail { ProgressView("正在拉取目录…") }
                         else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
                         Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, fileName: r.title + ".web", kind: "web")
+                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, fileName: r.title + ".web", kind: "web")
                             book.chapters = detailChapters
                             store.updateBook(book)
                             selectedResult = nil
@@ -533,9 +542,9 @@ struct SourceView: View {
         }
     }
     func search() {
-        guard selectedSourceIndex < store.sources.count else { return }
+        guard selectedSourceIndex < store.enabledSources.count else { return }
         searching = true
-        let src = store.sources[selectedSourceIndex]
+        let src = store.enabledSources[selectedSourceIndex]
         Task {
             do {
                 let res = try await src.search(key: key)
@@ -546,9 +555,9 @@ struct SourceView: View {
         }
     }
     func loadDetail(_ r: SourceBook) {
-        guard selectedSourceIndex < store.sources.count else { return }
+        guard selectedSourceIndex < store.enabledSources.count else { return }
         loadingDetail = true; detailChapters = []
-        let src = store.sources[selectedSourceIndex]
+        let src = store.enabledSources[selectedSourceIndex]
         Task {
             do {
                 let chs = try await src.fetchChapters(book: r)
@@ -600,6 +609,34 @@ struct SettingsView: View {
                         }
                     }
                     .onDelete { idx in store.bookmarks.remove(atOffsets: idx); store.save() }
+                }
+                Section("书源") {
+                    NavigationLink("书源管理（启用/删除/网络导入/扫码导入）") { SourceManagementView(store: store) }
+                }
+                Section("替换净化") {
+                    ForEach(store.replaceRules) { rule in
+                        NavigationLink {
+                            ReplaceRuleEditorView(store: store, ruleId: rule.id)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading) {
+                                    Text(rule.name).font(.headline)
+                                    Text(rule.pattern).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Text("→ \(rule.replacement)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                                Spacer()
+                                Toggle("", isOn: Binding(get: { rule.enabled }, set: { v in
+                                    if let i = store.replaceRules.firstIndex(where: { $0.id == rule.id }) { store.replaceRules[i].enabled = v; store.save() }
+                                })).labelsHidden()
+                            }
+                        }
+                    }
+                    .onDelete { idx in store.replaceRules.remove(atOffsets: idx); store.save() }
+                    Button("添加替换规则") {
+                        store.replaceRules.append(ReplaceRule(name: "新规则", pattern: "", replacement: "")); store.save()
+                    }
+                    Text("替换规则是正则表达式，显示和下载正文时都会自动净化（去广告、去“本章未完”等）。规则名和正则可以在规则列表里直接改：点规则行进入编辑。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("备份（.ciallo）") {
                     Button("导出备份") { exportBackup() }

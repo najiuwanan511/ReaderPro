@@ -6,11 +6,15 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var id: String = UUID().uuidString
     var bookSourceName: String = ""
     var bookSourceUrl: String = ""
+    var bookSourceGroup: String = ""
+    var enabled: Bool = true
     var searchUrl: String = ""
+    var discoverUrl: String = ""
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
     var ruleToc: RuleSet = RuleSet()
     var ruleContent: RuleSet = RuleSet()
+    var ruleDiscover: RuleSet = RuleSet()
     struct RuleSet: Codable, Equatable {
         var bookList: String = ""
         var name: String = ""
@@ -263,4 +267,57 @@ extension LegadoSource {
         }
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+extension LegadoSource {
+    func discover() async throws -> [SourceBook] {
+        guard !discoverUrl.isEmpty else { return [] }
+        let html = try await fetchText(urlString: discoverUrl)
+        if ruleDiscover.bookList.isEmpty { return [] }
+        if ruleDiscover.bookList.hasPrefix("@json:") {
+            let names = applyRule(html, ruleDiscover.name, base: bookSourceUrl)
+            let authors = applyRule(html, ruleDiscover.author, base: bookSourceUrl)
+            let urls = applyRule(html, ruleDiscover.bookUrl, base: bookSourceUrl)
+            let covers = applyRule(html, ruleDiscover.coverUrl, base: bookSourceUrl)
+            let intros = applyRule(html, ruleDiscover.intro, base: bookSourceUrl)
+            var out: [SourceBook] = []
+            for i in 0..<names.count {
+                var b = SourceBook(title: names[i], url: i < urls.count ? resolveUrl(urls[i], base: bookSourceUrl) : "", sourceName: bookSourceName)
+                if i < authors.count { b.author = authors[i] }
+                if i < covers.count { b.cover = resolveUrl(covers[i], base: bookSourceUrl) }
+                if i < intros.count { b.intro = intros[i] }
+                out.append(b)
+            }
+            return out
+        }
+        let blocks = applyRule(html, ruleDiscover.bookList, base: bookSourceUrl)
+        var out: [SourceBook] = []
+        for blk in blocks {
+            let name = applyRuleFirst(blk, ruleDiscover.name, base: bookSourceUrl)
+            if name.isEmpty { continue }
+            var b = SourceBook(title: name, url: resolveUrl(applyRuleFirst(blk, ruleDiscover.bookUrl, base: bookSourceUrl), base: bookSourceUrl), sourceName: bookSourceName)
+            b.author = applyRuleFirst(blk, ruleDiscover.author, base: bookSourceUrl)
+            b.cover = resolveUrl(applyRuleFirst(blk, ruleDiscover.coverUrl, base: bookSourceUrl), base: bookSourceUrl)
+            b.intro = applyRuleFirst(blk, ruleDiscover.intro, base: bookSourceUrl)
+            out.append(b)
+        }
+        return out
+    }
+}
+
+func importSourcesFromText(_ text: String) -> [LegadoSource] {
+    guard let data = text.data(using: .utf8) else { return [] }
+    if let arr = try? JSONDecoder().decode([LegadoSource].self, from: data) { return arr }
+    if let one = try? JSONDecoder().decode(LegadoSource.self, from: data) { return [one] }
+    if let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        if let arrData = obj["sources"] ?? obj["bookSources"] {
+            if let d = try? JSONSerialization.data(withJSONObject: arrData), let arr = try? JSONDecoder().decode([LegadoSource].self, from: d) { return arr }
+        }
+    }
+    return []
+}
+
+func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
+    let text = try await fetchText(urlString: urlString)
+    return importSourcesFromText(text)
 }

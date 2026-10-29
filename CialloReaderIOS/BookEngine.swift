@@ -22,10 +22,26 @@ struct Bookmark: Identifiable, Codable, Equatable, Hashable {
     var date: Date = Date()
 }
 
+struct ReplaceRule: Identifiable, Codable, Equatable, Hashable {
+    var id: String = UUID().uuidString
+    var name: String = ""
+    var pattern: String = ""
+    var replacement: String = ""
+    var enabled: Bool = true
+    static var defaults: [ReplaceRule] {
+        [
+            ReplaceRule(name: "去“本章未完”", pattern: "本章未完，点击下一页继续阅读.*", replacement: ""),
+            ReplaceRule(name: "去广告网址行", pattern: "https?://[^\\s\\n]+", replacement: ""),
+            ReplaceRule(name: "去多余空行", pattern: "\\n{3,}", replacement: "\n\n")
+        ]
+    }
+}
+
 struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var id: String = UUID().uuidString
     var title: String
     var author: String = ""
+    var coverUrl: String = ""
     var fileName: String
     var kind: String // txt, epub, cbz, web
     var chapterIndex: Int = 0
@@ -350,6 +366,7 @@ class BookStore: ObservableObject {
     @Published var books: [LocalBook] = []
     @Published var bookmarks: [Bookmark] = []
     @Published var sources: [LegadoSource] = []
+    @Published var replaceRules: [ReplaceRule] = []
     @Published var fontSize: Double = 19
     @Published var lineSpacing: Double = 8
     @Published var theme: Int = 0 // 0 white, 1 sepia, 2 night
@@ -366,20 +383,21 @@ class BookStore: ObservableObject {
         return d
     }()
 
-    struct Meta: Codable { var bookmarks: [Bookmark]; var sources: [LegadoSource]; var fontSize: Double; var lineSpacing: Double; var theme: Int }
+    struct Meta: Codable { var bookmarks: [Bookmark]; var sources: [LegadoSource]; var replaceRules: [ReplaceRule] = []; var fontSize: Double; var lineSpacing: Double; var theme: Int }
 
     init() { load() }
 
     func load() {
         if let d = try? Data(contentsOf: Self.booksURL), let b = try? JSONDecoder().decode([LocalBook].self, from: d) { books = b }
         if let d = try? Data(contentsOf: Self.metaURL), let m = try? JSONDecoder().decode(Meta.self, from: d) {
-            bookmarks = m.bookmarks; sources = m.sources; fontSize = m.fontSize; lineSpacing = m.lineSpacing; theme = m.theme
+            bookmarks = m.bookmarks; sources = m.sources; replaceRules = m.replaceRules; fontSize = m.fontSize; lineSpacing = m.lineSpacing; theme = m.theme
         }
         if sources.isEmpty { sources = [LegadoSource.demoGutenberg] }
+        if replaceRules.isEmpty { replaceRules = ReplaceRule.defaults }
     }
     func save() {
         if let d = try? JSONEncoder().encode(books) { try? d.write(to: Self.booksURL) }
-        let m = Meta(bookmarks: bookmarks, sources: sources, fontSize: fontSize, lineSpacing: lineSpacing, theme: theme)
+        let m = Meta(bookmarks: bookmarks, sources: sources, replaceRules: replaceRules, fontSize: fontSize, lineSpacing: lineSpacing, theme: theme)
         if let d = try? JSONEncoder().encode(m) { try? d.write(to: Self.metaURL) }
     }
     func updateBook(_ book: LocalBook) {
@@ -392,4 +410,15 @@ class BookStore: ObservableObject {
         save()
     }
     func addBookmark(_ bm: Bookmark) { bookmarks.insert(bm, at: 0); save() }
+    func purify(_ text: String) -> String {
+        var out = text
+        for rule in replaceRules where rule.enabled && !rule.pattern.isEmpty {
+            if let re = try? NSRegularExpression(pattern: rule.pattern, options: []) {
+                let range = NSRange(out.startIndex..., in: out)
+                out = re.stringByReplacingMatches(in: out, range: range, withTemplate: rule.replacement)
+            }
+        }
+        return out
+    }
+    var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
 }
