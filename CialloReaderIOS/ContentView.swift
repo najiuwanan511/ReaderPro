@@ -33,7 +33,7 @@ struct BookshelfView: View {
             List {
                 if store.books.isEmpty {
                     Section {
-                        Text("书架是空的。点右上角 + 导入 TXT / EPUB / CBZ，也可以先载入示例书测试阅读器。")
+                        Text("书架是空的。点右上角 + 导入 TXT / EPUB / MOBI / AZW3 / PDF / CBZ，也可以先载入示例书测试阅读器。")
                             .font(.footnote).foregroundStyle(.secondary)
                         Button("载入示例书") { addSample() }
                     }
@@ -107,6 +107,12 @@ struct BookshelfView: View {
         } else if ext == "epub" {
             if let book = parseEpub(data, fileName: fileName) { store.updateBook(book) }
             else { errorText = "这个 EPUB 解析失败（可能是加密或结构异常）"; showError = true }
+        } else if ext == "mobi" || ext == "azw3" || ext == "azw" {
+            if let book = parseMobi(data, fileName: fileName) { store.updateBook(book) }
+            else { errorText = "这个 MOBI / AZW3 解析失败（可能是带 DRM 的加密文件，或 KF8 结构过于复杂）"; showError = true }
+        } else if ext == "pdf" {
+            if let book = parsePdf(data, fileName: fileName) { store.updateBook(book) }
+            else { errorText = "这个 PDF 没有可提取的文字层（纯图片 PDF 请用漫画里的 OCR）"; showError = true }
         } else if ext == "cbz" || ext == "zip" {
             if let (book, files) = parseCbz(data, fileName: fileName) {
                 let dir = BookStore.filesDir.appendingPathComponent(book.id)
@@ -115,7 +121,7 @@ struct BookshelfView: View {
                 store.updateBook(book)
             } else { errorText = "这个 CBZ 里没有找到图片"; showError = true }
         } else {
-            errorText = "只支持 TXT、EPUB、CBZ（ZIP 漫画包）"; showError = true
+            errorText = "支持 TXT、EPUB、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）"; showError = true
         }
     }
 
@@ -306,12 +312,28 @@ struct MangaView: View {
     var bookId: String
     @State private var page = 0
     @State private var stripMode = false
+    @State private var enhanced = false
+    @State private var ocrText = ""
+    @State private var showOcr = false
+    @State private var ocrRunning = false
     var book: LocalBook? { store.books.first { $0.id == bookId } }
     func image(_ name: String) -> UIImage? {
         guard let b = book else { return nil }
         let url = BookStore.filesDir.appendingPathComponent(b.id).appendingPathComponent((name as NSString).lastPathComponent)
-        guard let d = try? Data(contentsOf: url) else { return nil }
-        return UIImage(data: d)
+        guard let d = try? Data(contentsOf: url), let ui = UIImage(data: d) else { return nil }
+        return enhanced ? enhancedImage(ui) : ui
+    }
+    func runOcr() {
+        guard let b = book, page < b.imageNames.count, let ui = image(b.imageNames[page]) else { return }
+        ocrRunning = true
+        Task {
+            do {
+                let t = try await ocrImage(ui)
+                await MainActor.run { ocrText = t.isEmpty ? "（本页没有识别到文字）" : t; ocrRunning = false; showOcr = true }
+            } catch {
+                await MainActor.run { ocrText = "识别失败：\(error.localizedDescription)"; ocrRunning = false; showOcr = true }
+            }
+        }
     }
     var body: some View {
         VStack {
@@ -336,8 +358,25 @@ struct MangaView: View {
                 HStack {
                     Text("\(page + 1) / \(b.imageNames.count)").font(.caption)
                     Spacer()
+                    Button(enhanced ? "原图" : "增强") { enhanced.toggle() }
                     Button(stripMode ? "单页模式" : "条漫模式") { stripMode.toggle() }
+                    Button(ocrRunning ? "识别中…" : "本页 OCR") { runOcr() }.disabled(ocrRunning)
                 }.padding()
+            }
+        }
+        .sheet(isPresented: $showOcr) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    ScrollView { Text(ocrText).padding() }
+                    Button("存为 TXT 书") {
+                        var nb = LocalBook(title: (book?.title ?? "OCR") + "（OCR）", fileName: "ocr.txt", kind: "txt")
+                        nb.chapters = [BookChapter(title: "OCR 结果", text: ocrText)]
+                        store.updateBook(nb); showOcr = false
+                    }.buttonStyle(.borderedProminent)
+                    Spacer()
+                }
+                .navigationTitle("OCR 结果")
+                .toolbar { Button("关闭") { showOcr = false } }
             }
         }
         .navigationTitle(book?.title ?? "漫画")
@@ -467,6 +506,11 @@ struct SourceView: View {
 
 struct SettingsView: View {
     @ObservedObject var store: BookStore
+    @State private var backupURL: URL?
+    @State private var showBackup = false
+    @State private var importingBackup = false
+    @State private var backupError = ""
+    @State private var showBackupError = false
     var body: some View {
         NavigationStack {
             List {
@@ -491,12 +535,64 @@ struct SettingsView: View {
                     }
                     .onDelete { idx in store.bookmarks.remove(atOffsets: idx); store.save() }
                 }
+                Section("备份（.ciallo）") {
+                    Button("导出备份") { exportBackup() }
+                    Button("导入备份") { importingBackup = true }
+                    Text("备份是单个 .ciallo 文件（其实是 ZIP）：含书架、书签、书源和本地书文件，换机或重装后导入即可恢复。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("说明") {
-                    Text("自用版，不上架。TXT / EPUB / CBZ 本地阅读、书内搜索、书签、朗读、进度记忆、Legado 书源搜索与目录拉取、整本导出 TXT 已实现；MOBI / AZW3、PDF、OCR、画质增强、互传备份暂未实现，导入这类文件会提示不支持。")
+                    Text("自用版，不上架。TXT / EPUB / MOBI / AZW3 / PDF / CBZ、书内搜索、书签、朗读、进度记忆、Legado 书源、整本导出 TXT、漫画增强、图片 OCR、备份互传都已实现。注意两点：带 DRM 的加密 MOBI / AZW3 读不了；漫画增强是本机滤镜（对比度+锐化），不是 MangaJaNai 那种 AI 画质模型；OCR 准确率看原图清晰度。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("设置")
+            .sheet(isPresented: $showBackup) { if let url = backupURL { ShareLink("导出备份", item: url) } }
+            .fileImporter(isPresented: $importingBackup, allowedContentTypes: [.data]) { result in
+                switch result {
+                case .success(let url): importBackup(url)
+                case .failure(let e): backupError = e.localizedDescription; showBackupError = true
+                }
+            }
+            .alert("导入备份失败", isPresented: $showBackupError) { Button("好", role: .cancel) {} } message: { Text(backupError) }
         }
+    }
+    func exportBackup() {
+        var files: [(name: String, data: Data)] = []
+        if let d = try? JSONEncoder().encode(store.books) { files.append((name: "books.json", data: d)) }
+        let meta = BookStore.Meta(bookmarks: store.bookmarks, sources: store.sources, fontSize: store.fontSize, lineSpacing: store.lineSpacing, theme: store.theme)
+        if let d = try? JSONEncoder().encode(meta) { files.append((name: "meta.json", data: d)) }
+        let fm = FileManager.default
+        if let items = try? fm.contentsOfDirectory(at: BookStore.filesDir, includingPropertiesForKeys: nil) {
+            for url in items {
+                if url.hasDirectoryPath {
+                    if let subs = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                        for s in subs { if let d = try? Data(contentsOf: s) { files.append((name: "files/\(url.lastPathComponent)/\(s.lastPathComponent)", data: d)) } }
+                    }
+                } else if let d = try? Data(contentsOf: url) { files.append((name: "files/\(url.lastPathComponent)", data: d)) }
+            }
+        }
+        let zip = writeStoredZip(files)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("CialloReaderIOS-backup.ciallo")
+        try? zip.write(to: url)
+        backupURL = url; showBackup = true
+    }
+    func importBackup(_ url: URL) {
+        let ok = url.startAccessingSecurityScopedResource()
+        defer { if ok { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else { backupError = "读不到备份文件"; showBackupError = true; return }
+        let files = unzipToMemory(data)
+        guard let booksData = files["books.json"], let books = try? JSONDecoder().decode([LocalBook].self, from: booksData) else {
+            backupError = "这不是有效的 .ciallo 备份（里面没有 books.json）"; showBackupError = true; return
+        }
+        if let d = try? JSONEncoder().encode(books) { try? d.write(to: BookStore.booksURL) }
+        if let metaData = files["meta.json"] { try? metaData.write(to: BookStore.metaURL) }
+        for (name, d) in files where name.hasPrefix("files/") {
+            let rel = String(name.dropFirst(6))
+            let dest = BookStore.filesDir.appendingPathComponent(rel)
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? d.write(to: dest)
+        }
+        store.load()
     }
 }
