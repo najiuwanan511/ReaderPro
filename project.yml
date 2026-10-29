@@ -1,0 +1,16 @@
+name: CialloReaderIOS
+options:
+  bundleIdPrefix: com.selfuse
+targets:
+  CialloReaderIOS:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: CialloReaderIOS
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.cialloreader
+        IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
