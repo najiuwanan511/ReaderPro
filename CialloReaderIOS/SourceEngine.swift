@@ -416,8 +416,68 @@ func decodeOneSource(from dict: [String: Any]) -> LegadoSource? {
     return s
 }
 
+func unescapeHTMLJSON(_ text: String) -> String {
+    text.replacingOccurrences(of: "&quot;", with: "\"")
+        .replacingOccurrences(of: "&#34;", with: "\"")
+        .replacingOccurrences(of: "&#x22;", with: "\"")
+        .replacingOccurrences(of: "&amp;", with: "&")
+        .replacingOccurrences(of: "&lt;", with: "<")
+        .replacingOccurrences(of: "&gt;", with: ">")
+}
+
+// Scan an HTML/JS page for an object that actually contains bookSourceName.
+// A detail page is not JSON: taking first "{" to last "}" grabs the whole page
+// and JSON parsing fails. Instead, find each bookSourceName occurrence and
+// expand to its enclosing balanced braces (string-aware, so braces inside
+// rule strings do not break the count).
+func scanEmbeddedSources(_ rawText: String) -> [LegadoSource] {
+    let text = unescapeHTMLJSON(rawText)
+    var out: [LegadoSource] = []
+    var searchFrom = text.startIndex
+    while let keyRange = text[searchFrom...].range(of: "\"bookSourceName\"") {
+        let keyPos = keyRange.lowerBound
+        // Walk backwards to the opening brace that starts this object: track depth.
+        var depth = 0; var start: String.Index? = nil
+        var idx = keyPos
+        while idx > text.startIndex {
+            idx = text.index(before: idx)
+            let ch = text[idx]
+            if ch == "}" { depth += 1 }
+            else if ch == "{" {
+                if depth == 0 { start = idx; break }
+                depth -= 1
+            }
+        }
+        guard let s = start else { break }
+        // Walk forwards from s, string-aware, to the matching close brace.
+        var d = 0; var inString = false; var escaped = false; var end: String.Index? = nil
+        var j = s
+        while j < text.endIndex {
+            let ch = text[j]
+            if inString {
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+            } else {
+                if ch == "\"" { inString = true }
+                else if ch == "{" { d += 1 }
+                else if ch == "}" { d -= 1; if d == 0 { end = j; break } }
+            }
+            j = text.index(after: j)
+        }
+        if let e = end {
+            let chunk = String(text[s...e])
+            if let d2 = chunk.data(using: .utf8), let dict = try? JSONSerialization.jsonObject(with: d2) as? [String: Any], let src = decodeOneSource(from: dict) {
+                if !out.contains(where: { $0.bookSourceUrl == src.bookSourceUrl && $0.bookSourceName == src.bookSourceName }) { out.append(src) }
+            }
+            searchFrom = text.index(after: e)
+        } else { break }
+    }
+    return out
+}
+
 func importSourcesDetailed(_ rawText: String) -> ImportResult {
-    let text = extractJSONSubstring(rawText)
+    let text = extractJSONSubstring(unescapeHTMLJSON(rawText))
     guard let data = text.data(using: .utf8),
           let root = try? JSONSerialization.jsonObject(with: data) else {
         // Last resort: scan for individual {...} objects (newline-separated sources, no array)
@@ -440,12 +500,18 @@ func importSourcesDetailed(_ rawText: String) -> ImportResult {
     } else if let obj = root as? [String: Any] {
         for key in ["sources", "bookSources", "data", "list", "items", "results"] {
             if let arr = obj[key] as? [Any] { dicts = arr.compactMap { $0 as? [String: Any] }; break }
+            if let single = obj[key] as? [String: Any], single["bookSourceName"] != nil || single["bookSourceUrl"] != nil { dicts = [single]; break }
         }
         if dicts.isEmpty && (obj["bookSourceName"] != nil || obj["bookSourceUrl"] != nil) { dicts = [obj] }
     }
     var sources: [LegadoSource] = []; var skipped = 0
     for dict in dicts {
         if let s = decodeOneSource(from: dict) { sources.append(s) } else { skipped += 1 }
+    }
+    if sources.isEmpty {
+        // HTML detail page: the JSON is embedded in the page, not the whole page.
+        let embedded = scanEmbeddedSources(rawText)
+        if !embedded.isEmpty { return ImportResult(sources: embedded, skipped: skipped) }
     }
     return ImportResult(sources: sources, skipped: skipped)
 }
@@ -463,10 +529,37 @@ func normalizeSourceURL(_ urlString: String) -> String {
     return u
 }
 
+// yckceo detail page (HTML, not JSON) -> its JSON API. The site's own pattern is
+// /yuedu/shuyuan/json/id/<id>.json, while the detail page is
+// /yuedu/shuyuans/content/id/<id>.html (plural "shuyuans" + "content").
+// Pasting the detail page used to fetch HTML and fail with "no source found".
+func yckceoJSONCandidates(_ urlString: String) -> [String] {
+    let u = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let re = try? NSRegularExpression(pattern: "yuedu/shuyuans?/content/id/(\\d+)\\.html"),
+          let m = re.firstMatch(in: u, range: NSRange(u.startIndex..., in: u)),
+          let idRange = Range(m.range(at: 1), in: u) else { return [] }
+    let id = String(u[idRange])
+    // Rebuild from the original URL by replacing the matched path segment.
+    let ns = u as NSString
+    let replaced = ns.replacingCharacters(in: m.range, with: "yuedu/shuyuan/json/id/\(id).json")
+    let alt = ns.replacingCharacters(in: m.range, with: "yuedu/shuyuans/json/id/\(id).json")
+    return [replaced, alt]
+}
+
 func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
-    let text = try await fetchText(urlString: normalizeSourceURL(urlString))
-    let result = importSourcesDetailed(text)
-    if !result.sources.isEmpty { return result.sources }
+    // Try the JSON API first for detail pages, then the original URL.
+    var candidates: [String] = []
+    for c in yckceoJSONCandidates(urlString) where !candidates.contains(c) { candidates.append(c) }
+    candidates.append(normalizeSourceURL(urlString))
+    var lastText = ""
+    for candidate in candidates {
+        if let text = try? await fetchText(urlString: candidate) {
+            lastText = text
+            let result = importSourcesDetailed(text)
+            if !result.sources.isEmpty { return result.sources }
+        }
+    }
+    let text = lastText
     // Subscription list: an array of {name, url} entries pointing at other source lists.
     // Fetch each linked list (cap 20) instead of giving up with "no source found".
     if let data = extractJSONSubstring(text).data(using: .utf8),
