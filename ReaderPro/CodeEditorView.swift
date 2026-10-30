@@ -241,7 +241,7 @@ struct CodeEditorView: View {
 
     func replaceOne() {
         guard !matches.isEmpty, matchIndex >= 0, matchIndex < matches.count else { runFind(); return }
-        var ns = code as NSString
+        let ns = code as NSString
         code = ns.replacingCharacters(in: matches[matchIndex], with: replaceText)
         runFind()
     }

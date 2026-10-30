@@ -159,16 +159,16 @@ struct FeedReaderView: View {
     let source: RssSource
     @State private var articles: [RssArticle] = []
     @State private var loading = false
-    @State private var error = ""
+    @State private var errText = ""
     @State private var selected: RssArticle?
 
     var body: some View {
         Group {
             if loading {
                 ProgressView("正在拉取订阅…")
-            } else if !error.isEmpty {
+            } else if !errText.isEmpty {
                 VStack(spacing: 8) {
-                    Text(error).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Text(errText).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("重试") { load() }
                 }.padding()
             } else if articles.isEmpty {
@@ -206,7 +206,7 @@ struct FeedReaderView: View {
     }
 
     func load() {
-        loading = true; error = ""; articles = []
+        loading = true; errText = ""; articles = []
         let url = source.sourceUrl
         Task {
             do {
@@ -214,10 +214,10 @@ struct FeedReaderView: View {
                 let parsed = parseRssXML(data)
                 await MainActor.run {
                     articles = parsed; loading = false
-                    if parsed.isEmpty { error = "没有解析到文章（可能不是 RSS/Atom，或需要登录）" }
+                    if parsed.isEmpty { errText = "没有解析到文章（可能不是 RSS/Atom，或需要登录）" }
                 }
             } catch {
-                await MainActor.run { loading = false; error = "拉取失败：\(error.localizedDescription)" }
+                await MainActor.run { loading = false; errText = "拉取失败：\(error.localizedDescription)" }
             }
         }
     }
