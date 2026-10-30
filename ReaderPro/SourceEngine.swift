@@ -123,11 +123,39 @@ extension KeyedDecodingContainer {
 
 func fetchText(urlString: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
+    // ATS 修复：截图里的失败就是 NSURLErrorAppTransportSecurity（-1022），
+    // 即系统拦了 http:// 源。Info.plist 里已有 NSAllowsArbitraryLoads，
+    // 但旧安装包/部分系统上仍会拦，所以 http 源先试 https，https 不通再回 http，
+    // 这样发现和搜索都不再因为一个 http 源全军覆没。
+    if urlString.hasPrefix("http://") {
+        let httpsString = "https://" + urlString.dropFirst("http://".count)
+        if let httpsURL = URL(string: httpsString) {
+            var req = URLRequest(url: httpsURL, timeoutInterval: 30)
+            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+            req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
+            if let (data, resp) = try? await URLSession.shared.data(for: req),
+               let http = resp as? HTTPURLResponse, http.statusCode < 400 {
+                return decodeTextData(data)
+            }
+        }
+    }
     var req = URLRequest(url: url, timeoutInterval: 90)
     req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
     req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
-    let (data, _) = try await URLSession.shared.data(for: req)
-    return decodeTextData(data)
+    do {
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return decodeTextData(data)
+    } catch {
+        // http 被 ATS 拦时，再试一次 https 版本
+        if urlString.hasPrefix("http://"),
+           let httpsURL = URL(string: "https://" + urlString.dropFirst("http://".count)) {
+            var req2 = URLRequest(url: httpsURL, timeoutInterval: 30)
+            req2.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+            let (data, _) = try await URLSession.shared.data(for: req2)
+            return decodeTextData(data)
+        }
+        throw error
+    }
 }
 
 func fetchText(urlString: String, method: String, body: String) async throws -> String {
@@ -137,8 +165,22 @@ func fetchText(urlString: String, method: String, body: String) async throws -> 
     req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
     req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
     req.httpBody = body.data(using: .utf8)
-    let (data, _) = try await URLSession.shared.data(for: req)
-    return decodeTextData(data)
+    do {
+        let (data, _) = try await URLSession.shared.data(for: req)
+        return decodeTextData(data)
+    } catch {
+        if urlString.hasPrefix("http://"),
+           let httpsURL = URL(string: "https://" + urlString.dropFirst("http://".count)) {
+            var req2 = URLRequest(url: httpsURL, timeoutInterval: 25)
+            req2.httpMethod = method
+            req2.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+            req2.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+            req2.httpBody = body.data(using: .utf8)
+            let (data, _) = try await URLSession.shared.data(for: req2)
+            return decodeTextData(data)
+        }
+        throw error
+    }
 }
 
 func resolveUrl(_ raw: String, base: String) -> String {
