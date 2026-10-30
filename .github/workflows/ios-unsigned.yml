@@ -30,8 +30,10 @@ jobs:
       - name: Fix display name
         run: |
           APP=build/ReaderPro.xcarchive/Products/Applications/ReaderPro.app/Info.plist
-          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 阅读Pro" "$APP"
-          /usr/libexec/PlistBuddy -c "Set :CFBundleName 阅读Pro" "$APP"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 阅读Pro" "$APP"
+          /usr/libexec/PlistBuddy -c "Delete :CFBundleName" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :CFBundleName string 阅读Pro" "$APP"
 
       - name: Package unsigned IPA
         run: |
