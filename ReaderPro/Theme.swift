@@ -34,6 +34,8 @@ enum AppTheme {
             ? UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1)
             : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
     })
+    // Legado-E 顶栏棕色（书架/发现截图里的深棕顶栏，约 #6D4C41）
+    static let headerBrown = Color(red: 0.43, green: 0.30, blue: 0.26)
     // 未读角标蓝（阅读Sigma书架右上角数字徽章，深浅色都用醒目的蓝）
     static let unreadBadge = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark

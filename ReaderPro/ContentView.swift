@@ -34,7 +34,7 @@ struct BookshelfView: View {
     @State private var showExport = false
     @State private var searchText = ""
     @State private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
-    @State private var viewMode = 0 // 0 网格, 1 列表
+    @State private var viewMode = 1 // 0 网格, 1 列表（Legado-E 书架默认是列表行，不是网格）
     @State private var showFavoritesOnly = false
     @State private var selecting = false
     @State private var selectedIds: Set<String> = []
@@ -78,7 +78,8 @@ struct BookshelfView: View {
                 Picker("排序", selection: $sortMode) {
                     Text("最近阅读").tag(0); Text("书名").tag(1); Text("进度").tag(2)
                 }.pickerStyle(.segmented).padding(.horizontal)
-                if let current = store.books.max(by: { $0.lastRead < $1.lastRead }) {
+                // Legado-E 书架没有“继续阅读”大卡，列表模式下直接就是书行；网格模式保留大卡。
+                if viewMode == 0, let current = store.books.max(by: { $0.lastRead < $1.lastRead }) {
                     Button {
                         openBook(current)
                     } label: {
@@ -153,6 +154,8 @@ struct BookshelfView: View {
             }
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
+            .toolbarBackground(AppTheme.headerBrown, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .searchable(text: $searchText, prompt: "搜本地书架（书名 / 作者 / 书源）")
             .toolbar {
                 if selecting {
@@ -191,42 +194,55 @@ struct BookshelfView: View {
 
     @ViewBuilder
     var bookListView: some View {
+        // Legado-E 书架行（对标截图）：左封面，右标题/作者/当前章/最新章，右上角灰色数字角标 = 总章数。
         VStack(spacing: 0) {
+            // 顶栏“全部”标签（Legado-E 书架顶部就是这个，不再是 iOS 默认大标题）
+            HStack {
+                Text("全部").font(.headline).foregroundStyle(AppTheme.headerBrown)
+                    .overlay(Rectangle().fill(Color.red).frame(height: 2).offset(y: 14), alignment: .bottom)
+                Spacer()
+                Button { searchText = "" } label: { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
+            }.padding(.horizontal).padding(.bottom, 4)
             ForEach(filteredBooks) { book in
                 Button {
                     if selecting {
                         if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
                     } else { openBook(book) }
                 } label: {
-                    HStack(spacing: 12) {
-                        ZStack(alignment: .topTrailing) {
-                            if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 46) }
-                                    .frame(width: 46, height: 65).clipped().cornerRadius(6)
-                            } else {
-                                BookCover(title: book.title, width: 46)
-                            }
-                            if !selecting { UnreadBadge(count: book.unreadCount).scaleEffect(0.8) }
+                    HStack(alignment: .top, spacing: 12) {
+                        if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 62) }
+                                .frame(width: 62, height: 88).clipped().cornerRadius(6)
+                        } else {
+                            BookCover(title: book.title, width: 62)
                         }
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(book.title).font(.subheadline).lineLimit(1)
-                            if !book.author.isEmpty { Text(book.author).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                            HStack(spacing: 6) {
-                                if book.totalMinutes > 0 { Text("读 \(book.totalMinutes) 分钟").font(.caption2).foregroundStyle(.secondary) }
-                                Text("\(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
-                                if book.isAudio { Text("音频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
-                                if book.isVideo { Text("视频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(book.title).font(.headline).lineLimit(1)
+                            if !book.author.isEmpty {
+                                Label(book.author, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            ProgressView(value: book.progress)
+                            if book.chapterIndex < book.chapters.count {
+                                Label(book.chapters[book.chapterIndex].title, systemImage: "clock").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            if let last = book.chapters.last {
+                                Label(last.title, systemImage: "safari").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            if book.isAudio { Text("音频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
+                            if book.isVideo { Text("视频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
                         }
                         Spacer()
                         if selecting {
                             Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(.blue)
+                        } else if !book.chapters.isEmpty {
+                            Text("\(book.chapters.count)")
+                                .font(.caption2).foregroundStyle(.secondary)
+                                .padding(.horizontal, 8).padding(.vertical, 3)
+                                .background(Capsule().fill(Color.gray.opacity(0.15)))
                         } else if book.favorite {
                             Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption)
                         }
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)

@@ -15,41 +15,99 @@ struct DiscoveryView: View {
     @State private var loadingDetail = false
     @State private var detailIsComic = false
     @State private var discoverError = ""
+    @State private var sourceFilterText = ""
+    @State private var sourceFilterMode = 0 // 0 全部, 1 快速, 2 通常, 3 正版
     let fallbackCategories = ["热门", "玄幻", "言情", "科幻", "历史", "悬疑", "武侠", "都市"]
 
     var sources: [LegadoSource] { store.enabledSources }
+    // Legado-E 发现页的源列表 + 右上角筛选：按分组符号分流。
+    // 快速 = 分组含 ⚡/快，正版 = 分组含 🏷/正版，其余归通常；没有分组标记的源默认通常。
+    var filteredSources: [LegadoSource] {
+        var list = sources
+        if !sourceFilterText.isEmpty {
+            list = list.filter { $0.bookSourceName.localizedCaseInsensitiveContains(sourceFilterText) }
+        }
+        switch sourceFilterMode {
+        case 1: list = list.filter { $0.bookSourceGroup.contains("⚡") || $0.bookSourceGroup.contains("快") }
+        case 2: list = list.filter { !($0.bookSourceGroup.contains("⚡") || $0.bookSourceGroup.contains("快") || $0.bookSourceGroup.contains("🏷") || $0.bookSourceGroup.contains("正版")) }
+        case 3: list = list.filter { $0.bookSourceGroup.contains("🏷") || $0.bookSourceGroup.contains("正版") }
+        default: break
+        }
+        return list
+    }
+    func sourceGroupIcon(_ src: LegadoSource) -> String {
+        if src.bookSourceGroup.contains("⚡") { return "⚡📂" }
+        if src.bookSourceGroup.contains("🏷") { return "🏷" }
+        return "📂"
+    }
     var body: some View {
         NavigationStack {
             VStack {
                 if sources.isEmpty {
                     Text("没有启用的书源，去“设置 → 书源管理”启用或导入一个。").font(.footnote).foregroundStyle(.secondary).padding()
                 } else {
-                    Text("发现一次只看一个源：当前第 \(selectedSourceIndex + 1) / \(sources.count) 个启用源，换源请点下面菜单；某源没分类或没结果时点“下一个源”继续试。").font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
+                    // Legado-E 发现页顶部：筛选搜索栏 + 右上角快速/通常/正版筛选菜单
                     HStack {
-                        Picker("书源", selection: $selectedSourceIndex) {
-                            ForEach(sources.indices, id: \.self) { i in Text(sources[i].bookSourceName).tag(i) }
-                        }.pickerStyle(.menu)
-                        Button("下一个源") {
-                            selectedSourceIndex = (selectedSourceIndex + 1) % sources.count
-                            refreshCategories(); load()
-                        }.buttonStyle(.bordered)
-                    }.padding(.horizontal)
-                    ScrollView(.horizontal, showsIndicators: false) {
                         HStack {
-                            if categories.isEmpty {
-                                ForEach(fallbackCategories, id: \.self) { c in
-                                    Button(c) { loadFallback(keyword: c) }
-                                        .buttonStyle(.bordered)
-                                }
-                            } else {
-                                ForEach(categories) { cat in
-                                    Button(cat.title) { selectedCategory = cat; load() }
-                                        .buttonStyle(.bordered)
-                                        .tint(selectedCategory?.id == cat.id ? AppTheme.accent : .gray)
-                                }
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("筛选发现源", text: $sourceFilterText)
+                        }.padding(8).background(Color.gray.opacity(0.12)).cornerRadius(10)
+                        Menu {
+                            Button("快速书源 ⚡") { sourceFilterMode = 1 }
+                            Button("通常书源 📂") { sourceFilterMode = 2 }
+                            Button("正版书源 🏷") { sourceFilterMode = 3 }
+                            Button("全部书源") { sourceFilterMode = 0 }
+                        } label: { Image(systemName: "slider.horizontal.3").font(.title3) }
+                    }.padding(.horizontal)
+                    // 当前源卡片（对标截图顶部灰色卡片 + 下拉箭头）
+                    if selectedSourceIndex < sources.count {
+                        Button {
+                            // 点卡片 = 展开源列表（下面就是源列表，点任意源即切换）
+                        } label: {
+                            HStack {
+                                Text("📂 \(sources[selectedSourceIndex].bookSourceName)").font(.headline).lineLimit(1)
+                                Spacer()
+                                Image(systemName: "chevron.down").foregroundStyle(.secondary)
+                            }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
+                        }.buttonStyle(.plain).padding(.horizontal)
+                    }
+                    // 分类胶囊（对标截图：灰色圆角胶囊，自动换行，不再是横向滚动的 bordered 按钮）
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+                        if categories.isEmpty {
+                            ForEach(fallbackCategories, id: \.self) { c in
+                                Button(c) { loadFallback(keyword: c) }
+                                    .buttonStyle(.plain).font(.subheadline)
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(Capsule().fill(Color.gray.opacity(0.15)))
+                            }
+                        } else {
+                            ForEach(categories) { cat in
+                                Button(cat.title) { selectedCategory = cat; load() }
+                                    .buttonStyle(.plain).font(.subheadline)
+                                    .foregroundStyle(selectedCategory?.id == cat.id ? .white : .primary)
+                                    .padding(.horizontal, 14).padding(.vertical, 7)
+                                    .background(Capsule().fill(selectedCategory?.id == cat.id ? AppTheme.accent : Color.gray.opacity(0.15)))
+                            }
+                        }
+                    }.padding(.horizontal)
+                    // 源列表（对标截图：每行灰色卡片 + 分组符号 + 源名 + 右箭头，点即切换到该源的发现）
+                    ScrollView {
+                        VStack(spacing: 8) {
+                            ForEach(filteredSources) { src in
+                                Button {
+                                    if let i = sources.firstIndex(where: { $0.id == src.id }) {
+                                        selectedSourceIndex = i; refreshCategories(); load()
+                                    }
+                                } label: {
+                                    HStack {
+                                        Text("\(sourceGroupIcon(src)) \(src.bookSourceName)").font(.subheadline).lineLimit(1)
+                                        Spacer()
+                                        Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                                    }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
+                                }.buttonStyle(.plain)
                             }
                         }.padding(.horizontal)
-                    }
+                    }.frame(maxHeight: 220)
                     if loading { ProgressView() }
                     if !discoverError.isEmpty { Text(discoverError).font(.footnote).foregroundStyle(.secondary).padding(.horizontal) }
                     ScrollView {
@@ -81,6 +139,8 @@ struct DiscoveryView: View {
                 }
             }
             .navigationTitle("发现")
+            .toolbarBackground(AppTheme.headerBrown, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .onAppear { refreshCategories(); if !sources.isEmpty { load() } }
             .onChange(of: selectedSourceIndex) { _, _ in refreshCategories(); load() }
             .sheet(item: $selectedResult) { r in
