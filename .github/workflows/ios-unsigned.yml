@@ -27,6 +27,12 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
+      - name: Fix display name
+        run: |
+          APP=build/ReaderPro.xcarchive/Products/Applications/ReaderPro.app/Info.plist
+          /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName 阅读Pro" "$APP"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleName 阅读Pro" "$APP"
+
       - name: Package unsigned IPA
         run: |
           mkdir -p Payload
