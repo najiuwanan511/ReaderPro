@@ -1,18 +1,19 @@
-name: CialloReaderIOS
+name: ReaderPro
 options:
   bundleIdPrefix: com.selfuse
 targets:
-  CialloReaderIOS:
+  ReaderPro:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
     sources:
-      - path: CialloReaderIOS
+      - path: ReaderPro
     info:
-      path: CialloReaderIOS/Info.plist
+      path: ReaderPro/Info.plist
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.cialloreader
+        PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.readerpro
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

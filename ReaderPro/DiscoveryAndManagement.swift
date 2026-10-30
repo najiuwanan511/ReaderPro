@@ -13,6 +13,7 @@ struct DiscoveryView: View {
     @State private var selectedResult: SourceBook?
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
+    @State private var detailIsComic = false
     @State private var discoverError = ""
     let fallbackCategories = ["热门", "玄幻", "言情", "科幻", "历史", "悬疑", "武侠", "都市"]
 
@@ -96,7 +97,7 @@ struct DiscoveryView: View {
                         if !r.intro.isEmpty { Text(r.intro) }
                         if loadingDetail { ProgressView("正在拉取目录…") } else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
                         Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
+                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: detailIsComic ? "comic" : "web")
                             book.chapters = detailChapters
                             store.updateBook(book); selectedResult = nil
                         }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
@@ -146,6 +147,7 @@ struct DiscoveryView: View {
         guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
             loadingDetail = false; return
         }
+        detailIsComic = src.isComic
         Task {
             do {
                 let chs = try await src.fetchChapters(book: r)
@@ -172,6 +174,7 @@ struct SourceManagementView: View {
     @State private var qrResult = ""
     @State private var qrError = ""
     @State private var filterText = ""
+    @State private var selectedSource: LegadoSource?
 
     var body: some View {
         List {
@@ -189,6 +192,7 @@ struct SourceManagementView: View {
                             if !src.bookSourceGroup.isEmpty { Text("分组：\(src.bookSourceGroup)").font(.caption2).foregroundStyle(.secondary) }
                         }
                         Spacer()
+                        Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(.blue) }
                         Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
                             if let i = store.sources.firstIndex(where: { $0.id == src.id }) { store.sources[i].enabled = v; store.save() }
                         })).labelsHidden()
@@ -209,6 +213,9 @@ struct SourceManagementView: View {
             }
         }
         .navigationTitle("书源管理")
+        .sheet(item: $selectedSource) { src in
+            NavigationStack { SourceDetailView(source: src) }
+        }
         .sheet(isPresented: $showPaste) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
@@ -349,6 +356,185 @@ struct ReplaceRuleEditorView: View {
         .navigationTitle("编辑替换规则")
         .onAppear {
             if let r = store.replaceRules.first(where: { $0.id == ruleId }) { name = r.name; pattern = r.pattern; replacement = r.replacement }
+        }
+    }
+}
+
+// MARK: - 书源详情（查看规则 + 测试搜索）
+
+struct SourceDetailView: View {
+    let source: LegadoSource
+    @State private var testKey = ""
+    @State private var testResults: [SourceBook] = []
+    @State private var testing = false
+    @State private var testError = ""
+    @State private var showBrowser = false
+
+    var body: some View {
+        List {
+            Section("基本信息") {
+                LabeledContent("名称", value: source.bookSourceName)
+                LabeledContent("地址", value: source.bookSourceUrl.isEmpty ? "（空）" : source.bookSourceUrl)
+                if !source.bookSourceGroup.isEmpty { LabeledContent("分组", value: source.bookSourceGroup) }
+                LabeledContent("搜索地址", value: source.searchUrl.isEmpty ? "（空）" : source.searchUrl)
+                LabeledContent("发现地址", value: source.effectiveDiscoverUrl.isEmpty ? "（空）" : source.effectiveDiscoverUrl)
+            }
+            Section("搜索规则") {
+                ruleRow("列表", source.ruleSearch.bookList)
+                ruleRow("书名", source.ruleSearch.name)
+                ruleRow("作者", source.ruleSearch.author)
+                ruleRow("链接", source.ruleSearch.bookUrl)
+                ruleRow("封面", source.ruleSearch.coverUrl)
+                ruleRow("简介", source.ruleSearch.intro)
+            }
+            Section("目录规则") {
+                ruleRow("章节列表", source.ruleToc.chapterList)
+                ruleRow("章节名", source.ruleToc.chapterName)
+                ruleRow("章节链接", source.ruleToc.chapterUrl)
+                ruleRow("下一页目录", source.ruleToc.nextTocUrl)
+            }
+            Section("正文规则") {
+                ruleRow("正文", source.ruleContent.content)
+                ruleRow("下一页正文", source.ruleContent.nextContentUrl)
+                ruleRow("净化", source.ruleContent.replaceRegex)
+            }
+            Section("打开") {
+                if !source.bookSourceUrl.isEmpty {
+                    Button("在浏览器打开书源网站") { showBrowser = true }
+                }
+            }
+            Section("测试搜索") {
+                HStack {
+                    TextField("关键词", text: $testKey).textFieldStyle(.roundedBorder)
+                    Button("搜索") { test() }.disabled(testKey.isEmpty || testing)
+                }
+                if testing { ProgressView() }
+                if !testError.isEmpty { Text(testError).font(.footnote).foregroundStyle(.red) }
+                ForEach(testResults) { r in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(r.title).font(.subheadline).bold()
+                        if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
+                        if !r.intro.isEmpty { Text(r.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                    }
+                }
+            }
+        }
+        .navigationTitle(source.bookSourceName)
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showBrowser) {
+            NavigationStack { BrowserView(initialURL: source.bookSourceUrl) }
+        }
+    }
+
+    func ruleRow(_ label: String, _ value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value.isEmpty ? "（空）" : value).font(.footnote).textSelection(.enabled)
+        }
+    }
+
+    func test() {
+        testing = true; testError = ""; testResults = []
+        let key = testKey
+        Task {
+            do {
+                let r = try await source.search(key: key)
+                await MainActor.run { testResults = r; testing = false }
+            } catch {
+                await MainActor.run { testError = error.localizedDescription; testing = false }
+            }
+        }
+    }
+}
+
+// MARK: - 订阅源管理（Legado rssSource：源仓库导航 / RSS 订阅源）
+
+struct RssSourceManagementView: View {
+    @ObservedObject var store: BookStore
+    @State private var showPaste = false
+    @State private var pasteText = ""
+    @State private var pasteError = ""
+    @State private var showNetwork = false
+    @State private var networkURL = ""
+    @State private var networkError = ""
+    @State private var networkLoading = false
+    @State private var openSource: RssSource?
+
+    var body: some View {
+        List {
+            Section("订阅源列表（共 \(store.rssSources.count) 个）") {
+                if store.rssSources.isEmpty {
+                    Text("还没有订阅源。订阅源是「源仓库导航书签」——导入后点右上的浏览器图标即可进源仓库找书源；带规则的源是 RSS 订阅源。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                ForEach(store.rssSources) { src in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(src.sourceName.isEmpty ? "（未命名）" : src.sourceName).font(.headline)
+                            Text(src.sourceUrl).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            if !src.sourceGroup.isEmpty { Text("分组：\(src.sourceGroup)").font(.caption2).foregroundStyle(.secondary) }
+                            if src.isRssRuleSource { Text("RSS 规则源").font(.caption2).foregroundStyle(.blue) }
+                        }
+                        Spacer()
+                        Button { openSource = src } label: { Image(systemName: "safari").foregroundStyle(.blue) }
+                        Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
+                            if let i = store.rssSources.firstIndex(where: { $0.id == src.id }) { store.rssSources[i].enabled = v; store.save() }
+                        })).labelsHidden()
+                    }
+                }
+                .onDelete { idx in
+                    for i in idx.sorted(by: >) { if i < store.rssSources.count { store.rssSources.remove(at: i) } }
+                    store.save()
+                }
+            }
+            Section("导入") {
+                Button("粘贴 JSON 导入") { showPaste = true }
+                Button("网络链接导入") { showNetwork = true }
+                Text("订阅源是 Legado rssSource JSON（sourceName/sourceUrl 字段）。yckceo 官方源仓库订阅：https://www.yckceo.com/yuedu/rss/json/id/193.json ，列表页：https://www.yckceo.com/yuedu/rss/index.html")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("订阅源管理")
+        .sheet(item: $openSource) { src in
+            NavigationStack { BrowserView(initialURL: src.sourceUrl.isEmpty ? "https://www.yckceo.com" : src.sourceUrl) }
+        }
+        .sheet(isPresented: $showPaste) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextEditor(text: $pasteText).border(Color.gray.opacity(0.3))
+                    if !pasteError.isEmpty { Text(pasteError).foregroundStyle(.red).font(.footnote) }
+                    Button("导入") {
+                        let result = importRssSourcesDetailed(pasteText)
+                        if result.sources.isEmpty { pasteError = "解析失败：请确认是 rssSource 订阅源 JSON（sourceName/sourceUrl 字段）" }
+                        else { store.rssSources.append(contentsOf: result.sources); store.save(); showPaste = false; pasteText = "" }
+                    }
+                    Spacer()
+                }.padding().navigationTitle("粘贴导入").toolbar { Button("关闭") { showPaste = false } }
+            }
+        }
+        .sheet(isPresented: $showNetwork) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("https://… 订阅源链接", text: $networkURL).textFieldStyle(.roundedBorder).autocapitalization(.none)
+                    if !networkError.isEmpty { Text(networkError).foregroundStyle(.red).font(.footnote) }
+                    Button(networkLoading ? "拉取中…" : "拉取并导入") {
+                        networkLoading = true; networkError = ""
+                        Task {
+                            do {
+                                let arr = try await importRssSourcesFromURL(networkURL)
+                                await MainActor.run {
+                                    networkLoading = false
+                                    if arr.isEmpty { networkError = "这个链接里没有解析到订阅源" }
+                                    else { store.rssSources.append(contentsOf: arr); store.save(); showNetwork = false; networkURL = "" }
+                                }
+                            } catch {
+                                await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }
+                            }
+                        }
+                    }.disabled(networkLoading || networkURL.isEmpty)
+                    Spacer()
+                }.padding().navigationTitle("网络导入").toolbar { Button("关闭") { showNetwork = false } }
+            }
         }
     }
 }

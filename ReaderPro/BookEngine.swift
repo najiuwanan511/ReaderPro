@@ -8,8 +8,22 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
     var id: String
     var title: String
     var text: String
-    init(id: String = UUID().uuidString, title: String, text: String) {
-        self.id = id; self.title = title; self.text = text
+    var imageUrls: [String] = []
+    init(id: String = UUID().uuidString, title: String, text: String, imageUrls: [String] = []) {
+        self.id = id; self.title = title; self.text = text; self.imageUrls = imageUrls
+    }
+    var isComic: Bool { !imageUrls.isEmpty }
+    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        text = (try? c.decode(String.self, forKey: .text)) ?? ""
+        imageUrls = (try? c.decode([String].self, forKey: .imageUrls)) ?? []
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(text, forKey: .text); try c.encode(imageUrls, forKey: .imageUrls)
     }
 }
 
@@ -48,9 +62,12 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var kind: String // txt, epub, cbz, web
     var chapterIndex: Int = 0
     var paragraphIndex: Int = 0
+    var charOffset: Int = 0
     var progress: Double = 0
     var lastRead: Date = Date()
     var totalMinutes: Int = 0
+    var favorite: Bool = false
+    var group: String = ""
     var chapters: [BookChapter] = []
     var imageNames: [String] = []
 }
@@ -369,10 +386,27 @@ class BookStore: ObservableObject {
     @Published var books: [LocalBook] = []
     @Published var bookmarks: [Bookmark] = []
     @Published var sources: [LegadoSource] = []
+    @Published var rssSources: [RssSource] = []
     @Published var replaceRules: [ReplaceRule] = []
     @Published var fontSize: Double = 19
     @Published var lineSpacing: Double = 8
-    @Published var theme: Int = 0 // 0 white, 1 sepia, 2 night
+    @Published var paragraphSpacing: Double = 10
+    @Published var pagePaddingH: Double = 18
+    @Published var pagePaddingV: Double = 14
+    @Published var brightness: Double = -1 // -1 跟随系统
+    @Published var pageTurn: Int = 1 // 0 覆盖, 1 平移, 2 滚动, 3 无, 4 仿真
+    @Published var pageTurnSpeed: Double = 0.25
+    @Published var fontName: String = ""
+    @Published var showHeader: Bool = true
+    @Published var showFooter: Bool = true
+    @Published var ttsRate: Double = 0.5
+    @Published var ttsPitch: Double = 1.0
+    @Published var theme: Int = 0 // 阅读主题索引（见 ReaderCore.readerThemes）
+    // WebDAV 云备份
+    @Published var webdavURL: String = ""
+    @Published var webdavUser: String = ""
+    @Published var webdavPassword: String = ""
+    @Published var webdavPath: String = "/ReaderPro/backup.ciallo"
 
     static let booksURL: URL = {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("books.json")
@@ -386,7 +420,30 @@ class BookStore: ObservableObject {
         return d
     }()
 
-    struct Meta: Codable { var bookmarks: [Bookmark]; var sources: [LegadoSource]; var replaceRules: [ReplaceRule] = []; var fontSize: Double; var lineSpacing: Double; var theme: Int }
+    struct Meta: Codable {
+        var bookmarks: [Bookmark]
+        var sources: [LegadoSource]
+        var rssSources: [RssSource] = []
+        var replaceRules: [ReplaceRule] = []
+        var fontSize: Double
+        var lineSpacing: Double
+        var paragraphSpacing: Double = 10
+        var pagePaddingH: Double = 18
+        var pagePaddingV: Double = 14
+        var brightness: Double = -1
+        var pageTurn: Int = 1
+        var pageTurnSpeed: Double = 0.25
+        var fontName: String = ""
+        var showHeader: Bool = true
+        var showFooter: Bool = true
+        var ttsRate: Double = 0.5
+        var ttsPitch: Double = 1.0
+        var theme: Int
+        var webdavURL: String = ""
+        var webdavUser: String = ""
+        var webdavPassword: String = ""
+        var webdavPath: String = "/ReaderPro/backup.ciallo"
+    }
 
     init() { load() }
 
@@ -400,7 +457,13 @@ class BookStore: ObservableObject {
         let metaExists = FileManager.default.fileExists(atPath: Self.metaURL.path)
         if let d = try? Data(contentsOf: Self.booksURL), let b = try? JSONDecoder().decode([LocalBook].self, from: d) { books = b }
         if let d = try? Data(contentsOf: Self.metaURL), let m = try? JSONDecoder().decode(Meta.self, from: d) {
-            bookmarks = m.bookmarks; sources = m.sources; replaceRules = m.replaceRules; fontSize = m.fontSize; lineSpacing = m.lineSpacing; theme = m.theme
+            bookmarks = m.bookmarks; sources = m.sources; rssSources = m.rssSources; replaceRules = m.replaceRules
+            fontSize = m.fontSize; lineSpacing = m.lineSpacing; paragraphSpacing = m.paragraphSpacing
+            pagePaddingH = m.pagePaddingH; pagePaddingV = m.pagePaddingV; brightness = m.brightness
+            pageTurn = m.pageTurn; fontName = m.fontName; showHeader = m.showHeader; showFooter = m.showFooter
+            ttsRate = m.ttsRate; ttsPitch = m.ttsPitch; theme = m.theme
+            pageTurnSpeed = m.pageTurnSpeed
+            webdavURL = m.webdavURL; webdavUser = m.webdavUser; webdavPassword = m.webdavPassword; webdavPath = m.webdavPath
         }
         let beforeCount = sources.count
         sources.removeAll { $0.bookSourceName.contains("Gutenberg") && $0.bookSourceUrl.contains("gutenberg.org") }
@@ -409,7 +472,12 @@ class BookStore: ObservableObject {
     }
     func save() {
         if let d = try? JSONEncoder().encode(books) { try? d.write(to: Self.booksURL) }
-        let m = Meta(bookmarks: bookmarks, sources: sources, replaceRules: replaceRules, fontSize: fontSize, lineSpacing: lineSpacing, theme: theme)
+        let m = Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
+                     fontSize: fontSize, lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing,
+                     pagePaddingH: pagePaddingH, pagePaddingV: pagePaddingV, brightness: brightness,
+                     pageTurn: pageTurn, pageTurnSpeed: pageTurnSpeed, fontName: fontName, showHeader: showHeader, showFooter: showFooter,
+                     ttsRate: ttsRate, ttsPitch: ttsPitch, theme: theme,
+                     webdavURL: webdavURL, webdavUser: webdavUser, webdavPassword: webdavPassword, webdavPath: webdavPath)
         if let d = try? JSONEncoder().encode(m) { try? d.write(to: Self.metaURL) }
     }
     func updateBook(_ book: LocalBook) {
@@ -433,4 +501,108 @@ class BookStore: ObservableObject {
         return out
     }
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
+
+    func sourceForBook(_ b: LocalBook) -> LegadoSource? {
+        if !b.sourceUrl.isEmpty, let s = sources.first(where: { $0.bookSourceUrl == b.sourceUrl }) { return s }
+        if !b.sourceName.isEmpty, let s = sources.first(where: { $0.bookSourceName == b.sourceName }) { return s }
+        return nil
+    }
+
+    // MARK: 备份（.ciallo 内容）
+
+    func exportBackupData() -> Data {
+        var files: [(name: String, data: Data)] = []
+        if let d = try? JSONEncoder().encode(books) { files.append((name: "books.json", data: d)) }
+        let m = Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
+                     fontSize: fontSize, lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing,
+                     pagePaddingH: pagePaddingH, pagePaddingV: pagePaddingV, brightness: brightness,
+                     pageTurn: pageTurn, pageTurnSpeed: pageTurnSpeed, fontName: fontName, showHeader: showHeader, showFooter: showFooter,
+                     ttsRate: ttsRate, ttsPitch: ttsPitch, theme: theme,
+                     webdavURL: webdavURL, webdavUser: webdavUser, webdavPassword: webdavPassword, webdavPath: webdavPath)
+        if let d = try? JSONEncoder().encode(m) { files.append((name: "meta.json", data: d)) }
+        let fm = FileManager.default
+        if let items = try? fm.contentsOfDirectory(at: Self.filesDir, includingPropertiesForKeys: nil) {
+            for url in items {
+                if url.hasDirectoryPath {
+                    if let subs = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+                        for s in subs { if let d = try? Data(contentsOf: s) { files.append((name: "files/\(url.lastPathComponent)/\(s.lastPathComponent)", data: d)) } }
+                    }
+                } else if let d = try? Data(contentsOf: url) { files.append((name: "files/\(url.lastPathComponent)", data: d)) }
+            }
+        }
+        return writeStoredZip(files)
+    }
+
+    /// 导入备份内容，返回 nil 表示成功，否则返回错误信息
+    func importBackupData(_ data: Data) -> String? {
+        let files = unzipToMemory(data)
+        guard let booksData = files["books.json"], let decoded = try? JSONDecoder().decode([LocalBook].self, from: booksData) else {
+            return "这不是有效的 .ciallo 备份（里面没有 books.json）"
+        }
+        if let d = try? JSONEncoder().encode(decoded) { try? d.write(to: Self.booksURL) }
+        if let metaData = files["meta.json"] { try? metaData.write(to: Self.metaURL) }
+        for (name, d) in files where name.hasPrefix("files/") {
+            let rel = String(name.dropFirst(6))
+            let dest = Self.filesDir.appendingPathComponent(rel)
+            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? d.write(to: dest)
+        }
+        load()
+        return nil
+    }
+
+    // MARK: 整本下载（在线书缓存全部章节）
+
+    func downloadAllChapters(bookId: String, onProgress: @escaping (Int, Int) -> Void) async {
+        guard let book = books.first(where: { $0.id == bookId }),
+              let src = sourceForBook(book) else { return }
+        let pending = book.chapters.enumerated().filter { $0.element.text.hasPrefix("__URL__") }
+        let total = pending.count
+        guard total > 0 else { return }
+        var done = 0
+        var index = 0
+        while index < pending.count {
+            let batch = Array(pending[index..<min(index + 8, pending.count)])
+            index += batch.count
+            await withTaskGroup(of: (Int, String).self) { group in
+                for (i, ch) in batch {
+                    group.addTask {
+                        if let c = try? await src.fetchChapterContent(ch) {
+                            return (i, c.isEmpty ? "（本章没有正文）" : c)
+                        }
+                        return (i, "")
+                    }
+                }
+                var updates: [Int: String] = [:]
+                for await (i, c) in group { updates[i] = c }
+                await MainActor.run {
+                    if let bi = self.books.firstIndex(where: { $0.id == bookId }) {
+                        for (i, c) in updates where i < self.books[bi].chapters.count && !c.isEmpty {
+                            self.books[bi].chapters[i].text = c
+                        }
+                    }
+                    done += batch.count
+                    onProgress(min(done, total), total)
+                }
+            }
+        }
+        save()
+    }
+
+    // MARK: 换源（用新书源重新拉目录，保留书）
+
+    func reloadBookFromSource(bookId: String, source: LegadoSource, sourceBook: SourceBook) async throws {
+        let chapters = try await source.fetchChapters(book: sourceBook)
+        await MainActor.run {
+            if var nb = books.first(where: { $0.id == bookId }) {
+                nb.sourceName = source.bookSourceName
+                nb.sourceUrl = source.bookSourceUrl
+                nb.chapters = chapters
+                nb.chapterIndex = 0
+                nb.charOffset = 0
+                nb.progress = 0
+                updateBook(nb)
+            }
+        }
+    }
 }

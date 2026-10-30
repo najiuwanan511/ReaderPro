@@ -983,6 +983,52 @@ extension LegadoSource {
         }
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    // 拉取漫画章节的图片 URL 列表（用 ruleContent.imageUrl 规则，兜底 img@src，支持多页正文）
+    func fetchChapterImages(_ chapter: BookChapter) async throws -> [String] {
+        guard chapter.text.hasPrefix("__URL__") else { return chapter.imageUrls }
+        let url = String(chapter.text.dropFirst(7))
+        var images: [String] = []
+        var currentUrl: String? = url
+        var pages = 0
+        while let pageUrl = currentUrl, pages < 5 {
+            pages += 1
+            let html = try await fetchText(urlString: pageUrl)
+            var pageImages: [String] = []
+            // 1) 优先用漫画书源的图片规则 imageUrl（如 @css:.content img@src）
+            if !ruleContent.imageUrl.isEmpty {
+                pageImages = applyRule(html, ruleContent.imageUrl, base: bookSourceUrl)
+                    .map { resolveUrl($0, base: bookSourceUrl) }
+            }
+            // 2) 兜底：从 content 规则结果里提图片
+            if pageImages.isEmpty && !ruleContent.content.isEmpty {
+                let parts = applyRule(html, ruleContent.content, base: bookSourceUrl)
+                for p in parts {
+                    if p.hasPrefix("http") || p.hasPrefix("//") {
+                        pageImages.append(resolveUrl(p, base: bookSourceUrl))
+                    } else if p.lowercased().contains("<img") {
+                        pageImages.append(contentsOf: cssExtractAll(p, "img@src").map { resolveUrl($0, base: bookSourceUrl) })
+                    }
+                }
+            }
+            // 3) 兜底：从整页 HTML 提所有 img 的 src
+            if pageImages.isEmpty {
+                pageImages = cssExtractAll(html, "img@src").map { resolveUrl($0, base: bookSourceUrl) }
+            }
+            pageImages = pageImages.filter { !$0.isEmpty && !$0.hasPrefix("data:") }
+            images.append(contentsOf: pageImages)
+            // 下一页正文（漫画一章可能分多页）
+            if !ruleContent.nextContentUrl.isEmpty {
+                let next = applyRuleFirst(html, ruleContent.nextContentUrl, base: bookSourceUrl)
+                if !next.isEmpty {
+                    let nextUrl = resolveUrl(next, base: bookSourceUrl)
+                    if nextUrl != pageUrl { currentUrl = nextUrl; continue }
+                }
+            }
+            currentUrl = nil
+        }
+        return images
+    }
 }
 
 // Multi-source search: batched TaskGroup (20 at a time, so 1000 sources do not

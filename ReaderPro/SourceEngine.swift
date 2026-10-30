@@ -23,6 +23,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var ruleContent: RuleSet = RuleSet()
     var ruleDiscover: RuleSet = RuleSet()
     var ruleExplore: RuleSet = RuleSet()
+    var bookSourceType: Int = 0 // 0 文本, 1 音频, 2 图片/漫画
     struct RuleSet: Codable, Equatable {
         var bookList: String = ""
         var name: String = ""
@@ -41,8 +42,9 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         var wordCount: String = ""
         var lastChapter: String = ""
         var replaceRegex: String = ""
+        var imageUrl: String = ""
         enum CodingKeys: String, CodingKey {
-            case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex
+            case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex, imageUrl
         }
         init() {}
         init(from decoder: Decoder) throws {
@@ -52,7 +54,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
             tocUrl = c.tolerantString(.tocUrl); chapterList = c.tolerantString(.chapterList); chapterName = c.tolerantString(.chapterName)
             chapterUrl = c.tolerantString(.chapterUrl); content = c.tolerantString(.content); nextContentUrl = c.tolerantString(.nextContentUrl)
             nextTocUrl = c.tolerantString(.nextTocUrl); kind = c.tolerantString(.kind); wordCount = c.tolerantString(.wordCount)
-            lastChapter = c.tolerantString(.lastChapter); replaceRegex = c.tolerantString(.replaceRegex)
+            lastChapter = c.tolerantString(.lastChapter); replaceRegex = c.tolerantString(.replaceRegex); imageUrl = c.tolerantString(.imageUrl)
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -61,11 +63,11 @@ struct LegadoSource: Identifiable, Codable, Equatable {
             try c.encode(tocUrl, forKey: .tocUrl); try c.encode(chapterList, forKey: .chapterList); try c.encode(chapterName, forKey: .chapterName)
             try c.encode(chapterUrl, forKey: .chapterUrl); try c.encode(content, forKey: .content); try c.encode(nextContentUrl, forKey: .nextContentUrl)
             try c.encode(nextTocUrl, forKey: .nextTocUrl); try c.encode(kind, forKey: .kind); try c.encode(wordCount, forKey: .wordCount)
-            try c.encode(lastChapter, forKey: .lastChapter); try c.encode(replaceRegex, forKey: .replaceRegex)
+            try c.encode(lastChapter, forKey: .lastChapter); try c.encode(replaceRegex, forKey: .replaceRegex); try c.encode(imageUrl, forKey: .imageUrl)
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -80,6 +82,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         ruleContent = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleContent)) ?? RuleSet()
         ruleDiscover = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleDiscover)) ?? RuleSet()
         ruleExplore = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleExplore)) ?? RuleSet()
+        bookSourceType = c.tolerantInt(.bookSourceType)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -87,11 +90,13 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(bookSourceGroup, forKey: .bookSourceGroup); try c.encode(enabled, forKey: .enabled); try c.encode(searchUrl, forKey: .searchUrl)
         try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
         try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
-        try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore)
+        try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
     }
     // Legado's real discovery fields are exploreUrl + ruleExplore, not discoverUrl.
     var effectiveDiscoverUrl: String { discoverUrl.isEmpty ? exploreUrl : discoverUrl }
     var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }
+    // 漫画书源：bookSourceType == 2，或正文规则里带图片提取规则 imageUrl
+    var isComic: Bool { bookSourceType == 2 || !ruleContent.imageUrl.isEmpty }
 }
 
 extension KeyedDecodingContainer {
@@ -108,12 +113,18 @@ extension KeyedDecodingContainer {
         if let s = try? decode(String.self, forKey: key) { return s == "true" || s == "1" }
         return defaultValue
     }
+    func tolerantInt(_ key: Key, defaultValue: Int = 0) -> Int {
+        if let n = try? decode(Int.self, forKey: key) { return n }
+        if let d = try? decode(Double.self, forKey: key) { return Int(d) }
+        if let s = try? decode(String.self, forKey: key), let n = Int(s.trimmingCharacters(in: .whitespaces)) { return n }
+        return defaultValue
+    }
 }
 
 func fetchText(urlString: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
     var req = URLRequest(url: url, timeoutInterval: 25)
-    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) CialloReaderIOS/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
     let (data, _) = try await URLSession.shared.data(for: req)
     return decodeTextData(data)
 }
@@ -122,7 +133,7 @@ func fetchText(urlString: String, method: String, body: String) async throws -> 
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
     var req = URLRequest(url: url, timeoutInterval: 25)
     req.httpMethod = method
-    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) CialloReaderIOS/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
     req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
     req.httpBody = body.data(using: .utf8)
     let (data, _) = try await URLSession.shared.data(for: req)
@@ -361,6 +372,137 @@ func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
             seen.insert(k); deduped.append(s)
         }
         if !deduped.isEmpty { return deduped }
+    }
+    return []
+}
+
+// MARK: - Legado 订阅源（RssSource）
+// 订阅源与书源并列：sourceName/sourceUrl 标识，规则字段 ruleArticles/ruleTitle/
+// ruleLink/ruleContent 等用于 RSS/网页订阅解析。yckceo 的订阅源绝大多数是
+// singleUrl 导航型（sourceUrl 指向网站或源仓库首页），作用是「源仓库导航书签」。
+
+struct RssSource: Identifiable, Codable, Equatable {
+    var id: String = UUID().uuidString
+    var sourceName: String = ""
+    var sourceUrl: String = ""
+    var sourceIcon: String = ""
+    var sourceGroup: String = ""
+    var sourceComment: String = ""
+    var enabled: Bool = true
+    var articleStyle: Int = 0
+    var customOrder: Int = 0
+    var enableJs: Bool = true
+    var enabledCookieJar: Bool = true
+    var loadWithBaseUrl: Bool = true
+    var singleUrl: Bool = true
+    var lastUpdateTime: Int64 = 0
+    // 列表 / 正文规则（真正的 RSS 规则源才有值）
+    var sortUrl: String = ""
+    var ruleArticles: String = ""
+    var ruleNextPage: String = ""
+    var ruleTitle: String = ""
+    var rulePubDate: String = ""
+    var ruleDescription: String = ""
+    var ruleImage: String = ""
+    var ruleLink: String = ""
+    var ruleContent: String = ""
+
+    enum CodingKeys: String, CodingKey {
+        case id, sourceName, sourceUrl, sourceIcon, sourceGroup, sourceComment, enabled, articleStyle, customOrder, enableJs, enabledCookieJar, loadWithBaseUrl, singleUrl, lastUpdateTime, sortUrl, ruleArticles, ruleNextPage, ruleTitle, rulePubDate, ruleDescription, ruleImage, ruleLink, ruleContent
+    }
+    init() {}
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id), !s.isEmpty { id = s }
+        sourceName = c.tolerantString(.sourceName); sourceUrl = c.tolerantString(.sourceUrl)
+        sourceIcon = c.tolerantString(.sourceIcon); sourceGroup = c.tolerantString(.sourceGroup)
+        sourceComment = c.tolerantString(.sourceComment)
+        enabled = c.tolerantBool(.enabled, defaultValue: true)
+        articleStyle = c.tolerantInt(.articleStyle); customOrder = c.tolerantInt(.customOrder)
+        enableJs = c.tolerantBool(.enableJs, defaultValue: true)
+        enabledCookieJar = c.tolerantBool(.enabledCookieJar, defaultValue: true)
+        loadWithBaseUrl = c.tolerantBool(.loadWithBaseUrl, defaultValue: true)
+        singleUrl = c.tolerantBool(.singleUrl, defaultValue: true)
+        lastUpdateTime = Int64(c.tolerantInt(.lastUpdateTime))
+        sortUrl = c.tolerantString(.sortUrl)
+        ruleArticles = c.tolerantString(.ruleArticles); ruleNextPage = c.tolerantString(.ruleNextPage)
+        ruleTitle = c.tolerantString(.ruleTitle); rulePubDate = c.tolerantString(.rulePubDate)
+        ruleDescription = c.tolerantString(.ruleDescription); ruleImage = c.tolerantString(.ruleImage)
+        ruleLink = c.tolerantString(.ruleLink); ruleContent = c.tolerantString(.ruleContent)
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(sourceName, forKey: .sourceName); try c.encode(sourceUrl, forKey: .sourceUrl)
+        try c.encode(sourceIcon, forKey: .sourceIcon); try c.encode(sourceGroup, forKey: .sourceGroup); try c.encode(sourceComment, forKey: .sourceComment)
+        try c.encode(enabled, forKey: .enabled); try c.encode(articleStyle, forKey: .articleStyle); try c.encode(customOrder, forKey: .customOrder)
+        try c.encode(enableJs, forKey: .enableJs); try c.encode(enabledCookieJar, forKey: .enabledCookieJar); try c.encode(loadWithBaseUrl, forKey: .loadWithBaseUrl)
+        try c.encode(singleUrl, forKey: .singleUrl); try c.encode(lastUpdateTime, forKey: .lastUpdateTime)
+        try c.encode(sortUrl, forKey: .sortUrl); try c.encode(ruleArticles, forKey: .ruleArticles); try c.encode(ruleNextPage, forKey: .ruleNextPage)
+        try c.encode(ruleTitle, forKey: .ruleTitle); try c.encode(rulePubDate, forKey: .rulePubDate); try c.encode(ruleDescription, forKey: .ruleDescription)
+        try c.encode(ruleImage, forKey: .ruleImage); try c.encode(ruleLink, forKey: .ruleLink); try c.encode(ruleContent, forKey: .ruleContent)
+    }
+    // 真正带列表规则的 RSS 订阅源
+    var isRssRuleSource: Bool { !ruleArticles.isEmpty }
+}
+
+struct RssImportResult { var sources: [RssSource]; var skipped: Int }
+
+func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
+    let text = extractJSONSubstring(unescapeHTMLJSON(rawText))
+    guard let data = text.data(using: .utf8),
+          let root = try? JSONSerialization.jsonObject(with: data) else {
+        return RssImportResult(sources: [], skipped: 0)
+    }
+    var dicts: [[String: Any]] = []
+    if let arr = root as? [Any] {
+        dicts = arr.compactMap { $0 as? [String: Any] }
+    } else if let obj = root as? [String: Any] {
+        if let arr = obj["rssSources"] as? [Any] { dicts = arr.compactMap { $0 as? [String: Any] } }
+        else if obj["sourceName"] != nil || obj["sourceUrl"] != nil { dicts = [obj] }
+    }
+    var out: [RssSource] = []
+    var skipped = 0
+    for dict in dicts {
+        guard let d = try? JSONSerialization.data(withJSONObject: dict),
+              let s = try? JSONDecoder().decode(RssSource.self, from: d),
+              !s.sourceName.isEmpty || !s.sourceUrl.isEmpty else { skipped += 1; continue }
+        out.append(s)
+    }
+    var seen = Set<String>(); var deduped: [RssSource] = []
+    for s in out {
+        let k = s.sourceName + "|" + s.sourceUrl
+        if seen.contains(k) { continue }
+        seen.insert(k); deduped.append(s)
+    }
+    return RssImportResult(sources: deduped, skipped: skipped)
+}
+
+func importRssSourcesFromText(_ text: String) -> [RssSource] {
+    importRssSourcesDetailed(text).sources
+}
+
+// yckceo 订阅源详情页(/yuedu/rss/content/id/ID.html) -> 其 JSON API
+func yckceoRssJSONCandidates(_ urlString: String) -> [String] {
+    let u = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let re = try? NSRegularExpression(pattern: "yuedu/rsss?/content/id/(\\d+)\\.html"),
+          let m = re.firstMatch(in: u, range: NSRange(u.startIndex..., in: u)),
+          let idRange = Range(m.range(at: 1), in: u) else { return [] }
+    let id = String(u[idRange])
+    let ns = u as NSString
+    let replaced = ns.replacingCharacters(in: m.range, with: "yuedu/rss/json/id/\(id).json")
+    let alt = ns.replacingCharacters(in: m.range, with: "yuedu/rsss/json/id/\(id).json")
+    return [replaced, alt]
+}
+
+func importRssSourcesFromURL(_ urlString: String) async throws -> [RssSource] {
+    var candidates: [String] = []
+    for c in yckceoRssJSONCandidates(urlString) where !candidates.contains(c) { candidates.append(c) }
+    candidates.append(normalizeSourceURL(urlString))
+    for candidate in candidates {
+        if let text = try? await fetchText(urlString: candidate) {
+            let result = importRssSourcesDetailed(text)
+            if !result.sources.isEmpty { return result.sources }
+        }
     }
     return []
 }

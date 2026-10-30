@@ -31,11 +31,16 @@ struct BookshelfView: View {
     @State private var showExport = false
     @State private var searchText = ""
     @State private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
+    @State private var viewMode = 0 // 0 网格, 1 列表
+    @State private var showFavoritesOnly = false
     @State private var selecting = false
     @State private var selectedIds: Set<String> = []
 
     var filteredBooks: [LocalBook] {
         var list = store.books
+        if showFavoritesOnly {
+            list = list.filter { $0.favorite }
+        }
         if !searchText.isEmpty {
             list = list.filter { $0.title.localizedCaseInsensitiveContains(searchText) || $0.author.localizedCaseInsensitiveContains(searchText) || $0.sourceName.localizedCaseInsensitiveContains(searchText) }
         }
@@ -72,7 +77,7 @@ struct BookshelfView: View {
                 }.pickerStyle(.segmented).padding(.horizontal)
                 if let current = store.books.max(by: { $0.lastRead < $1.lastRead }) {
                     Button {
-                        if current.kind == "cbz" { selectedManga = current } else { selectedBook = current }
+                        if current.kind == "cbz" || current.kind == "comic" { selectedManga = current } else { selectedBook = current }
                     } label: {
                         HStack(spacing: 14) {
                             ZStack {
@@ -98,12 +103,15 @@ struct BookshelfView: View {
                         .padding().background(.ultraThinMaterial).cornerRadius(16)
                     }.buttonStyle(.plain).padding(.horizontal)
                 }
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                if viewMode == 1 {
+                    bookListView
+                } else {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
                     ForEach(filteredBooks) { book in
                         Button {
                             if selecting {
                                 if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
-                            } else if book.kind == "cbz" { selectedManga = book } else { selectedBook = book }
+                            } else if book.kind == "cbz" || book.kind == "comic" { selectedManga = book } else { selectedBook = book }
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack(alignment: .topTrailing) {
@@ -128,12 +136,16 @@ struct BookshelfView: View {
                             }
                         }
                         .contextMenu {
+                            Button(book.favorite ? "取消收藏" : "收藏") {
+                                if let i = store.books.firstIndex(where: { $0.id == book.id }) { store.books[i].favorite.toggle(); store.save() }
+                            }
                             Button("导出 TXT") { exportBook(book) }
                             Button("导出 EPUB") { exportEpubBook(book) }
                             Button(role: .destructive) { store.deleteBook(book) } label: { Text("删除") }
                         }
                     }
                 }.padding()
+                }
                 if filteredBooks.isEmpty && !store.books.isEmpty {
                     Text("没有匹配的书，换个关键词试试。").font(.footnote).foregroundStyle(.secondary).padding()
                 }
@@ -146,6 +158,12 @@ struct BookshelfView: View {
                     Button("取消") { selecting = false; selectedIds.removeAll() }
                 } else {
                     Button("多选") { selecting = true }
+                    Button { showFavoritesOnly.toggle() } label: {
+                        Image(systemName: showFavoritesOnly ? "star.fill" : "star")
+                    }
+                    Button { viewMode = viewMode == 0 ? 1 : 0 } label: {
+                        Image(systemName: viewMode == 0 ? "list.bullet" : "square.grid.2x2")
+                    }
                 }
                 Button { importing = true } label: { Image(systemName: "plus") }
             }
@@ -159,6 +177,59 @@ struct BookshelfView: View {
             .navigationDestination(item: $selectedBook) { book in ReaderView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedManga) { book in MangaView(store: store, bookId: book.id) }
         }
+    }
+
+    @ViewBuilder
+    var bookListView: some View {
+        VStack(spacing: 0) {
+            ForEach(filteredBooks) { book in
+                Button {
+                    if selecting {
+                        if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
+                    } else if book.kind == "cbz" || book.kind == "comic" { selectedManga = book } else { selectedBook = book }
+                } label: {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
+                                    .frame(width: 48, height: 66).clipped().cornerRadius(6)
+                            } else {
+                                RoundedRectangle(cornerRadius: 6).fill(coverGradient(for: book.title)).frame(width: 48, height: 66)
+                                    .overlay(Text(String(book.title.prefix(1))).font(.headline).bold().foregroundStyle(.white))
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(book.title).font(.subheadline).lineLimit(1)
+                            if !book.author.isEmpty { Text(book.author).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                            HStack(spacing: 6) {
+                                if book.totalMinutes > 0 { Text("读 \(book.totalMinutes) 分钟").font(.caption2).foregroundStyle(.secondary) }
+                                Text("\(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
+                            }
+                            ProgressView(value: book.progress)
+                        }
+                        Spacer()
+                        if selecting {
+                            Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(.blue)
+                        } else if book.favorite {
+                            Image(systemName: "star.fill").foregroundStyle(.yellow).font(.caption)
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button(book.favorite ? "取消收藏" : "收藏") {
+                        if let i = store.books.firstIndex(where: { $0.id == book.id }) { store.books[i].favorite.toggle(); store.save() }
+                    }
+                    Button("导出 TXT") { exportBook(book) }
+                    Button("导出 EPUB") { exportEpubBook(book) }
+                    Button(role: .destructive) { store.deleteBook(book) } label: { Text("删除") }
+                }
+                Divider()
+            }
+        }
+        .padding(.horizontal)
     }
 
     func coverGradient(for title: String) -> LinearGradient {
@@ -177,7 +248,7 @@ struct BookshelfView: View {
         第三章 尾声
         示例结束。去“书源”里可以搜索公版书，或者粘贴你自己的 Legado JSON 书源来导入。
         """
-        var book = LocalBook(title: "示例书", author: "CialloReaderIOS", fileName: "sample.txt", kind: "txt")
+        var book = LocalBook(title: "示例书", author: "ReaderPro", fileName: "sample.txt", kind: "txt")
         book.chapters = splitTxtChapters(text, bookTitle: "示例书")
         store.updateBook(book)
     }
@@ -238,339 +309,8 @@ struct BookshelfView: View {
     }
 }
 
-// MARK: - Reader
 
-struct ReaderView: View {
-    @ObservedObject var store: BookStore
-    var bookId: String
-    @State private var chapterIndex = 0
-    @State private var paragraphIndex = 0
-    @State private var showChapters = false
-    @State private var showSettings = false
-    @State private var showSearch = false
-    @State private var searchText = ""
-    @State private var loading = false
-    @State private var errorText = ""
-    @State private var isSpeaking = false
-    @State private var downloadingAll = false
-    @State private var readStart: Date?
-    @State private var translatedText = ""
-    @State private var showTranslation = false
-    @State private var translating = false
-    @State private var pageMode = false
-    @State private var pageIndex = 0
-    var pages: [String] {
-        var out: [String] = []; var cur = ""
-        for p in paragraphs {
-            if cur.count + p.count > 900 && !cur.isEmpty { out.append(cur); cur = "" }
-            cur += (cur.isEmpty ? "" : "\n\n") + p
-        }
-        if !cur.isEmpty { out.append(cur) }
-        return out.isEmpty ? [""] : out
-    }
-    private let speaker = AVSpeechSynthesizer()
-
-    var book: LocalBook? { store.books.first { $0.id == bookId } }
-    var chapter: BookChapter? {
-        guard let b = book, chapterIndex < b.chapters.count else { return nil }
-        return b.chapters[chapterIndex]
-    }
-    var paragraphs: [String] {
-        guard let c = chapter else { return [] }
-        let cleaned = store.purify(c.text)
-        return cleaned.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if loading {
-                ProgressView("正在加载章节…").frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let b = book, let c = chapter {
-                if pageMode {
-                    TabView(selection: $pageIndex) {
-                        ForEach(pages.indices, id: \.self) { i in
-                            ScrollView {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    if i == 0 { Text(c.title).font(.system(size: store.fontSize + 3, weight: .bold)).padding(.bottom, 8) }
-                                    Text(pages[i]).font(.system(size: store.fontSize)).lineSpacing(store.lineSpacing)
-                                    Spacer()
-                                    Text("\(i + 1) / \(pages.count)").font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .trailing)
-                                }.padding()
-                            }.tag(i)
-                        }
-                    }.tabViewStyle(.page(indexDisplayMode: .never))
-                } else {
-                    ScrollViewReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: CGFloat(store.lineSpacing)) {
-                                Text(c.title).font(.system(size: store.fontSize + 3, weight: .bold)).padding(.bottom, 8)
-                                ForEach(paragraphs.indices, id: \.self) { i in
-                                    Text(paragraphs[i])
-                                        .font(.system(size: store.fontSize))
-                                        .lineSpacing(store.lineSpacing)
-                                        .id(i)
-                                        .onTapGesture { paragraphIndex = i; saveProgress() }
-                                }
-                            }
-                            .padding()
-                        }
-                        .onChange(of: paragraphIndex) { _, v in withAnimation { proxy.scrollTo(v, anchor: .top) } }
-                        .onAppear { proxy.scrollTo(min(paragraphIndex, max(paragraphs.count - 1, 0)), anchor: .top) }
-                    }
-                }
-                VStack(spacing: 8) {
-                    HStack {
-                        Button("上一章") { prevChapter() }.disabled(chapterIndex == 0)
-                        Spacer()
-                        Text("\(chapterIndex + 1) / \(b.chapters.count)").font(.caption).foregroundStyle(.secondary)
-                        Spacer()
-                        Button("下一章") { nextChapter() }.disabled(chapterIndex >= b.chapters.count - 1)
-                    }
-                    Slider(value: Binding(get: { Double(paragraphIndex) }, set: { paragraphIndex = Int($0); saveProgress() }), in: 0...Double(max(paragraphs.count - 1, 0)), step: 1)
-                }
-                .padding(.horizontal).padding(.vertical, 8)
-            } else {
-                Text("没有章节").foregroundStyle(.secondary)
-            }
-        }
-        .background(themeColor)
-        .navigationTitle(book?.title ?? "阅读")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                Button { showChapters = true } label: { Image(systemName: "list.bullet") }
-                Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }
-                Button { toggleSpeech() } label: { Image(systemName: isSpeaking ? "stop.circle" : "speaker.wave.2") }
-                Button { pageMode.toggle(); pageIndex = 0 } label: { Image(systemName: pageMode ? "scroll" : "book.pages") }
-                Button { showSettings = true } label: { Image(systemName: "textformat.size") }
-                Button { addBookmark() } label: { Image(systemName: "bookmark") }
-                Button { downloadAll() } label: { Image(systemName: downloadingAll ? "arrow.down.circle.fill" : "arrow.down.circle") }.disabled(downloadingAll || book?.kind != "web")
-                Button { translateCurrent() } label: { Image(systemName: "translate") }.disabled(translating)
-            }
-        }
-        .onAppear {
-            readStart = Date()
-            if let b = book { chapterIndex = b.chapterIndex; paragraphIndex = b.paragraphIndex; loadChapterIfNeeded() }
-        }
-        .onDisappear {
-            if let start = readStart, var b = book {
-                b.totalMinutes += max(0, Int(Date().timeIntervalSince(start) / 60))
-                store.updateBook(b)
-            }
-            saveProgress(); speaker.stopSpeaking(at: .immediate)
-        }
-        .sheet(isPresented: $showChapters) {
-            NavigationStack {
-                List(book?.chapters.indices ?? 0..<0, id: \.self) { i in
-                    Button(book?.chapters[i].title ?? "") { chapterIndex = i; paragraphIndex = 0; saveProgress(); loadChapterIfNeeded(); showChapters = false }
-                }
-                .navigationTitle("目录")
-                .toolbar { Button("关闭") { showChapters = false } }
-            }
-        }
-        .sheet(isPresented: $showSettings) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("字号：\(Int(store.fontSize))").font(.headline)
-                Slider(value: $store.fontSize, in: 14...28, step: 1) { _ in store.save() }
-                Text("行距：\(Int(store.lineSpacing))").font(.headline)
-                Slider(value: $store.lineSpacing, in: 2...20, step: 1) { _ in store.save() }
-                Picker("主题", selection: $store.theme) {
-                    Text("白天").tag(0); Text("护眼").tag(1); Text("夜间").tag(2)
-                }.pickerStyle(.segmented).onChange(of: store.theme) { _, _ in store.save() }
-                Spacer()
-            }.padding().presentationDetents([.medium])
-        }
-        .sheet(isPresented: $showTranslation) {
-            NavigationStack {
-                ScrollView { Text(translatedText).padding() }
-                    .navigationTitle("翻译（本段）")
-                    .toolbar { Button("关闭") { showTranslation = false } }
-            }
-        }
-        .sheet(isPresented: $showSearch) {
-            NavigationStack {
-                VStack {
-                    TextField("在本书里搜索", text: $searchText).textFieldStyle(.roundedBorder).padding()
-                    List(searchResults, id: \.self) { line in
-                        Button(line) {
-                            if let i = paragraphs.firstIndex(of: line) { paragraphIndex = i; saveProgress() }
-                            showSearch = false
-                        }
-                    }
-                }
-                .navigationTitle("书内搜索")
-                .toolbar { Button("关闭") { showSearch = false } }
-            }
-        }
-        .alert("加载失败", isPresented: .constant(!errorText.isEmpty)) {
-            Button("好") { errorText = "" }
-        } message: { Text(errorText) }
-    }
-
-    var themeColor: Color {
-        switch store.theme { case 1: return Color(red: 0.98, green: 0.94, blue: 0.85); case 2: return Color(red: 0.12, green: 0.12, blue: 0.14); default: return Color.white }
-    }
-    var searchResults: [String] {
-        guard !searchText.isEmpty else { return [] }
-        return paragraphs.filter { $0.contains(searchText) }
-    }
-    func saveProgress() {
-        guard var b = book else { return }
-        b.chapterIndex = chapterIndex; b.paragraphIndex = paragraphIndex
-        if !b.chapters.isEmpty { b.progress = Double(chapterIndex) / Double(b.chapters.count) }
-        b.lastRead = Date()
-        store.updateBook(b)
-    }
-    func sourceForBook(_ b: LocalBook) -> LegadoSource? {
-        if !b.sourceUrl.isEmpty, let s = store.sources.first(where: { $0.bookSourceUrl == b.sourceUrl }) { return s }
-        if !b.sourceName.isEmpty, let s = store.sources.first(where: { $0.bookSourceName == b.sourceName }) { return s }
-        return nil
-    }
-    func loadChapterIfNeeded() {
-        guard let b = book, chapterIndex < b.chapters.count else { return }
-        let ch = b.chapters[chapterIndex]
-        guard ch.text.hasPrefix("__URL__") else { return }
-        loading = true
-        Task {
-            do {
-                guard let src = sourceForBook(b) else { await MainActor.run { errorText = "这本书的书源已删除或未启用，无法拉取在线章节（请在书源管理里重新导入该书源）"; loading = false }; return }
-                let content = try await src.fetchChapterContent(ch)
-                await MainActor.run {
-                    if var nb = store.books.first(where: { $0.id == bookId }) {
-                        nb.chapters[chapterIndex].text = content.isEmpty ? "（本章没有正文）" : content
-                        store.updateBook(nb); loading = false
-                    }
-                }
-            } catch {
-                await MainActor.run { errorText = error.localizedDescription; loading = false }
-            }
-        }
-    }
-    func translateCurrent() {
-        guard paragraphIndex < paragraphs.count else { return }
-        translating = true
-        let src = paragraphs[paragraphIndex]
-        Task {
-            do {
-                let t = try await translateParagraph(src)
-                await MainActor.run { translatedText = t; translating = false; showTranslation = true }
-            } catch {
-                await MainActor.run { translatedText = "翻译失败：\(error.localizedDescription)"; translating = false; showTranslation = true }
-            }
-        }
-    }
-    func downloadAll() {
-        guard var b = book, b.kind == "web", let src = sourceForBook(b) else { return }
-        downloadingAll = true
-        Task {
-            var updated = b
-            for i in 0..<updated.chapters.count {
-                if updated.chapters[i].text.hasPrefix("__URL__") {
-                    if let content = try? await src.fetchChapterContent(updated.chapters[i]) {
-                        updated.chapters[i].text = content.isEmpty ? "（本章没有正文）" : content
-                    }
-                }
-            }
-            await MainActor.run { store.updateBook(updated); downloadingAll = false }
-            b = updated
-        }
-    }
-    func prevChapter() { if chapterIndex > 0 { chapterIndex -= 1; paragraphIndex = 0; saveProgress(); loadChapterIfNeeded() } }
-    func nextChapter() { if let b = book, chapterIndex < b.chapters.count - 1 { chapterIndex += 1; paragraphIndex = 0; saveProgress(); loadChapterIfNeeded() } }
-    func addBookmark() {
-        guard let b = book, chapterIndex < b.chapters.count, paragraphIndex < paragraphs.count else { return }
-        store.addBookmark(Bookmark(bookId: b.id, chapterIndex: chapterIndex, paragraphIndex: paragraphIndex, snippet: String(paragraphs[paragraphIndex].prefix(40))))
-    }
-    func toggleSpeech() {
-        if isSpeaking { speaker.stopSpeaking(at: .immediate); isSpeaking = false; return }
-        guard let c = chapter else { return }
-        let u = AVSpeechUtterance(string: c.title + "。" + c.text)
-        u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
-        u.rate = 0.5
-        speaker.speak(u); isSpeaking = true
-    }
-}
-
-// MARK: - Manga
-
-struct MangaView: View {
-    @ObservedObject var store: BookStore
-    var bookId: String
-    @State private var page = 0
-    @State private var stripMode = false
-    @State private var enhanced = false
-    @State private var ocrText = ""
-    @State private var showOcr = false
-    @State private var ocrRunning = false
-    @State private var zoom: CGFloat = 1.0
-    var book: LocalBook? { store.books.first { $0.id == bookId } }
-    func image(_ name: String) -> UIImage? {
-        guard let b = book else { return nil }
-        let url = BookStore.filesDir.appendingPathComponent(b.id).appendingPathComponent((name as NSString).lastPathComponent)
-        guard let d = try? Data(contentsOf: url), let ui = UIImage(data: d) else { return nil }
-        return enhanced ? enhancedImage(ui) : ui
-    }
-    func runOcr() {
-        guard let b = book, page < b.imageNames.count, let ui = image(b.imageNames[page]) else { return }
-        ocrRunning = true
-        Task {
-            do {
-                let t = try await ocrImage(ui)
-                await MainActor.run { ocrText = t.isEmpty ? "（本页没有识别到文字）" : t; ocrRunning = false; showOcr = true }
-            } catch {
-                await MainActor.run { ocrText = "识别失败：\(error.localizedDescription)"; ocrRunning = false; showOcr = true }
-            }
-        }
-    }
-    var body: some View {
-        VStack {
-            if let b = book {
-                if stripMode {
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            ForEach(b.imageNames, id: \.self) { name in
-                                if let ui = image(name) { Image(uiImage: ui).resizable().scaledToFit() }
-                            }
-                        }
-                    }
-                } else {
-                    TabView(selection: $page) {
-                        ForEach(b.imageNames.indices, id: \.self) { i in
-                            if let ui = image(b.imageNames[i]) {
-                                Image(uiImage: ui).resizable().scaledToFit().scaleEffect(zoom).gesture(MagnificationGesture().onChanged { zoom = max(1.0, min(4.0, $0)) }).tag(i)
-                            }
-                        }
-                    }.tabViewStyle(.page(indexDisplayMode: .automatic))
-                }
-                HStack {
-                    Text("\(page + 1) / \(b.imageNames.count)").font(.caption)
-                    Spacer()
-                    Button(enhanced ? "原图" : "增强") { enhanced.toggle() }
-                    Button(stripMode ? "单页模式" : "条漫模式") { stripMode.toggle() }
-                    Button(ocrRunning ? "识别中…" : "本页 OCR") { runOcr() }.disabled(ocrRunning)
-                }.padding()
-            }
-        }
-        .sheet(isPresented: $showOcr) {
-            NavigationStack {
-                VStack(alignment: .leading, spacing: 12) {
-                    ScrollView { Text(ocrText).padding() }
-                    Button("存为 TXT 书") {
-                        var nb = LocalBook(title: (book?.title ?? "OCR") + "（OCR）", fileName: "ocr.txt", kind: "txt")
-                        nb.chapters = [BookChapter(title: "OCR 结果", text: ocrText)]
-                        store.updateBook(nb); showOcr = false
-                    }.buttonStyle(.borderedProminent)
-                    Spacer()
-                }
-                .navigationTitle("OCR 结果")
-                .toolbar { Button("关闭") { showOcr = false } }
-            }
-        }
-        .navigationTitle(book?.title ?? "漫画")
-        .onAppear { if let b = book { page = b.paragraphIndex } }
-        .onDisappear { if var b = book { b.paragraphIndex = page; store.updateBook(b) } }
-    }
-}
+// MARK: - Manga（已迁移到 MangaView.swift）
 
 // MARK: - Sources (Legado-style multi-source search)
 
@@ -590,6 +330,7 @@ struct SourceView: View {
     @State private var detailError = ""
     @State private var detailAlternatives: [SourceBook] = []
     @State private var detailAltIndex = 0
+    @State private var detailIsComic = false
 
     var body: some View {
         NavigationStack {
@@ -666,7 +407,7 @@ struct SourceView: View {
                             Text("目录为空时：先点“换源”换一个同名结果再试——原书源的目录规则可能用了本版不支持的 JS/XPath，或该站拒绝了手机访问；换源后仍为空，把书名+书源名发我，我按那个源的真规则修。").font(.footnote).foregroundStyle(.secondary)
                         }
                         Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
+                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: detailIsComic ? "comic" : "web")
                             book.chapters = detailChapters
                             store.updateBook(book)
                             selectedResult = nil
@@ -703,6 +444,7 @@ struct SourceView: View {
         guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
             loadingDetail = false; detailError = "找不到这个书源（可能已被删除），请重新搜索。"; return
         }
+        detailIsComic = src.isComic
         Task {
             do {
                 var info = r
@@ -758,14 +500,16 @@ struct SettingsView: View {
     @State private var importingBackup = false
     @State private var backupError = ""
     @State private var showBackupError = false
+    @State private var webdavWorking = false
+    @State private var webdavMessage = ""
     var body: some View {
         NavigationStack {
             List {
                 Section("阅读") {
                     HStack { Text("字号"); Spacer(); Text("\(Int(store.fontSize))") }
-                    Slider(value: $store.fontSize, in: 14...28, step: 1) { _ in store.save() }
+                    Slider(value: $store.fontSize, in: 12...32, step: 1) { _ in store.save() }
                     Picker("主题", selection: $store.theme) {
-                        Text("白天").tag(0); Text("护眼").tag(1); Text("夜间").tag(2)
+                        ForEach(readerThemes) { t in Text(t.name).tag(t.id) }
                     }.onChange(of: store.theme) { _, _ in store.save() }
                 }
                 Section("书架统计") {
@@ -782,8 +526,12 @@ struct SettingsView: View {
                     }
                     .onDelete { idx in store.bookmarks.remove(atOffsets: idx); store.save() }
                 }
+                Section("内置浏览器") {
+                    NavigationLink("打开浏览器（看网页 / 在线视频小窗）") { BrowserView() }
+                }
                 Section("书源") {
                     NavigationLink("书源管理（启用/删除/网络导入/扫码导入）") { SourceManagementView(store: store) }
+                    NavigationLink("订阅源管理（源仓库导航/网络导入）") { RssSourceManagementView(store: store) }
                 }
                 Section("替换净化") {
                     ForEach(store.replaceRules) { rule in
@@ -816,6 +564,31 @@ struct SettingsView: View {
                     Text("备份是单个 .ciallo 文件（其实是 ZIP）：含书架、书签、书源和本地书文件，换机或重装后导入即可恢复。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
+                Section("WebDAV 云同步") {
+                    TextField("服务器地址", text: $store.webdavURL)
+                        .keyboardType(.URL).autocapitalization(.none)
+                        .onChange(of: store.webdavURL) { _, _ in store.save() }
+                    TextField("用户名", text: $store.webdavUser)
+                        .autocapitalization(.none)
+                        .onChange(of: store.webdavUser) { _, _ in store.save() }
+                    SecureField("密码 / 应用密码", text: $store.webdavPassword)
+                        .onChange(of: store.webdavPassword) { _, _ in store.save() }
+                    TextField("远程路径", text: $store.webdavPath)
+                        .autocapitalization(.none)
+                        .onChange(of: store.webdavPath) { _, _ in store.save() }
+                    if webdavWorking {
+                        ProgressView()
+                    }
+                    HStack {
+                        Button("备份到云端") { backupToWebDAV() }.disabled(webdavWorking || store.webdavURL.isEmpty)
+                        Button("从云端恢复") { restoreFromWebDAV() }.disabled(webdavWorking || store.webdavURL.isEmpty)
+                    }
+                    if !webdavMessage.isEmpty {
+                        Text(webdavMessage).font(.footnote).foregroundStyle(webdavMessage.contains("成功") || webdavMessage.contains("完成") ? .secondary : .red)
+                    }
+                    Text("地址填 WebDAV 根地址（如坚果云 https://dav.jianguoyun.com/dav/ 或 Nextcloud https://你的域名/remote.php/dav/files/用户名/），远程路径如 /ReaderPro/backup.ciallo。备份就是一个 .ciallo 文件上传到该路径。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
                 Section("说明") {
                     Text("自用版，不上架。TXT / EPUB / DOCX / FB2 / MOBI / AZW3 / PDF / CBZ、书内搜索、书签、朗读、进度与阅读时长、Legado 书源、整本下载与导出 EPUB / TXT、漫画增强与缩放、图片 OCR、备份互传都已实现。注意：带 DRM 的加密书读不了；漫画增强是本机滤镜，不是 MangaJaNai AI 画质模型；在线翻译需要翻译服务接口，本版未接。")
                         .font(.footnote).foregroundStyle(.secondary)
@@ -833,22 +606,8 @@ struct SettingsView: View {
         }
     }
     func exportBackup() {
-        var files: [(name: String, data: Data)] = []
-        if let d = try? JSONEncoder().encode(store.books) { files.append((name: "books.json", data: d)) }
-        let meta = BookStore.Meta(bookmarks: store.bookmarks, sources: store.sources, fontSize: store.fontSize, lineSpacing: store.lineSpacing, theme: store.theme)
-        if let d = try? JSONEncoder().encode(meta) { files.append((name: "meta.json", data: d)) }
-        let fm = FileManager.default
-        if let items = try? fm.contentsOfDirectory(at: BookStore.filesDir, includingPropertiesForKeys: nil) {
-            for url in items {
-                if url.hasDirectoryPath {
-                    if let subs = try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
-                        for s in subs { if let d = try? Data(contentsOf: s) { files.append((name: "files/\(url.lastPathComponent)/\(s.lastPathComponent)", data: d)) } }
-                    }
-                } else if let d = try? Data(contentsOf: url) { files.append((name: "files/\(url.lastPathComponent)", data: d)) }
-            }
-        }
-        let zip = writeStoredZip(files)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("CialloReaderIOS-backup.ciallo")
+        let zip = store.exportBackupData()
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("ReaderPro-backup.ciallo")
         try? zip.write(to: url)
         backupURL = url; showBackup = true
     }
@@ -856,18 +615,37 @@ struct SettingsView: View {
         let ok = url.startAccessingSecurityScopedResource()
         defer { if ok { url.stopAccessingSecurityScopedResource() } }
         guard let data = try? Data(contentsOf: url) else { backupError = "读不到备份文件"; showBackupError = true; return }
-        let files = unzipToMemory(data)
-        guard let booksData = files["books.json"], let books = try? JSONDecoder().decode([LocalBook].self, from: booksData) else {
-            backupError = "这不是有效的 .ciallo 备份（里面没有 books.json）"; showBackupError = true; return
+        if let err = store.importBackupData(data) { backupError = err; showBackupError = true }
+    }
+    func backupToWebDAV() {
+        webdavWorking = true; webdavMessage = ""
+        let client = WebDAVClient(baseURL: store.webdavURL, username: store.webdavUser, password: store.webdavPassword)
+        let data = store.exportBackupData()
+        let path = store.webdavPath
+        Task {
+            do {
+                try await client.upload(data: data, to: path)
+                await MainActor.run { webdavWorking = false; webdavMessage = "备份到云端成功（\(path)）" }
+            } catch {
+                await MainActor.run { webdavWorking = false; webdavMessage = "备份失败：\(error.localizedDescription)" }
+            }
         }
-        if let d = try? JSONEncoder().encode(books) { try? d.write(to: BookStore.booksURL) }
-        if let metaData = files["meta.json"] { try? metaData.write(to: BookStore.metaURL) }
-        for (name, d) in files where name.hasPrefix("files/") {
-            let rel = String(name.dropFirst(6))
-            let dest = BookStore.filesDir.appendingPathComponent(rel)
-            try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? d.write(to: dest)
+    }
+    func restoreFromWebDAV() {
+        webdavWorking = true; webdavMessage = ""
+        let client = WebDAVClient(baseURL: store.webdavURL, username: store.webdavUser, password: store.webdavPassword)
+        let path = store.webdavPath
+        Task {
+            do {
+                let data = try await client.download(from: path)
+                if let err = store.importBackupData(data) {
+                    await MainActor.run { webdavWorking = false; webdavMessage = "恢复失败：\(err)" }
+                } else {
+                    await MainActor.run { webdavWorking = false; webdavMessage = "从云端恢复完成" }
+                }
+            } catch {
+                await MainActor.run { webdavWorking = false; webdavMessage = "恢复失败：\(error.localizedDescription)" }
+            }
         }
-        store.load()
     }
 }

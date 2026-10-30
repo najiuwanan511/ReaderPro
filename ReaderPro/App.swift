@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CialloReaderIOSApp: App {
+struct ReaderProApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()

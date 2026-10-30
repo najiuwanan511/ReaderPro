@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# Xcode / XcodeGen 生成的工程（由 project.yml 生成，不入库）
+*.xcodeproj
+build/
+DerivedData/
+xcuserdata/
+
+# 构建产物
+*.ipa
+Payload/
+*.xcarchive
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/

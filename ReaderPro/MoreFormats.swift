@@ -81,7 +81,7 @@ func translateParagraph(_ text: String) async throws -> String {
         throw NSError(domain: "translate", code: 1)
     }
     var req = URLRequest(url: url, timeoutInterval: 20)
-    req.setValue("CialloReaderIOS/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue("ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
     let (data, _) = try await URLSession.shared.data(for: req)
     guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
           let resp = obj["responseData"] as? [String: Any],
