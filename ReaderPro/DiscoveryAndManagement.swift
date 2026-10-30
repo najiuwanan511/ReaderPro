@@ -372,6 +372,8 @@ struct SourceDetailView: View {
     @State private var testing = false
     @State private var testError = ""
     @State private var showBrowser = false
+    @State private var showEditor = false
+    @State private var sourceJSON = ""
 
     var body: some View {
         List {
@@ -381,6 +383,14 @@ struct SourceDetailView: View {
                 if !source.bookSourceGroup.isEmpty { LabeledContent("分组", value: source.bookSourceGroup) }
                 LabeledContent("搜索地址", value: source.searchUrl.isEmpty ? "（空）" : source.searchUrl)
                 LabeledContent("发现地址", value: source.effectiveDiscoverUrl.isEmpty ? "（空）" : source.effectiveDiscoverUrl)
+            }
+            Section("打开") {
+                Button { sourceJSON = Self.prettyJSON(source); showEditor = true } label: {
+                    Label("在代码编辑器打开（查看/改规则）", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+                if !source.bookSourceUrl.isEmpty {
+                    Button("在浏览器打开书源网站") { showBrowser = true }
+                }
             }
             Section("搜索规则") {
                 ruleRow("列表", source.ruleSearch.bookList)
@@ -400,11 +410,6 @@ struct SourceDetailView: View {
                 ruleRow("正文", source.ruleContent.content)
                 ruleRow("下一页正文", source.ruleContent.nextContentUrl)
                 ruleRow("净化", source.ruleContent.replaceRegex)
-            }
-            Section("打开") {
-                if !source.bookSourceUrl.isEmpty {
-                    Button("在浏览器打开书源网站") { showBrowser = true }
-                }
             }
             Section("测试搜索") {
                 HStack {
@@ -427,6 +432,15 @@ struct SourceDetailView: View {
         .sheet(isPresented: $showBrowser) {
             NavigationStack { BrowserView(initialURL: source.bookSourceUrl) }
         }
+        .sheet(isPresented: $showEditor) {
+            NavigationStack { CodeEditorView(title: source.bookSourceName, code: $sourceJSON) }
+        }
+    }
+
+    static func prettyJSON(_ source: LegadoSource) -> String {
+        let enc = JSONEncoder(); enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        if let d = try? enc.encode(source), let s = String(data: d, encoding: .utf8) { return s }
+        return "{}"
     }
 
     func ruleRow(_ label: String, _ value: String) -> some View {

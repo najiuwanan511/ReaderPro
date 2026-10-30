@@ -22,18 +22,45 @@ enum AppTheme {
             ? UIColor(red: 0.20, green: 0.23, blue: 0.45, alpha: 1)
             : UIColor(red: 0.93, green: 0.94, blue: 0.99, alpha: 1)
     })
-    // 卡片背景
+    // 卡片背景（深色：藏青风，对标阅读Sigma书架 #1a2230 的暗青底）
     static let card = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.16, green: 0.17, blue: 0.20, alpha: 1)
+            ? UIColor(red: 0.13, green: 0.15, blue: 0.20, alpha: 1)
             : UIColor.white
     })
-    // 页面背景
+    // 页面背景（深色：深藏青）
     static let background = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+            ? UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1)
             : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
     })
+    // 未读角标蓝（阅读Sigma书架右上角数字徽章，深浅色都用醒目的蓝）
+    static let unreadBadge = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.35, green: 0.62, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.16, green: 0.45, blue: 0.95, alpha: 1)
+    })
+}
+
+// MARK: - 未读角标（书架封面右上角，蓝色圆角数字徽章，对标阅读Sigma）
+struct UnreadBadge: View {
+    let count: Int
+    var body: some View {
+        Group {
+            if count > 0 {
+                Text(count > 999 ? "999+" : "\(count)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(AppTheme.unreadBadge))
+                    .overlay(Capsule().stroke(Color.white.opacity(0.85), lineWidth: 1))
+                    .shadow(color: .black.opacity(0.25), radius: 2, x: 0, y: 1)
+            }
+        }
+    }
 }
 
 // MARK: - 精致书封（无封面书的占位，开源阅读书架质感）

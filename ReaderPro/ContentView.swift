@@ -9,11 +9,11 @@ struct ContentView: View {
             BookshelfView(store: store)
                 .tabItem { Label("书架", systemImage: "books.vertical.fill") }
             DiscoveryView(store: store)
-                .tabItem { Label("发现", systemImage: "sparkles") }
-            SourceView(store: store)
-                .tabItem { Label("书源", systemImage: "magnifyingglass") }
+                .tabItem { Label("发现", systemImage: "safari") }
+            RssSubscribeView(store: store)
+                .tabItem { Label("订阅", systemImage: "bookmark") }
             SettingsView(store: store)
-                .tabItem { Label("设置", systemImage: "gearshape") }
+                .tabItem { Label("我的", systemImage: "person.fill") }
         }
         .tint(AppTheme.accent)
     }
@@ -28,6 +28,8 @@ struct BookshelfView: View {
     @State private var showError = false
     @State private var selectedBook: LocalBook?
     @State private var selectedManga: LocalBook?
+    @State private var selectedAudio: LocalBook?
+    @State private var selectedVideo: LocalBook?
     @State private var exportURL: URL?
     @State private var showExport = false
     @State private var searchText = ""
@@ -78,7 +80,7 @@ struct BookshelfView: View {
                 }.pickerStyle(.segmented).padding(.horizontal)
                 if let current = store.books.max(by: { $0.lastRead < $1.lastRead }) {
                     Button {
-                        if current.kind == "cbz" || current.kind == "comic" { selectedManga = current } else { selectedBook = current }
+                        openBook(current)
                     } label: {
                         HStack(spacing: 14) {
                             if !current.coverUrl.isEmpty, let url = URL(string: current.coverUrl) {
@@ -109,7 +111,7 @@ struct BookshelfView: View {
                         Button {
                             if selecting {
                                 if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
-                            } else if book.kind == "cbz" || book.kind == "comic" { selectedManga = book } else { selectedBook = book }
+                            } else { openBook(book) }
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack(alignment: .topTrailing) {
@@ -123,6 +125,8 @@ struct BookshelfView: View {
                                         Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle")
                                             .foregroundStyle(selectedIds.contains(book.id) ? AppTheme.accent : .white).padding(4)
                                             .background(Circle().fill(Color.black.opacity(0.3)))
+                                    } else {
+                                        UnreadBadge(count: book.unreadCount).padding(4)
                                     }
                                 }
                                 Text(book.title).font(.caption).lineLimit(2).multilineTextAlignment(.leading)
@@ -164,7 +168,7 @@ struct BookshelfView: View {
                 }
                 Button { importing = true } label: { Image(systemName: "plus") }
             }
-            .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .data]) { result in
+            .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .data, .audio, .movie, .audiovisualContent]) { result in
                 switch result {
                 case .success(let url): importFile(url)
                 case .failure(let e): errorText = e.localizedDescription; showError = true
@@ -173,7 +177,16 @@ struct BookshelfView: View {
             .alert("导入失败", isPresented: $showError) { Button("好", role: .cancel) {} } message: { Text(errorText) }
             .navigationDestination(item: $selectedBook) { book in ReaderView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedManga) { book in MangaView(store: store, bookId: book.id) }
+            .navigationDestination(item: $selectedAudio) { book in AudioPlayerView(book: book) }
+            .navigationDestination(item: $selectedVideo) { book in VideoPlayerView(book: book) }
         }
+    }
+
+    func openBook(_ book: LocalBook) {
+        if book.isAudio { selectedAudio = book }
+        else if book.isVideo { selectedVideo = book }
+        else if book.isComicKind { selectedManga = book }
+        else { selectedBook = book }
     }
 
     @ViewBuilder
@@ -183,14 +196,17 @@ struct BookshelfView: View {
                 Button {
                     if selecting {
                         if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
-                    } else if book.kind == "cbz" || book.kind == "comic" { selectedManga = book } else { selectedBook = book }
+                    } else { openBook(book) }
                 } label: {
                     HStack(spacing: 12) {
-                        if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 46) }
-                                .frame(width: 46, height: 65).clipped().cornerRadius(6)
-                        } else {
-                            BookCover(title: book.title, width: 46)
+                        ZStack(alignment: .topTrailing) {
+                            if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 46) }
+                                    .frame(width: 46, height: 65).clipped().cornerRadius(6)
+                            } else {
+                                BookCover(title: book.title, width: 46)
+                            }
+                            if !selecting { UnreadBadge(count: book.unreadCount).scaleEffect(0.8) }
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text(book.title).font(.subheadline).lineLimit(1)
@@ -198,6 +214,8 @@ struct BookshelfView: View {
                             HStack(spacing: 6) {
                                 if book.totalMinutes > 0 { Text("读 \(book.totalMinutes) 分钟").font(.caption2).foregroundStyle(.secondary) }
                                 Text("\(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
+                                if book.isAudio { Text("音频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
+                                if book.isVideo { Text("视频").font(.caption2).foregroundStyle(AppTheme.unreadBadge) }
                             }
                             ProgressView(value: book.progress)
                         }
@@ -281,8 +299,33 @@ struct BookshelfView: View {
                 for (name, d) in files { try? d.write(to: dir.appendingPathComponent((name as NSString).lastPathComponent)) }
                 store.updateBook(book)
             } else { errorText = "这个 CBZ 里没有找到图片"; showError = true }
+        } else if ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"].contains(ext) {
+            // 音频书（对标阅读Sigma 带歌词音频播放）
+            var book = LocalBook(title: (fileName as NSString).deletingPathExtension, fileName: fileName, kind: "audio")
+            book.chapters = [BookChapter(title: book.title, text: "")]
+            store.updateBook(book)
+        } else if ["mp4", "mov", "m4v", "mkv", "m3u8"].contains(ext) {
+            // 视频书（对标阅读Sigma 带弹幕视频播放）
+            let fileURL = dest.absoluteString
+            var book = LocalBook(title: (fileName as NSString).deletingPathExtension, fileName: fileName, kind: "video")
+            book.chapters = [BookChapter(title: "第 1 集", text: "__URL__" + fileURL)]
+            store.updateBook(book)
+        } else if ext == "lrc" {
+            // 歌词：匹配同名音频书，把歌词挂上去
+            let base = (fileName as NSString).deletingPathExtension
+            let lyricText = decodeTextData(data)
+            if let i = store.books.firstIndex(where: { $0.isAudio && ($0.fileName as NSString).deletingPathExtension == base }) {
+                store.books[i].lyrics = lyricText
+                store.save()
+            } else if let i = store.books.firstIndex(where: { $0.isAudio }) {
+                store.books[i].lyrics = lyricText
+                store.save()
+            } else {
+                errorText = "没找到同名音频书来挂歌词，请先导入音频再导入同名 .lrc"
+                showError = true
+            }
         } else {
-            errorText = "支持 TXT、EPUB、DOCX、FB2、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）"; showError = true
+            errorText = "支持 TXT、EPUB、DOCX、FB2、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）、音频（MP3/M4A/FLAC）、视频（MP4/M3U8）、歌词（LRC）"; showError = true
         }
     }
 
@@ -498,6 +541,12 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink { SourceView(store: store) } label: { Label("多源搜索", systemImage: "magnifyingglass") }
+                    NavigationLink { CodeEditorDemoView() } label: { Label("代码编辑器", systemImage: "chevron.left.forwardslash.chevron.right") }
+                    NavigationLink { AddMediaView() } label: { Label("音视频播放", systemImage: "play.rectangle.on.rectangle") }
+                    NavigationLink { BrowserView() } label: { Label("内置浏览器", systemImage: "safari") }
+                }
                 Section("阅读") {
                     HStack { Text("字号"); Spacer(); Text("\(Int(store.fontSize))") }
                     Slider(value: $store.fontSize, in: 12...32, step: 1) { _ in store.save() }
@@ -518,9 +567,6 @@ struct SettingsView: View {
                         }
                     }
                     .onDelete { idx in store.bookmarks.remove(atOffsets: idx); store.save() }
-                }
-                Section("内置浏览器") {
-                    NavigationLink("打开浏览器（看网页 / 在线视频小窗）") { BrowserView() }
                 }
                 Section("书源") {
                     NavigationLink("书源管理（启用/删除/网络导入/扫码导入）") { SourceManagementView(store: store) }
@@ -583,11 +629,11 @@ struct SettingsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section("说明") {
-                    Text("自用版，不上架。TXT / EPUB / DOCX / FB2 / MOBI / AZW3 / PDF / CBZ、书内搜索、书签、朗读、进度与阅读时长、Legado 书源、整本下载与导出 EPUB / TXT、漫画增强与缩放、图片 OCR、备份互传都已实现。注意：带 DRM 的加密书读不了；漫画增强是本机滤镜，不是 MangaJaNai AI 画质模型；在线翻译需要翻译服务接口，本版未接。")
+                    Text("自用版，不上架。已实现：TXT/EPUB/DOCX/FB2/MOBI/AZW3/PDF/CBZ、Legado 书源多源搜索、订阅(RSS/Atom)、带歌词的音频播放、带弹幕的视频播放（选集/换源）、书源代码编辑器、内置浏览器视频小窗、书签、朗读、进度记忆、整本下载、漫画增强与 OCR、备份与 WebDAV 云同步。注意：带 DRM 的加密书读不了；漫画增强是本机滤镜；JS 书源因 iOS 无 JS 运行时暂不支持。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("设置")
+            .navigationTitle("我的")
             .sheet(isPresented: $showBackup) { if let url = backupURL { ShareLink("导出备份", item: url) } }
             .fileImporter(isPresented: $importingBackup, allowedContentTypes: [.data]) { result in
                 switch result {
@@ -640,5 +686,86 @@ struct SettingsView: View {
                 await MainActor.run { webdavWorking = false; webdavMessage = "恢复失败：\(error.localizedDescription)" }
             }
         }
+    }
+}
+
+// MARK: - 代码编辑器演示（书源代码，对标阅读Sigma 代码编辑页）
+
+struct CodeEditorDemoView: View {
+    @State private var code = sampleLegadoSourceJSON
+    var body: some View {
+        CodeEditorView(title: "书源代码", code: $code)
+    }
+}
+
+let sampleLegadoSourceJSON = """
+{
+  "bookSourceUrl": "https://example.com",
+  "bookSourceName": "示例书源",
+  "bookSourceGroup": "测试分组",
+  "bookSourceType": 0,
+  "searchUrl": "https://example.com/search?key={{key}}",
+  "ruleSearch": {
+    "bookList": "class.book-item",
+    "name": "tag.h3.0@text",
+    "author": "tag.p.author@text",
+    "bookUrl": "tag.a.0@href",
+    "coverUrl": "tag.img.0@src",
+    "intro": "tag.p.intro@text"
+  },
+  "ruleToc": {
+    "chapterList": "id.chapter-list@tag.li",
+    "chapterName": "tag.a@text",
+    "chapterUrl": "tag.a@href"
+  },
+  "ruleContent": {
+    "content": "id.content@textNodes",
+    "nextContentUrl": "text.下一页@href",
+    "replaceRegex": "##广告##"
+  },
+  "enabled": true
+}
+"""
+
+// MARK: - 网络音频/视频直链播放（对标阅读Sigma 音视频）
+
+struct AddMediaView: View {
+    @State private var url = ""
+    @State private var name = ""
+    @State private var type = 0 // 0 视频 1 音频
+    @State private var playVideo: LocalBook?
+    @State private var playAudio: LocalBook?
+
+    var body: some View {
+        Form {
+            Section("网络媒体播放") {
+                Picker("类型", selection: $type) {
+                    Text("视频（含弹幕）").tag(0)
+                    Text("音频（含歌词）").tag(1)
+                }.pickerStyle(.segmented)
+                TextField("名称（可选）", text: $name)
+                TextField("直链地址 m3u8 / mp4 / mp3 等", text: $url)
+                    .keyboardType(.URL).autocapitalization(.none).textInputAutocapitalization(.never)
+            }
+            Section {
+                Button("播放") {
+                    let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !u.isEmpty else { return }
+                    var book = LocalBook(title: name.isEmpty ? "在线媒体" : name, fileName: "", kind: type == 0 ? "video" : "audio")
+                    if type == 0 {
+                        book.chapters = [BookChapter(title: "第 1 集", text: "__URL__" + u)]
+                        playVideo = book
+                    } else {
+                        book.audioUrl = u
+                        book.chapters = [BookChapter(title: book.title, text: "")]
+                        playAudio = book
+                    }
+                }.disabled(url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Text("视频会进入带弹幕的播放器；音频进入带歌词的播放器。多集/换源请用书架里导入的本地视频书，或后续接书源。").font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("网络媒体")
+        .navigationDestination(item: $playVideo) { VideoPlayerView(book: $0) }
+        .navigationDestination(item: $playAudio) { AudioPlayerView(book: $0) }
     }
 }

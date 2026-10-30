@@ -59,7 +59,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var sourceName: String = ""
     var sourceUrl: String = ""
     var fileName: String
-    var kind: String // txt, epub, cbz, web
+    var kind: String // txt, epub, cbz, web, comic, audio, video
     var chapterIndex: Int = 0
     var paragraphIndex: Int = 0
     var charOffset: Int = 0
@@ -70,6 +70,71 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var group: String = ""
     var chapters: [BookChapter] = []
     var imageNames: [String] = []
+    // 音频/视频书（对标阅读Sigma）：歌词 LRC 文本、音频网络地址、视频选集源
+    var lyrics: String = ""
+    var audioUrl: String = ""
+    var videoUrls: [String] = []
+
+    var isAudio: Bool { kind == "audio" }
+    var isVideo: Bool { kind == "video" }
+    var isComicKind: Bool { kind == "cbz" || kind == "comic" }
+
+    /// 未读章节数（书架封面右上角角标，对标阅读Sigma）
+    var unreadCount: Int {
+        guard chapters.count > 1 else { return 0 }
+        return max(0, chapters.count - chapterIndex - 1)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, author, coverUrl, sourceName, sourceUrl, fileName, kind, chapterIndex, paragraphIndex, charOffset, progress, lastRead, totalMinutes, favorite, group, chapters, imageNames, lyrics, audioUrl, videoUrls
+    }
+
+    init(title: String, author: String = "", coverUrl: String = "", sourceName: String = "", sourceUrl: String = "", fileName: String, kind: String = "txt") {
+        self.title = title; self.author = author; self.coverUrl = coverUrl
+        self.sourceName = sourceName; self.sourceUrl = sourceUrl
+        self.fileName = fileName; self.kind = kind
+    }
+
+    // 向后兼容：旧书架数据没有新字段（lyrics/audioUrl/videoUrls）也不会 decode 失败
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        if let s = try? c.decode(String.self, forKey: .id), !s.isEmpty { id = s }
+        title = (try? c.decode(String.self, forKey: .title)) ?? ""
+        author = (try? c.decode(String.self, forKey: .author)) ?? ""
+        coverUrl = (try? c.decode(String.self, forKey: .coverUrl)) ?? ""
+        sourceName = (try? c.decode(String.self, forKey: .sourceName)) ?? ""
+        sourceUrl = (try? c.decode(String.self, forKey: .sourceUrl)) ?? ""
+        fileName = (try? c.decode(String.self, forKey: .fileName)) ?? ""
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? "txt"
+        chapterIndex = (try? c.decode(Int.self, forKey: .chapterIndex)) ?? 0
+        paragraphIndex = (try? c.decode(Int.self, forKey: .paragraphIndex)) ?? 0
+        charOffset = (try? c.decode(Int.self, forKey: .charOffset)) ?? 0
+        progress = (try? c.decode(Double.self, forKey: .progress)) ?? 0
+        lastRead = (try? c.decode(Date.self, forKey: .lastRead)) ?? Date()
+        totalMinutes = (try? c.decode(Int.self, forKey: .totalMinutes)) ?? 0
+        favorite = (try? c.decode(Bool.self, forKey: .favorite)) ?? false
+        group = (try? c.decode(String.self, forKey: .group)) ?? ""
+        chapters = (try? c.decode([BookChapter].self, forKey: .chapters)) ?? []
+        imageNames = (try? c.decode([String].self, forKey: .imageNames)) ?? []
+        lyrics = (try? c.decode(String.self, forKey: .lyrics)) ?? ""
+        audioUrl = (try? c.decode(String.self, forKey: .audioUrl)) ?? ""
+        videoUrls = (try? c.decode([String].self, forKey: .videoUrls)) ?? []
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(title, forKey: .title)
+        try c.encode(author, forKey: .author); try c.encode(coverUrl, forKey: .coverUrl)
+        try c.encode(sourceName, forKey: .sourceName); try c.encode(sourceUrl, forKey: .sourceUrl)
+        try c.encode(fileName, forKey: .fileName); try c.encode(kind, forKey: .kind)
+        try c.encode(chapterIndex, forKey: .chapterIndex); try c.encode(paragraphIndex, forKey: .paragraphIndex)
+        try c.encode(charOffset, forKey: .charOffset); try c.encode(progress, forKey: .progress)
+        try c.encode(lastRead, forKey: .lastRead); try c.encode(totalMinutes, forKey: .totalMinutes)
+        try c.encode(favorite, forKey: .favorite); try c.encode(group, forKey: .group)
+        try c.encode(chapters, forKey: .chapters); try c.encode(imageNames, forKey: .imageNames)
+        try c.encode(lyrics, forKey: .lyrics); try c.encode(audioUrl, forKey: .audioUrl)
+        try c.encode(videoUrls, forKey: .videoUrls)
+    }
 }
 
 struct SourceBook: Identifiable, Codable, Equatable, Hashable {
@@ -366,7 +431,9 @@ func parseEpub(_ data: Data, fileName: String) -> LocalBook? {
     }
     if chapters.isEmpty { return nil }
     let title = op.title.trimmingCharacters(in: .whitespacesAndNewlines)
-    return LocalBook(title: title.isEmpty ? (fileName as NSString).deletingPathExtension : title, author: op.creator, fileName: fileName, kind: "epub", chapters: chapters)
+    var book = LocalBook(title: title.isEmpty ? (fileName as NSString).deletingPathExtension : title, author: op.creator, fileName: fileName, kind: "epub")
+    book.chapters = chapters
+    return book
 }
 
 func parseCbz(_ data: Data, fileName: String) -> (LocalBook, [String: Data])? {
