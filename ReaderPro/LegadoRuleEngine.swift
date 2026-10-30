@@ -896,11 +896,21 @@ extension LegadoSource {
     func search(key: String) async throws -> [SourceBook] {
         try await LegadoJSCtx.$key.withValue(key) {
             try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-                try await self.searchImpl(key: key)
+                try await self.searchImpl(key: key, filterByKeyword: true)
             }
         }
     }
-    private func searchImpl(key: String) async throws -> [SourceBook] {
+    // 发现页兜底分类用：分类名（热门/玄幻…）不是书名，不能按关键词过滤，
+    // 否则搜回来的书标题里没有“热门”二字就全被过滤掉，发现永远是空的。
+    // 这就是截图里点分类也没书的根因。
+    func searchForDiscovery(key: String) async throws -> [SourceBook] {
+        try await LegadoJSCtx.$key.withValue(key) {
+            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+                try await self.searchImpl(key: key, filterByKeyword: false)
+            }
+        }
+    }
+    private func searchImpl(key: String, filterByKeyword: Bool = true) async throws -> [SourceBook] {
         // POST search (common in yckceo/1325): searchUrl carries
         // ,{"method":"post","body":"searchkey={{key}}"} after the URL.
         // The old code stripped that part and GET-fetched the bare search
@@ -931,8 +941,9 @@ extension LegadoSource {
         // bookList grabs the whole page. Keep only results whose title or
         // author actually contains the keyword, and cap per-source output so
         // one junk source cannot fill the whole 500-result budget.
+        // 发现兜底分类不走这一步（见 searchForDiscovery）。
         let normKey = key.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "").lowercased()
-        if !normKey.isEmpty {
+        if filterByKeyword && !normKey.isEmpty {
             let filtered = raw.filter {
                 $0.title.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey) ||
                 $0.author.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey)

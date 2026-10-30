@@ -194,7 +194,7 @@ struct DiscoveryView: View {
         let src = sources[selectedSourceIndex]
         Task {
             do {
-                let res = try await src.search(key: keyword)
+                let res = try await src.searchForDiscovery(key: keyword)
                 await MainActor.run { results = res; loading = false }
             } catch {
                 await MainActor.run { results = []; loading = false }
