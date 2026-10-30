@@ -584,7 +584,7 @@ struct SettingsView: View {
                         Button("从云端恢复") { restoreFromWebDAV() }.disabled(webdavWorking || store.webdavURL.isEmpty)
                     }
                     if !webdavMessage.isEmpty {
-                        Text(webdavMessage).font(.footnote).foregroundStyle(webdavMessage.contains("成功") || webdavMessage.contains("完成") ? .secondary : .red)
+                        Text(webdavMessage).font(.footnote).foregroundStyle(webdavMessage.contains("成功") || webdavMessage.contains("完成") ? Color.secondary : Color.red)
                     }
                     Text("地址填 WebDAV 根地址（如坚果云 https://dav.jianguoyun.com/dav/ 或 Nextcloud https://你的域名/remote.php/dav/files/用户名/），远程路径如 /ReaderPro/backup.ciallo。备份就是一个 .ciallo 文件上传到该路径。")
                         .font(.footnote).foregroundStyle(.secondary)

@@ -70,7 +70,7 @@ struct ReaderView: View {
         guard let b = book, chapterIndex < b.chapters.count else { return nil }
         return b.chapters[chapterIndex]
     }
-    var theme: ReaderTheme { theme(at: store.theme) }
+    var theme: ReaderTheme { readerTheme(at: store.theme) }
     var bookBookmarks: [Bookmark] {
         guard let b = book else { return [] }
         return store.bookmarks.filter { $0.bookId == b.id }

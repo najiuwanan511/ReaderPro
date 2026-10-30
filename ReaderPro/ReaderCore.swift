@@ -32,7 +32,7 @@ let readerThemes: [ReaderTheme] = [
     ReaderTheme(id: 7, name: "夜间蓝", background: UIColor(hex: 0x101828), text: UIColor(hex: 0xA8B6C8), secondary: UIColor(hex: 0x4A5A70)),
 ]
 
-func theme(at index: Int) -> ReaderTheme {
+func readerTheme(at index: Int) -> ReaderTheme {
     let i = max(0, min(index, readerThemes.count - 1))
     return readerThemes[i]
 }
