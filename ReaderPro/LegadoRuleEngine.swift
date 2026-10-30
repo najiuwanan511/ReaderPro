@@ -1,14 +1,23 @@
 import Foundation
 
-// MARK: - Legado rule engine (subset, best-effort, no JS/XPath)
+// MARK: - JS 规则执行上下文（TaskLocal，并发安全）
+// 书源引擎执行 @js:/<js> 规则时需要知道当前书源的 sourceUrl、搜索词 key、书信息 book。
+// 这些是"环境变量"，用 @TaskLocal 传递，避免在并发多源搜索时互相串值。
+enum LegadoJSCtx {
+    @TaskLocal static var sourceUrl: String = ""
+    @TaskLocal static var key: String = ""
+    @TaskLocal static var book: LegadoJS.BookCtx? = nil
+}
+
+// MARK: - Legado rule engine (subset, CSS/XPath/JSON/regex + JS via JavaScriptCore)
 // Research basis (see report): gedoor/legado BookSource fields
 // bookSourceName/bookSourceUrl/bookSourceType/searchUrl/exploreUrl/
 // ruleSearch/ruleBookInfo/ruleToc/ruleContent/ruleExplore, and rule syntax
 // from Legado's ruleHelp/AnalyzeRule mirrors: Default (class./tag./id.),
 // @css:, @json:/$., :regex, ##replace, && join, || first-non-empty,
 // indices .0/.1/.-1, chained @text/@href/@src/@html/@textNodes and
-// @attr(...). @js:/<js>/{{js}} and @xpath:// are deliberately unsupported
-// (they return empty, never crash) - see report for why.
+// @attr(...). @js:/<js> 规则由 LegadoJSEngine.swift（JavaScriptCore）执行；
+// @xpath:// 暂不支持（返回空，不崩溃）。
 
 struct HtmlEl {
     var open: String
@@ -657,14 +666,81 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
     return evalDefaultChain(input, rule)
 }
 
+// 内嵌 <js>code</js> 块：前缀规则先求值，结果作为 JS 的 result，返回值拼接。
+func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
+    var out: [String] = []
+    var rest = rule
+    var current: [String] = [input]
+    while let open = rest.range(of: "<js>") {
+        let prefix = String(rest[..<open.lowerBound])
+        guard let close = rest[open.upperBound...].range(of: "</js>") else { break }
+        let jsCode = String(rest[open.upperBound..<close.lowerBound])
+        rest = String(rest[close.upperBound...])
+        var vals: [String]
+        if prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            vals = current
+        } else {
+            vals = []
+            for ci in current { vals.append(contentsOf: applyRuleNoReplace(ci, prefix, base: base)) }
+        }
+        var jsOut: [String] = []
+        for v in vals {
+            let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
+                                  sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
+                                  book: LegadoJSCtx.book)
+            if !jr.isEmpty { jsOut.append(jr) }
+        }
+        current = jsOut
+        if rest.isEmpty { out.append(contentsOf: jsOut) }
+    }
+    if !rest.isEmpty {
+        for ci in current { out.append(contentsOf: applyRuleNoReplace(ci, rest, base: base)) }
+    }
+    return out
+}
+
 func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     var r = rule.trimmingCharacters(in: .whitespacesAndNewlines)
     if r.isEmpty { return [] }
-    if r.hasPrefix("@js:") || r.hasPrefix("@JS:") || r.contains("<js>") { return [] }
-    // Trailing @js: transformation (e.g. tocUrl ...@href@js:...) - evaluate the
-    // selector part and ignore the JS transform (unsupported, best-effort).
-    if let jsRange = r.range(of: "@js:") { r = String(r[..<jsRange.lowerBound]) }
-    if let jsRange2 = r.range(of: "@JS:") { r = String(r[..<jsRange2.lowerBound]) }
+    // 1) 整段 JS 规则：@js:code
+    if r.hasPrefix("@js:") || r.hasPrefix("@JS:") {
+        let js = String(r.dropFirst(4))
+        let out = LegadoJS.run(js, input: htmlOrJson, baseUrl: base,
+                               sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
+                               book: LegadoJSCtx.book)
+        return out.isEmpty ? [] : [out]
+    }
+    // 2) 内嵌 <js>...</js> 块
+    if r.contains("<js>") {
+        return evalJsEmbedded(htmlOrJson, r, base: base)
+    }
+    // 3) 尾部 @js: 转换链（先执行选择器，再对结果跑 JS）
+    if let jsRange = r.range(of: "@js:") {
+        let prefix = String(r[..<jsRange.lowerBound])
+        let jsCode = String(r[jsRange.upperBound...])
+        let vals = applyRuleNoReplace(htmlOrJson, prefix, base: base)
+        var out: [String] = []
+        for v in vals {
+            let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
+                                  sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
+                                  book: LegadoJSCtx.book)
+            if !jr.isEmpty { out.append(jr) }
+        }
+        return out
+    }
+    if let jsRange2 = r.range(of: "@JS:") {
+        let prefix = String(r[..<jsRange2.lowerBound])
+        let jsCode = String(r[jsRange2.upperBound...])
+        let vals = applyRuleNoReplace(htmlOrJson, prefix, base: base)
+        var out: [String] = []
+        for v in vals {
+            let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
+                                  sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
+                                  book: LegadoJSCtx.book)
+            if !jr.isEmpty { out.append(jr) }
+        }
+        return out
+    }
     if r.hasPrefix("@xpath:") || r.hasPrefix("@XPath:") || r.hasPrefix("//") { return [] }
     var main = r; var replacePattern: String? = nil; var replaceWith = ""
     if let range = r.range(of: "##") {
@@ -818,6 +894,13 @@ extension LegadoSource {
     }
 
     func search(key: String) async throws -> [SourceBook] {
+        try await LegadoJSCtx.$key.withValue(key) {
+            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+                try await self.searchImpl(key: key)
+            }
+        }
+    }
+    private func searchImpl(key: String) async throws -> [SourceBook] {
         // POST search (common in yckceo/1325): searchUrl carries
         // ,{"method":"post","body":"searchkey={{key}}"} after the URL.
         // The old code stripped that part and GET-fetched the bare search
@@ -860,6 +943,11 @@ extension LegadoSource {
     }
 
     func discover(category: ExploreCategory? = nil) async throws -> [SourceBook] {
+        try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+            try await self.discoverImpl(category: category)
+        }
+    }
+    private func discoverImpl(category: ExploreCategory? = nil) async throws -> [SourceBook] {
         let cats = exploreCategories()
         let cat = category ?? cats.first
         guard let cat = cat else { return [] }
@@ -878,6 +966,16 @@ extension LegadoSource {
     }
 
     func fetchBookInfo(book: SourceBook) async throws -> SourceBook {
+        let ctx = LegadoJS.BookCtx(bookUrl: book.url, name: book.title, author: book.author)
+        return try await LegadoJSCtx.$book.withValue(ctx) {
+            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+                try await LegadoJSCtx.$key.withValue(book.title) {
+                    try await self.fetchBookInfoImpl(book: book)
+                }
+            }
+        }
+    }
+    private func fetchBookInfoImpl(book: SourceBook) async throws -> SourceBook {
         // If ruleBookInfo is empty, the search result itself is the detail.
         if ruleBookInfo.name.isEmpty && ruleBookInfo.tocUrl.isEmpty && ruleBookInfo.coverUrl.isEmpty && ruleBookInfo.intro.isEmpty { return book }
         let html = try await fetchText(urlString: book.url)
@@ -894,6 +992,16 @@ extension LegadoSource {
     }
 
     func fetchChapters(book: SourceBook) async throws -> [BookChapter] {
+        let ctx = LegadoJS.BookCtx(bookUrl: book.url, name: book.title, author: book.author)
+        return try await LegadoJSCtx.$book.withValue(ctx) {
+            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+                try await LegadoJSCtx.$key.withValue(book.title) {
+                    try await self.fetchChaptersImpl(book: book)
+                }
+            }
+        }
+    }
+    private func fetchChaptersImpl(book: SourceBook) async throws -> [BookChapter] {
         var tocUrl = book.url
         if !ruleBookInfo.tocUrl.isEmpty {
             let html = try await fetchText(urlString: book.url)
@@ -949,6 +1057,11 @@ extension LegadoSource {
     }
 
     func fetchChapterContent(_ chapter: BookChapter) async throws -> String {
+        try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
+            try await self.fetchChapterContentImpl(chapter)
+        }
+    }
+    private func fetchChapterContentImpl(_ chapter: BookChapter) async throws -> String {
         guard chapter.text.hasPrefix("__URL__") else { return chapter.text }
         let url = String(chapter.text.dropFirst(7))
         var content = ""
