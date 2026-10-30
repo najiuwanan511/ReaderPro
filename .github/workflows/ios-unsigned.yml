@@ -27,13 +27,28 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
-      - name: Fix display name
+      - name: Fix Info.plist (display name + ATS + background audio)
         run: |
           APP=build/ReaderPro.xcarchive/Products/Applications/ReaderPro.app/Info.plist
+          # 显示名
           /usr/libexec/PlistBuddy -c "Delete :CFBundleDisplayName" "$APP" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string 阅读Pro" "$APP"
           /usr/libexec/PlistBuddy -c "Delete :CFBundleName" "$APP" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :CFBundleName string 阅读Pro" "$APP"
+          # 放行 HTTP（书源多为 http://，否则 ATS 拦截导致发现/搜索/正文全部拉不到）
+          /usr/libexec/PlistBuddy -c "Delete :NSAppTransportSecurity" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$APP"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$APP"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoadsInWebContent bool true" "$APP"
+          # 后台音频播放
+          /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$APP"
+          /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes:0 string audio" "$APP"
+          # 文件共享（iTunes/访达直接拖书）
+          /usr/libexec/PlistBuddy -c "Delete :UIFileSharingEnabled" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :UIFileSharingEnabled bool true" "$APP"
+          /usr/libexec/PlistBuddy -c "Delete :LSSupportsOpeningDocumentsInPlace" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :LSSupportsOpeningDocumentsInPlace bool true" "$APP"
 
       - name: Package unsigned IPA
         run: |
