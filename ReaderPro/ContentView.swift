@@ -33,6 +33,10 @@ struct BookshelfView: View {
     @State private var exportURL: URL?
     @State private var showExport = false
     @State private var searchText = ""
+    @State private var sourceResults: [SourceBook] = []
+    @State private var sourceSearching = false
+    @State private var sourceSearchedKey = ""
+    @State private var addingSourceTitle = ""
     @State private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
     @State private var viewMode = 1 // 0 网格, 1 列表（Legado-E 书架默认是列表行，不是网格）
     @State private var showFavoritesOnly = false
@@ -60,9 +64,8 @@ struct BookshelfView: View {
             ScrollView {
                 if store.books.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("书架是空的。点右上角 + 导入 TXT / EPUB / MOBI / AZW3 / PDF / CBZ，也可以先载入示例书测试阅读器。")
+                        Text("书架是空的。点右上角 + 导入 TXT / EPUB / MOBI / AZW3 / PDF / CBZ，或者在上面搜索框里直接搜书源。")
                             .font(.footnote).foregroundStyle(.secondary)
-                        Button("载入示例书") { addSample() }
                     }.padding()
                 }
                 if selecting && !selectedIds.isEmpty {
@@ -151,12 +154,69 @@ struct BookshelfView: View {
                 if filteredBooks.isEmpty && !store.books.isEmpty {
                     Text("没有匹配的书，换个关键词试试。").font(.footnote).foregroundStyle(.secondary).padding()
                 }
+                // 书架搜索框直接搜源：以前只能搜本地书架，现在输完点下面按钮就多源并发搜，
+                // 结果点“加入书架”直接拉目录上架，不用再切到书源页。
+                if !searchText.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button {
+                            sourceSearching = true; sourceResults = []; sourceSearchedKey = searchText
+                            let k = searchText
+                            Task {
+                                let res = await searchAllSources(store.enabledSources, key: k)
+                                await MainActor.run { sourceResults = res; sourceSearching = false }
+                            }
+                        } label: {
+                            HStack {
+                                Image(systemName: "magnifyingglass")
+                                Text("在书源中搜 “\(searchText)”（\(store.enabledSources.count) 个启用源）")
+                                Spacer()
+                                Image(systemName: "chevron.right").font(.caption)
+                            }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
+                        }.buttonStyle(.plain).disabled(sourceSearching)
+                        if sourceSearching { ProgressView("正在多源搜索…") }
+                        else if !sourceSearchedKey.isEmpty {
+                            Text("源搜索结果 \(sourceResults.count) 本（只留标题/作者含关键词的）").font(.caption).foregroundStyle(.secondary)
+                            ForEach(sourceResults) { r in
+                                HStack(alignment: .top, spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(r.title).font(.subheadline).bold().lineLimit(1)
+                                        HStack {
+                                            if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
+                                            if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.15)).cornerRadius(6) }
+                                        }
+                                        if !r.intro.isEmpty { Text(r.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                    }
+                                    Spacer()
+                                    Button(addingSourceTitle == r.title ? "拉取中…" : "加入书架") {
+                                        addingSourceTitle = r.title
+                                        Task {
+                                            guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName }) else { await MainActor.run { addingSourceTitle = "" }; return }
+                                            do {
+                                                let chs = try await src.fetchChapters(book: r)
+                                                await MainActor.run {
+                                                    var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
+                                                    book.chapters = chs; store.updateBook(book); addingSourceTitle = ""
+                                                }
+                                            } catch {
+                                                await MainActor.run { addingSourceTitle = "" }
+                                            }
+                                        }
+                                    }.buttonStyle(.bordered).disabled(addingSourceTitle == r.title || r.url.isEmpty)
+                                }.padding(.vertical, 4)
+                                Divider()
+                            }
+                            if sourceResults.isEmpty {
+                                Text("这个关键词在启用源里没搜到书：换个书名/作者，或者去设置 → 书源管理确认源已启用。").font(.footnote).foregroundStyle(.secondary)
+                            }
+                        }
+                    }.padding(.horizontal)
+                }
             }
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
             .toolbarBackground(AppTheme.headerBrown, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .searchable(text: $searchText, prompt: "搜本地书架（书名 / 作者 / 书源）")
+            .searchable(text: $searchText, prompt: "搜书架 / 点下面按钮直接搜书源")
             .toolbar {
                 if selecting {
                     Button("取消") { selecting = false; selectedIds.removeAll() }
@@ -263,21 +323,6 @@ struct BookshelfView: View {
     @ViewBuilder
     func gridCover(_ title: String) -> some View {
         GridBookCover(title: title)
-    }
-
-    func addSample() {
-        let text = """
-        第一章 初入书架
-        这是一本示例书，用来测试阅读器：字号、主题、书签、朗读、进度记忆都可以在这里试。
-        你可以从右上角导入自己的 TXT、EPUB 或 CBZ，导入后会出现在书架上。
-        第二章 继续读下去
-        阅读进度会在退出时保存，下次打开会回到上次的位置。
-        第三章 尾声
-        示例结束。去“书源”里可以搜索公版书，或者粘贴你自己的 Legado JSON 书源来导入。
-        """
-        var book = LocalBook(title: "示例书", author: "ReaderPro", fileName: "sample.txt", kind: "txt")
-        book.chapters = splitTxtChapters(text, bookTitle: "示例书")
-        store.updateBook(book)
     }
 
     func importFile(_ url: URL) {
