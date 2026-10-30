@@ -130,6 +130,58 @@ struct BookCover: View {
     }
 }
 
+// MARK: - legado 设置项组件（对标开源阅读「我的/设置」页）
+
+/// 设置项统一组件：左侧彩色圆角图标 + 标题/灰色摘要 + 右侧箭头/开关/当前值。
+/// 开源阅读设置页的灵魂就是这种 Material 列表行。点击交给外部 NavigationLink / Button 处理。
+struct SettingRow: View {
+    let icon: String
+    var iconTint: Color = AppTheme.accent
+    let title: String
+    var summary: String? = nil
+    var value: String = ""          // 右侧当前值（非空则不显示箭头）
+    var isOn: Binding<Bool>? = nil  // 开关（非空则显示 Toggle）
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.white)
+                .frame(width: 30, height: 30)
+                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(iconTint))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.body).foregroundStyle(.primary)
+                if let s = summary, !s.isEmpty {
+                    Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer()
+            if let isOn = isOn {
+                Toggle("", isOn: isOn).labelsHidden()
+            } else if !value.isEmpty {
+                Text(value).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+            } else {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.secondary.opacity(0.4))
+            }
+        }
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+    }
+}
+
+/// 设置分组标题（legado 用主题色小字分组，非 iOS 默认灰色大写）
+struct SettingSectionHeader: View {
+    let title: String
+    var body: some View {
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(AppTheme.accent)
+            .textCase(nil)
+    }
+}
+
 // MARK: - 网格书封（发现页 / 书架网格用，宽度自适应）
 struct GridBookCover: View {
     let title: String
