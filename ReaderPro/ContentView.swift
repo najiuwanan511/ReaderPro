@@ -7,7 +7,7 @@ struct ContentView: View {
     var body: some View {
         TabView {
             BookshelfView(store: store)
-                .tabItem { Label("书架", systemImage: "books.vertical") }
+                .tabItem { Label("书架", systemImage: "books.vertical.fill") }
             DiscoveryView(store: store)
                 .tabItem { Label("发现", systemImage: "sparkles") }
             SourceView(store: store)
@@ -15,6 +15,7 @@ struct ContentView: View {
             SettingsView(store: store)
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }
+        .tint(AppTheme.accent)
     }
 }
 
@@ -80,14 +81,11 @@ struct BookshelfView: View {
                         if current.kind == "cbz" || current.kind == "comic" { selectedManga = current } else { selectedBook = current }
                     } label: {
                         HStack(spacing: 14) {
-                            ZStack {
-                                if !current.coverUrl.isEmpty, let url = URL(string: current.coverUrl) {
-                                    AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
-                                        .frame(width: 72, height: 100).clipped().cornerRadius(10)
-                                } else {
-                                    RoundedRectangle(cornerRadius: 10).fill(coverGradient(for: current.title)).frame(width: 72, height: 100)
-                                        .overlay(Text(String(current.title.prefix(1))).font(.title).bold().foregroundStyle(.white))
-                                }
+                            if !current.coverUrl.isEmpty, let url = URL(string: current.coverUrl) {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: current.title, width: 70) }
+                                    .frame(width: 70, height: 99).clipped().cornerRadius(10)
+                            } else {
+                                BookCover(title: current.title, width: 70)
                             }
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("继续阅读").font(.caption).foregroundStyle(.secondary)
@@ -116,15 +114,14 @@ struct BookshelfView: View {
                             VStack(alignment: .leading, spacing: 6) {
                                 ZStack(alignment: .topTrailing) {
                                     if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                                        AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
-                                            .frame(height: 150).clipped().cornerRadius(8)
+                                        AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { gridCover(book.title) }
+                                            .frame(height: 150).clipped().cornerRadius(10)
                                     } else {
-                                        RoundedRectangle(cornerRadius: 8).fill(coverGradient(for: book.title)).frame(height: 150)
-                                            .overlay(VStack(spacing: 4) { Text(String(book.title.prefix(1))).font(.largeTitle).bold().foregroundStyle(.white); Text(book.title).font(.caption2).foregroundStyle(.white.opacity(0.9)).lineLimit(2).multilineTextAlignment(.center).padding(.horizontal, 4) })
+                                        gridCover(book.title)
                                     }
                                     if selecting {
                                         Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(selectedIds.contains(book.id) ? .blue : .white).padding(4)
+                                            .foregroundStyle(selectedIds.contains(book.id) ? AppTheme.accent : .white).padding(4)
                                             .background(Circle().fill(Color.black.opacity(0.3)))
                                     }
                                 }
@@ -189,14 +186,11 @@ struct BookshelfView: View {
                     } else if book.kind == "cbz" || book.kind == "comic" { selectedManga = book } else { selectedBook = book }
                 } label: {
                     HStack(spacing: 12) {
-                        ZStack {
-                            if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.blue.opacity(0.2) }
-                                    .frame(width: 48, height: 66).clipped().cornerRadius(6)
-                            } else {
-                                RoundedRectangle(cornerRadius: 6).fill(coverGradient(for: book.title)).frame(width: 48, height: 66)
-                                    .overlay(Text(String(book.title.prefix(1))).font(.headline).bold().foregroundStyle(.white))
-                            }
+                        if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
+                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 46) }
+                                .frame(width: 46, height: 65).clipped().cornerRadius(6)
+                        } else {
+                            BookCover(title: book.title, width: 46)
                         }
                         VStack(alignment: .leading, spacing: 4) {
                             Text(book.title).font(.subheadline).lineLimit(1)
@@ -232,10 +226,9 @@ struct BookshelfView: View {
         .padding(.horizontal)
     }
 
-    func coverGradient(for title: String) -> LinearGradient {
-        let palettes: [[Color]] = [[.blue, .purple], [.orange, .red], [.teal, .green], [.indigo, .blue], [.pink, .orange], [.brown, .orange]]
-        let idx = abs(title.unicodeScalars.reduce(0) { $0 + Int($1.value) }) % palettes.count
-        return LinearGradient(colors: palettes[idx], startPoint: .topLeading, endPoint: .bottomTrailing)
+    @ViewBuilder
+    func gridCover(_ title: String) -> some View {
+        GridBookCover(title: title)
     }
 
     func addSample() {

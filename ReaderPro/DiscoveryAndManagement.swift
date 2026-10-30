@@ -45,7 +45,7 @@ struct DiscoveryView: View {
                                 ForEach(categories) { cat in
                                     Button(cat.title) { selectedCategory = cat; load() }
                                         .buttonStyle(.bordered)
-                                        .tint(selectedCategory?.id == cat.id ? .blue : .gray)
+                                        .tint(selectedCategory?.id == cat.id ? AppTheme.accent : .gray)
                                 }
                             }
                         }.padding(.horizontal)
@@ -59,11 +59,10 @@ struct DiscoveryView: View {
                                     VStack(alignment: .leading, spacing: 6) {
                                         ZStack {
                                             if !r.cover.isEmpty, let url = URL(string: r.cover) {
-                                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { GridBookCover(title: r.title) }
                                                     .frame(height: 150).clipped().cornerRadius(10)
                                             } else {
-                                                RoundedRectangle(cornerRadius: 10).fill(LinearGradient(colors: [.blue, .purple], startPoint: .topLeading, endPoint: .bottomTrailing)).frame(height: 150)
-                                                    .overlay(Text(String(r.title.prefix(1))).font(.largeTitle).bold().foregroundStyle(.white))
+                                                GridBookCover(title: r.title)
                                             }
                                         }
                                         Text(r.title).font(.subheadline).bold().lineLimit(2).multilineTextAlignment(.leading)
@@ -170,6 +169,7 @@ struct SourceManagementView: View {
     @State private var networkURL = ""
     @State private var networkError = ""
     @State private var networkLoading = false
+    @State private var networkResult = ""
     @State private var showQR = false
     @State private var qrResult = ""
     @State private var qrError = ""
@@ -236,20 +236,23 @@ struct SourceManagementView: View {
                     TextField("https://… 书源订阅链接", text: $networkURL).textFieldStyle(.roundedBorder).autocapitalization(.none)
                     if !networkError.isEmpty { Text(networkError).foregroundStyle(.red).font(.footnote) }
                     Button(networkLoading ? "拉取中…" : "拉取并导入") {
-                        networkLoading = true; networkError = ""
+                        networkLoading = true; networkError = ""; networkResult = ""
                         Task {
                             do {
                                 let arr = try await importSourcesFromURL(networkURL)
                                 await MainActor.run {
                                     networkLoading = false
                                     if arr.isEmpty { networkError = "这个链接里没有解析到书源" }
-                                    else { store.sources.append(contentsOf: arr); store.save(); showNetwork = false; networkURL = "" }
+                                    else { store.sources.append(contentsOf: arr); store.save(); networkResult = "已导入 \(arr.count) 个书源，可继续粘贴下一个合集或点关闭"; networkURL = "" }
                                 }
                             } catch {
                                 await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }
                             }
                         }
                     }.disabled(networkLoading || networkURL.isEmpty)
+                    if !networkResult.isEmpty { Text(networkResult).font(.footnote).foregroundStyle(AppTheme.accentDeep) }
+                    Text("大合集（上千个书源）要从 CDN 下载十几 MB，可能需要几十秒，请耐心等待，不要重复点击。")
+                        .font(.caption2).foregroundStyle(.secondary)
                     Spacer()
                 }.padding().navigationTitle("网络导入").toolbar { Button("关闭") { showNetwork = false } }
             }

@@ -1,0 +1,126 @@
+import SwiftUI
+import UIKit
+
+// MARK: - 全局主题（开源阅读原版风）
+// 主色 + 卡片色，深浅色模式自动适配。所有页面统一从这里取色，视觉才不会散。
+enum AppTheme {
+    // 主色（accent）：靛蓝，深浅色自动适配
+    static let accent = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.55, green: 0.62, blue: 0.98, alpha: 1)
+            : UIColor(red: 0.29, green: 0.35, blue: 0.80, alpha: 1)
+    })
+    // 深主色（标题、强调）
+    static let accentDeep = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.70, green: 0.76, blue: 1.0, alpha: 1)
+            : UIColor(red: 0.20, green: 0.26, blue: 0.68, alpha: 1)
+    })
+    // 浅主色（标签底色）
+    static let accentSoft = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.20, green: 0.23, blue: 0.45, alpha: 1)
+            : UIColor(red: 0.93, green: 0.94, blue: 0.99, alpha: 1)
+    })
+    // 卡片背景
+    static let card = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.16, green: 0.17, blue: 0.20, alpha: 1)
+            : UIColor.white
+    })
+    // 页面背景
+    static let background = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.09, green: 0.10, blue: 0.12, alpha: 1)
+            : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
+    })
+}
+
+// MARK: - 精致书封（无封面书的占位，开源阅读书架质感）
+struct BookCover: View {
+    let title: String
+    let width: CGFloat
+    var height: CGFloat { width * 1.42 }  // 接近 3:4 的书封比例
+
+    var body: some View {
+        let grad = Self.gradient(for: title)
+        ZStack {
+            RoundedRectangle(cornerRadius: width * 0.10, style: .continuous)
+                .fill(LinearGradient(colors: grad, startPoint: .topLeading, endPoint: .bottomTrailing))
+            // 书脊高光（左侧一束亮）
+            RoundedRectangle(cornerRadius: width * 0.10, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(0.22), .clear, .clear],
+                                     startPoint: .leading, endPoint: .trailing))
+            // 顶部留白短线
+            VStack {
+                HStack {
+                    Capsule().fill(.white.opacity(0.55)).frame(width: width * 0.34, height: 2)
+                    Spacer()
+                }
+                Spacer()
+            }.padding(width * 0.15)
+            // 书名竖排（中文书封质感，最多 4 字）
+            VStack(spacing: width * 0.05) {
+                ForEach(Array(titleGlyphs.enumerated()), id: \.offset) { _, ch in
+                    Text(ch)
+                        .font(.system(size: width * 0.20, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+            }
+            // 底部装饰
+            VStack {
+                Spacer()
+                HStack(spacing: 3) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        Circle().fill(.white.opacity(0.5)).frame(width: 2.5, height: 2.5)
+                    }
+                }
+            }.padding(.bottom, width * 0.12)
+        }
+        .frame(width: width, height: height)
+        .shadow(color: .black.opacity(0.22), radius: width * 0.10, x: 0, y: width * 0.05)
+    }
+
+    private var titleGlyphs: [String] {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty { return ["?"] }
+        return Array(t.prefix(4)).map { String($0) }
+    }
+
+    // 莫兰迪低饱和配色（书卷气，不刺眼）
+    static func gradient(for title: String) -> [Color] {
+        let palettes: [[Color]] = [
+            [Color(red: 0.35, green: 0.42, blue: 0.75), Color(red: 0.22, green: 0.28, blue: 0.55)],
+            [Color(red: 0.62, green: 0.45, blue: 0.35), Color(red: 0.42, green: 0.28, blue: 0.22)],
+            [Color(red: 0.33, green: 0.55, blue: 0.45), Color(red: 0.20, green: 0.38, blue: 0.30)],
+            [Color(red: 0.60, green: 0.40, blue: 0.55), Color(red: 0.42, green: 0.25, blue: 0.38)],
+            [Color(red: 0.52, green: 0.42, blue: 0.65), Color(red: 0.34, green: 0.27, blue: 0.47)],
+            [Color(red: 0.42, green: 0.55, blue: 0.65), Color(red: 0.27, green: 0.38, blue: 0.48)],
+        ]
+        let idx = abs(title.unicodeScalars.reduce(0) { $0 + Int($1.value) }) % palettes.count
+        return palettes[idx]
+    }
+}
+
+// MARK: - 网格书封（发现页 / 书架网格用，宽度自适应）
+struct GridBookCover: View {
+    let title: String
+    var height: CGFloat = 150
+    var body: some View {
+        let grad = BookCover.gradient(for: title)
+        ZStack {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(LinearGradient(colors: grad, startPoint: .topLeading, endPoint: .bottomTrailing))
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(LinearGradient(colors: [.white.opacity(0.18), .clear, .clear], startPoint: .leading, endPoint: .trailing))
+            VStack(spacing: 5) {
+                ForEach(Array(title.prefix(3).enumerated()), id: \.offset) { _, ch in
+                    Text(String(ch)).font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: height)
+    }
+}

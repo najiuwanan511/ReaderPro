@@ -123,8 +123,9 @@ extension KeyedDecodingContainer {
 
 func fetchText(urlString: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 25)
+    var req = URLRequest(url: url, timeoutInterval: 90)
     req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
     let (data, _) = try await URLSession.shared.data(for: req)
     return decodeTextData(data)
 }
@@ -303,6 +304,22 @@ func normalizeSourceURL(_ urlString: String) -> String {
     return u
 }
 
+// yckceo 合集接口（/shuyuans/json/id/xxx.json）会 302 到 jsdelivr 的 .json 直链。
+// 若客户端拿到的是 HTML 跳转页（meta refresh / 嵌入的 jsdelivr 链接），从这里把真实 JSON 地址抠出来。
+func extractRedirectJSONURL(from text: String) -> String? {
+    let metaRe = try? NSRegularExpression(pattern: #"url\s*=\s*["']?(https?://[^"'\s>]+)"#, options: .caseInsensitive)
+    let jsonRe = try? NSRegularExpression(pattern: #"https?://[^"'\s<>]+\.json"#, options: .caseInsensitive)
+    if let re = metaRe, let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), let r = Range(m.range(at: 1), in: text) {
+        let u = String(text[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if u.hasPrefix("http") && (u.contains("jsdelivr") || u.contains("gcore") || u.hasSuffix(".json")) { return u }
+    }
+    if let re = jsonRe, let m = re.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)), let r = Range(m.range(at: 0), in: text) {
+        let u = String(text[r]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if u.contains("jsdelivr") || u.contains("gcore") { return u }
+    }
+    return nil
+}
+
 // yckceo detail page (HTML, not JSON) -> its JSON API. The site's own pattern is
 // /yuedu/shuyuan/json/id/<id>.json, while the detail page is
 // /yuedu/shuyuans/content/id/<id>.html (plural "shuyuans" + "content").
@@ -327,11 +344,19 @@ func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
     candidates.append(normalizeSourceURL(urlString))
     var lastText = ""
     for candidate in candidates {
-        if let text = try? await fetchText(urlString: candidate) {
-            lastText = text
-            let result = importSourcesDetailed(text)
-            if !result.sources.isEmpty { return result.sources }
+        var text: String? = nil
+        // 11MB 大合集在慢网络下容易超时，重试 2 次
+        for _ in 0..<2 {
+            if let t = try? await fetchText(urlString: candidate) { text = t; break }
         }
+        guard var t = text else { continue }
+        lastText = t
+        // yckceo 合集接口会 302 到 jsdelivr；若拿到的是 HTML 跳转页（非标准重定向），提取真实 JSON 地址再拉一次
+        if let real = extractRedirectJSONURL(from: t), let t2 = try? await fetchText(urlString: real) {
+            t = t2; lastText = t2
+        }
+        let result = importSourcesDetailed(t)
+        if !result.sources.isEmpty { return result.sources }
     }
     let text = lastText
     // Subscription list: an array of {name, url} entries pointing at other source lists.
