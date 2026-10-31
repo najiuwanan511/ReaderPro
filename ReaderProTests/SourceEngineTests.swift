@@ -83,7 +83,8 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(applyRule(html, "class.item.1@tag.a@text", base: base), ["二"])
         XCTAssertEqual(applyRule(html, "@xpath://li[2]/a/@href", base: base), ["b"])
         XCTAssertEqual(applyRule(html, "@xpath:string(//li[2]/a)", base: base), ["二"])
-        XCTAssertEqual(applyRule(html, "id.info@ownText", base: base), ["直接\n尾部"])
+        XCTAssertEqual(applyRule(html, "id.info@ownText", base: base), ["直接 尾部"])
+        XCTAssertEqual(applyRule(html, "id.info@textNodes", base: base), ["直接\n尾部"])
         XCTAssertEqual(applyRule("广告正文广告", "##广告##", base: base), ["正文"])
         XCTAssertEqual(applyRule(html, "id.missing@text||id.info@text", base: base), ["直接嵌套尾部"])
     }

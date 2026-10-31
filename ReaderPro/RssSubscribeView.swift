@@ -227,13 +227,13 @@ struct FeedReaderView: View {
     }
 }
 
-// 简单 GET 返回 Data（用接受所有证书的会话，兼容 HTTP 和坏证书 HTTPS 源）
+// 与书源请求共用 Cookie、超时和系统证书校验。
 func fetchBytes(_ urlString: String) async throws -> Data {
     guard let url = URL(string: urlString) else { throw URLError(.badURL) }
     var req = URLRequest(url: url)
     req.timeoutInterval = 60
     req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
-    let (data, resp) = try await insecureSession.data(for: req)
+    let (data, resp) = try await SourceHTTP.session.data(for: req)
     if let http = resp as? HTTPURLResponse, http.statusCode >= 400 {
         throw URLError(.badServerResponse)
     }
