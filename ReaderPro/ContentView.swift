@@ -4,6 +4,7 @@ import AVFoundation
 
 struct ContentView: View {
     @StateObject private var store = BookStore()
+    @EnvironmentObject private var network: NetworkBootstrap
     var body: some View {
         TabView {
             BookshelfView(store: store)
@@ -16,6 +17,28 @@ struct ContentView: View {
                 .tabItem { Label("我的", systemImage: "person.fill") }
         }
         .tint(AppTheme.accent)
+        .overlay(alignment: .top) { networkBanner }
+    }
+
+    // 启动即联网检测：断网时在顶部给出提示（联网后自动消失）
+    @ViewBuilder
+    private var networkBanner: some View {
+        if network.status == .offline {
+            VStack {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                    Text("未连接网络，书源与搜索暂不可用")
+                        .font(.footnote)
+                    Spacer()
+                }
+                .foregroundColor(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.orange.opacity(0.95))
+            }
+            .transition(.move(edge: .top).combined(with: .opacity))
+            .animation(.easeInOut(duration: 0.25), value: network.status)
+        }
     }
 }
 

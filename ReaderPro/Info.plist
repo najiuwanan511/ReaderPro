@@ -6,7 +6,13 @@
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
 	</dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>需要访问本地网络，以便连接局域网内的书源、订阅源与 WebDAV 服务器。</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

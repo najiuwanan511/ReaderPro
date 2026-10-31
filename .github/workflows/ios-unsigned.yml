@@ -40,6 +40,10 @@ jobs:
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity dict" "$APP"
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoads bool true" "$APP"
           /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsArbitraryLoadsInWebContent bool true" "$APP"
+          /usr/libexec/PlistBuddy -c "Add :NSAppTransportSecurity:NSAllowsLocalNetworking bool true" "$APP"
+          # 本地网络授权（iOS 14+：访问局域网书源/WebDAV 时弹授权框，附中文说明）
+          /usr/libexec/PlistBuddy -c "Delete :NSLocalNetworkUsageDescription" "$APP" 2>/dev/null || true
+          /usr/libexec/PlistBuddy -c "Add :NSLocalNetworkUsageDescription string 需要访问本地网络，以便连接局域网内的书源、订阅源与 WebDAV 服务器。" "$APP"
           # 后台音频播放
           /usr/libexec/PlistBuddy -c "Delete :UIBackgroundModes" "$APP" 2>/dev/null || true
           /usr/libexec/PlistBuddy -c "Add :UIBackgroundModes array" "$APP"
