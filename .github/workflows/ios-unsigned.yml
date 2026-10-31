@@ -42,6 +42,14 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/tests.log
 
+      - name: Export UI screenshots
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -d build/SourceRegression.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/SourceRegression.xcresult --output-path build/screenshots
+          fi
+
       - name: Upload test evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -51,6 +59,7 @@ jobs:
             build/SourceRegression.xcresult
             build/tests.log
             build/fixture-server.log
+            build/screenshots
 
       - name: Verify source ATS configuration
         run: |

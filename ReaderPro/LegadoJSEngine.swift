@@ -88,7 +88,9 @@ final class LegadoJS {
 
         // ---- source 对象 ----
         let source = JSValue(newObjectIn: ctx)!
-        let getKey: @convention(block) () -> String = { sourceKey }
+        // Legado BaseSource.getKey identifies the source, while the global
+        // `key` remains the current search keyword.
+        let getKey: @convention(block) () -> String = { sourceUrl }
         let getSourceUrl: @convention(block) () -> String = { sourceUrl }
         let getLoginMap: @convention(block) () -> [String: String] = { loginInfo }
         let getLoginStr: @convention(block) () -> String = { loginInfo.map { "\($0.key)=\($0.value)" }.joined(separator: "&") }
@@ -96,7 +98,7 @@ final class LegadoJS {
         let concurrentBox = ConcurrentBox()
         let getConcurrent: @convention(block) () -> Int = { concurrentBox.value }
         let putConcurrent: @convention(block) (JSValue) -> Void = { v in concurrentBox.value = Int(v.toNumber()?.intValue ?? 0) }
-        source.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
+        source.setObject(sourceUrl, forKeyedSubscript: "key" as NSString)
         source.setObject(sourceUrl, forKeyedSubscript: "bookSourceUrl" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)

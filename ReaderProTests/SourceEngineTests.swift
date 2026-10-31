@@ -101,6 +101,7 @@ final class SourceEngineTests: XCTestCase {
         let encoded = LegadoJS.run("java.encodeURI('中&=')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
         XCTAssertEqual(encoded, "%E4%B8%AD%26%3D")
         XCTAssertEqual(LegadoJS.run("''", input: "not a result", baseUrl: base, sourceKey: "", sourceUrl: base), "")
+        XCTAssertEqual(LegadoJS.run("[source.getKey(), source.key, key].join('|')", input: "", baseUrl: base, sourceKey: "测试", sourceUrl: base), "\(base)|\(base)|测试")
         source.exploreUrl = "甲::/a&&乙::/b"
         XCTAssertEqual(source.exploreCategories().map(\.title), ["甲", "乙"])
     }
