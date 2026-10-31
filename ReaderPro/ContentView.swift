@@ -482,14 +482,15 @@ struct SourceView: View {
             importStatus = "正在拉取链接…"
             Task {
                 do {
-                    let arr = try await importSourcesFromURL(trimmed)
+                    let result = try await importSourcePacksFromURL(trimmed)
+                    let arr = result.sources
                     await MainActor.run {
                         if arr.isEmpty { importError = "这个链接里没有解析到书源：请确认它是返回 Legado 书源 JSON 的直链（GitHub blob 页已自动转 raw，仍失败就换 raw 链接）" }
                         else {
                             let enabled = arr.map { var x = $0; x.enabled = true; return x }
                             let merge = store.mergeSources(enabled)
                             importText = ""
-                            importStatus = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                            importStatus = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
                         }
                     }
                 } catch {

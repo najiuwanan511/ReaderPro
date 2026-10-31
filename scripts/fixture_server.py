@@ -19,6 +19,21 @@ class Handler(BaseHTTPRequestHandler):
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
+        elif path == '/packs/mixed':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'data': [{'bookSourceName': 'direct', 'bookSourceUrl': 'https://direct.test',
+                                        'ruleSearch': {'url': '/must-not-fetch-rule-url'}},
+                                       {'name': 'nested', 'url': 'nested'},
+                                       {'name': 'failed', 'url': '/denied'}]})
+        elif path == '/packs/nested':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps([{'name': 'large', 'url': 'large'}, {'name': 'cycle', 'url': 'mixed'}])
+        elif path == '/packs/large':
+            mime = 'application/json; charset=utf-8'
+            entries = [{'bookSourceName': f'linked{i}', 'bookSourceUrl': f'https://linked{i}.test'} for i in range(1500)]
+            body = json.dumps(entries + [entries[0]])
+        elif path == '/packs/broken':
+            mime, body = 'application/json; charset=utf-8', '[{"name":"broken","url":"/denied"}]'
         elif path == '/denied':
             status, body = 403, 'login required'
         elif path == '/empty':

@@ -418,6 +418,8 @@ private func collectSourcePackLinks(_ value: Any, baseURL: String,
     guard depth < 8 else { return }
     if let dict = value as? [String: Any] {
         let isSource = dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil
+        // Rule URLs inside a real source are not subscription links.
+        if isSource { return }
         if !isSource {
             for key in ["url", "sourceUrl", "link", "src", "href"] {
                 guard let raw = dict[key] as? String, !raw.isEmpty else { continue }
@@ -441,62 +443,103 @@ private func collectSourcePackLinks(_ value: Any, baseURL: String,
     }
 }
 
-func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
-    // Try the JSON API first for detail pages, then the original URL.
-    var candidates: [String] = []
-    for c in yckceoJSONCandidates(urlString) where !candidates.contains(c) { candidates.append(c) }
-    candidates.append(normalizeSourceURL(urlString))
-    var lastText = ""
-    for candidate in candidates {
-        var text: String? = nil
-        // 11MB 大合集在慢网络下容易超时，重试 2 次
-        for _ in 0..<2 {
-            if let t = try? await fetchText(urlString: candidate) { text = t; break }
+struct SourcePackImportResult {
+    struct Failure { let url: String; let reason: String }
+    var sources: [LegadoSource] = []
+    var skipped = 0
+    var duplicateSources = 0
+    var fetchedPacks = 0
+    var failures: [Failure] = []
+    var diagnostics: String {
+        var lines = ["已读取 \(fetchedPacks) 个文件，格式异常 \(skipped) 条，跨文件重复 \(duplicateSources) 条"]
+        if !failures.isEmpty {
+            lines.append("部分导入：\(failures.count) 个文件失败，未计入成功数量；可复制失败地址重试。")
+            lines.append(contentsOf: failures.map { "\($0.url)\n\($0.reason)" })
         }
-        guard var t = text else { continue }
-        lastText = t
-        // yckceo 合集接口会 302 到 jsdelivr；若拿到的是 HTML 跳转页（非标准重定向），提取真实 JSON 地址再拉一次
-        if let real = extractRedirectJSONURL(from: t), let t2 = try? await fetchText(urlString: real) {
-            t = t2; lastText = t2
-        }
-        let result = importSourcesDetailed(t)
-        if !result.sources.isEmpty { return result.sources }
+        return lines.joined(separator: "\n")
     }
-    let text = lastText
-    // Subscription list: an array of {name, url} entries pointing at other source lists.
-    // Large packs must be expanded instead of treating the subscription index as
-    // if it were the source list itself.
-    if let data = extractJSONSubstring(text).data(using: .utf8),
-       let root = try? JSONSerialization.jsonObject(with: data) {
-        var links: [String] = []
-        collectSourcePackLinks(root, baseURL: urlString, links: &links)
-        var out: [LegadoSource] = []
-        var idx = 0
-        // A source subscription may contain hundreds or thousands of linked
-        // JSON packs. Fetch every discovered link in bounded batches; the old
-        // 300-link cap silently dropped the tail of large subscriptions.
-        while idx < links.count && idx < 5000 {
-            let batch = Array(links[idx..<min(idx + 24, links.count, 5000)])
-            idx += batch.count
-            let batchSources = await withTaskGroup(of: [LegadoSource].self) { group in
-                for link in batch {
-                    group.addTask {
-                        if let t2 = try? await fetchText(urlString: normalizeSourceURL(link)) {
-                            return importSourcesDetailed(t2).sources
-                        }
-                        return []
-                    }
+}
+
+private struct SourcePackPage {
+    let url: String
+    var sources: [LegadoSource] = []
+    var links: [String] = []
+    var skipped = 0
+    var error: String?
+}
+
+private func fetchSourcePack(_ address: String) async throws -> SourcePackPage {
+    let page = try await SourceHTTP.load(SourceHTTP.request(normalizeSourceURL(address), base: address), stage: "书源导入")
+    let result = importSourcesDetailed(page.text)
+    var links: [String] = []
+    for text in [extractJSONSubstring(page.text), extractJSONSubstring(unescapeHTMLJSON(page.text))] {
+        if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+            collectSourcePackLinks(root, baseURL: page.url, links: &links)
+            break
+        }
+    }
+    if result.sources.isEmpty && links.isEmpty, let redirect = extractRedirectJSONURL(from: page.text) { links.append(redirect) }
+    if result.sources.isEmpty && links.isEmpty {
+        throw SourceFailure(stage: "书源导入", message: "没有找到有效书源或子合集链接", url: page.url)
+    }
+    return SourcePackPage(url: page.url, sources: result.sources, links: links, skipped: result.skipped)
+}
+
+func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImportResult {
+    var first: SourcePackPage?
+    var lastError: Error?
+    for candidate in yckceoJSONCandidates(urlString) + [normalizeSourceURL(urlString)] {
+        do { first = try await fetchSourcePack(candidate); break }
+        catch { if Task.isCancelled { throw CancellationError() }; lastError = error }
+    }
+    guard let first else { throw lastError ?? SourceFailure(stage: "书源导入", message: "链接无效", url: urlString) }
+    var result = SourcePackImportResult()
+    var queue: [String] = []
+    var visited = Set([normalizeSourceURL(urlString), first.url])
+    var seenSources = Set<String>()
+    func absorb(_ page: SourcePackPage) {
+        if let error = page.error { result.failures.append(.init(url: page.url, reason: error)); return }
+        result.fetchedPacks += 1; result.skipped += page.skipped
+        for source in page.sources {
+            if seenSources.insert(sourceIdentityKey(source)).inserted { result.sources.append(source) }
+            else { result.duplicateSources += 1 }
+        }
+        for raw in page.links {
+            let link = normalizeSourceURL(raw)
+            if visited.insert(link).inserted { queue.append(link) }
+        }
+    }
+    absorb(first)
+    var index = 0
+    while index < queue.count {
+        try Task.checkCancellation()
+        // Safety limit is visible in the report; never silently drop a tail.
+        if index >= 5000 {
+            result.failures.append(contentsOf: queue[index...].map { .init(url: $0, reason: "超过单次 5000 个子合集限制，请单独导入此链接") })
+            break
+        }
+        let batch = Array(queue[index..<min(index + 8, queue.count, 5000)])
+        index += batch.count
+        let pages = await withTaskGroup(of: (Int, SourcePackPage).self) { group in
+            for (offset, link) in batch.enumerated() {
+                group.addTask {
+                    do { return (offset, try await fetchSourcePack(link)) }
+                    catch { return (offset, SourcePackPage(url: link, error: sourceErrorMessage(error))) }
                 }
-                var collected: [LegadoSource] = []
-                for await s in group { collected.append(contentsOf: s) }
-                return collected
             }
-            out.append(contentsOf: batchSources)
+            var output: [(Int, SourcePackPage)] = []
+            for await page in group { output.append(page) }
+            return output.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
-        let deduped = uniqueSources(out)
-        if !deduped.isEmpty { return deduped }
+        for page in pages { absorb(page) }
     }
-    return []
+    try Task.checkCancellation()
+    guard !result.sources.isEmpty else { throw SourceFailure(stage: "书源导入", message: result.diagnostics, url: urlString) }
+    return result
+}
+
+func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
+    try await importSourcePacksFromURL(urlString).sources
 }
 
 // MARK: - Legado 订阅源（RssSource）

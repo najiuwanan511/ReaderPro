@@ -245,13 +245,14 @@ struct SourceManagementView: View {
                         networkLoading = true; networkError = ""; networkResult = ""
                         Task {
                             do {
-                                let arr = try await importSourcesFromURL(networkURL)
+                                let result = try await importSourcePacksFromURL(networkURL)
+                                let arr = result.sources
                                 await MainActor.run {
                                     networkLoading = false
                                     if arr.isEmpty { networkError = "这个链接里没有解析到书源" }
                                     else {
                                         let merge = store.mergeSources(arr)
-                                        networkResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                                        networkResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
                                         networkURL = ""
                                     }
                                 }
@@ -362,11 +363,12 @@ struct SourceManagementView: View {
             qrResult = "扫到链接，正在拉取…"
             Task {
                 do {
-                    let arr = try await importSourcesFromURL(trimmed)
+                    let result = try await importSourcePacksFromURL(trimmed)
+                    let arr = result.sources
                     await MainActor.run {
                         if arr.isEmpty { qrError = "这个链接里没有解析到书源" } else {
                             let merge = store.mergeSources(arr)
-                            qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                            qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
                         }
                     }
                 } catch {

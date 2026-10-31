@@ -136,6 +136,21 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(importSourcesDetailed(escaped).sources.count, 2)
     }
 
+    func testMixedNetworkPackExpandsAllLinksAndReportsFailures() async throws {
+        let result = try await importSourcePacksFromURL(base + "/packs/mixed")
+        XCTAssertEqual(result.sources.count, 1501)
+        XCTAssertEqual(result.sources.first?.bookSourceName, "direct")
+        XCTAssertEqual(result.sources.last?.bookSourceName, "linked1499")
+        XCTAssertEqual(result.fetchedPacks, 3)
+        XCTAssertEqual(result.failures.count, 1)
+        XCTAssertEqual(result.failures.first?.url, base + "/denied")
+        XCTAssertTrue(result.failures.first?.reason.contains("403") == true)
+        XCTAssertTrue(result.diagnostics.contains("部分导入"))
+        XCTAssertEqual(Set(result.sources.map(\.bookSourceUrl)).count, 1501)
+        do { _ = try await importSourcePacksFromURL(base + "/packs/broken"); XCTFail("All failed links cannot be success") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("403")) }
+    }
+
     func testValidationChecksReadingChainAndDistinguishesNoResults() async {
         let passed = await SourceValidation.run(SourceTestFixtures.html(), keyword: "不存在")
         XCTAssertEqual(passed.status, .passed, passed.summary)

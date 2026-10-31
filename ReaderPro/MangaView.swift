@@ -18,7 +18,7 @@ final class MangaImageStore {
         var req = URLRequest(url: url, timeoutInterval: 30)
         req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         do {
-            let (data, _) = try await insecureSession.data(for: req)
+            let (data, _) = try await SourceHTTP.session.data(for: req)
             if let img = UIImage(data: data) {
                 writeDisk(data, urlString, bookId: bookId)
                 mem.setObject(img, forKey: urlString as NSString)
