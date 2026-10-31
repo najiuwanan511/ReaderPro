@@ -42,7 +42,7 @@ enum SourceValidation {
         var source = source
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        var data = Data("source-engine-20261031-v9".utf8)
+        var data = Data("source-engine-20261031-v10".utf8)
         data.append(SourceTLS.isAllowed(source.bookSourceUrl) ? 1 : 0)
         data.append((try? encoder.encode(source)) ?? Data())
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -90,6 +90,8 @@ enum SourceValidation {
             do {
                 let book = try await withTimeout(30) { try await source.fetchBookInfo(book: sample) }
                 ok(stage, book.title)
+                let warnings = Array(Set((samples.flatMap { $0.ruleWarnings ?? [] }) + (book.ruleWarnings ?? []))).sorted()
+                if !warnings.isEmpty { ok("附加信息警告", warnings.joined(separator: "\n")) }
                 stage = "目录"
                 let chapters = try await withTimeout(90) { try await source.fetchChapters(book: book) }
                 guard let first = chapters.first else { throw SourceFailure(stage: stage, message: "目录为空") }

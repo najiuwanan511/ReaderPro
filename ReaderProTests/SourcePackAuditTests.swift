@@ -5,7 +5,8 @@ private actor PackSearchAudit {
     var rows: [[String: String]] = []
     func add(_ update: SourceSearchUpdate) {
         rows.append(["id": update.sourceID, "name": update.sourceName,
-                     "books": String(update.books.count), "error": update.error])
+                     "books": String(update.books.count), "error": update.error,
+                     "metadataWarnings": Array(Set(update.books.flatMap { $0.ruleWarnings ?? [] })).sorted().joined(separator: "\n")])
         if rows.count % 100 == 0 { print("USER_PACK_AUDIT completed=\(rows.count)") }
         if rows.count % 25 == 0,
            let data = try? JSONSerialization.data(withJSONObject: ["completed": rows.count, "results": rows], options: [.sortedKeys]) {

@@ -145,6 +145,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
 }
 
 struct SourceBook: Identifiable, Codable, Equatable, Hashable {
+    var ruleWarnings: [String]? = nil
     var tocUrl: String? = nil
     var id: String = UUID().uuidString
     var title: String

@@ -141,6 +141,11 @@ struct SourceBookDetailView: View {
                         } else {
                             Label(displayBook.sourceName, systemImage: "network").font(.subheadline).foregroundStyle(.secondary)
                         }
+                        if let warnings = displayBook.ruleWarnings, !warnings.isEmpty {
+                            DisclosureGroup("封面或简介规则警告（\(warnings.count)）") {
+                                Text(warnings.joined(separator: "\n")).font(.caption).foregroundStyle(.secondary)
+                            }.font(.footnote)
+                        }
                         if !displayBook.intro.isEmpty { Text(displayBook.intro).font(.system(size: 14)).foregroundStyle(.secondary).lineSpacing(5) }
                         Divider()
                         HStack {

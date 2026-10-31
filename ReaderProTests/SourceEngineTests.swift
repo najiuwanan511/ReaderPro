@@ -38,6 +38,39 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(SourceHTTP.options(base + "/a,b?q=1,2").url, base + "/a,b?q=1,2")
     }
 
+    func testOptionalMetadataFailuresKeepReadableBooksAndRequiredFieldsStillFail() async throws {
+        var source = SourceTestFixtures.json()
+        source.ruleSearch.coverUrl = "@js:result.match(/no-cover-match/)[1]"
+        source.ruleSearch.intro = "@js:throw Error('intro failed')"
+        source.ruleBookInfo.coverUrl = "@js:throw Error('detail cover failed')"
+        source.ruleBookInfo.intro = "@js:throw Error('detail intro failed')"
+        let books = try await source.search(key: "测试")
+        let first = try XCTUnwrap(books.first)
+        XCTAssertEqual(first.title, "JSON测试")
+        XCTAssertEqual(first.cover, "")
+        XCTAssertEqual(first.intro, "")
+        XCTAssertEqual(first.ruleWarnings?.count, 2)
+        let detailed = try await source.fetchBookInfo(book: first)
+        XCTAssertEqual(detailed.ruleWarnings?.count, 4)
+        let chapters = try await source.fetchChapters(book: detailed)
+        let content = try await source.fetchChapterContent(XCTUnwrap(chapters.first))
+        XCTAssertEqual(content, "JSON首章正文")
+        let report = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(report.status, .passed)
+        XCTAssertTrue(report.steps.contains { $0.stage == "附加信息警告" && $0.detail.contains("intro failed") })
+        // Required rules must still report genuine script failures.
+        for field in ["name", "author", "bookUrl"] {
+            var required = source
+            switch field {
+            case "name": required.ruleSearch.name = "@js:throw Error('required name')"
+            case "author": required.ruleSearch.author = "@js:throw Error('required author')"
+            default: required.ruleSearch.bookUrl = "@js:throw Error('required URL')"
+            }
+            do { _ = try await required.search(key: "测试"); XCTFail("Must reject broken required \(field)") }
+            catch { XCTAssertTrue(sourceErrorMessage(error).contains("required")) }
+        }
+    }
+
     func testContentPaginationStopsAtNextChapterBoundary() async throws {
         var source = SourceTestFixtures.html()
         source.ruleContent.nextContentUrl = "@css:a.next@href||@css:a.next-chapter@href"

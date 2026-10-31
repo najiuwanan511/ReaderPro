@@ -1154,23 +1154,48 @@ extension LegadoSource {
         }
     }
 
+    // Legado catches cover/intro failures separately from required book fields.
+    // Preserve the diagnostics without discarding otherwise readable books.
+    private func optionalMetadata(_ input: String, rule: String, base: String, field: String, warnings: inout [String]) throws -> String {
+        try Task.checkCancellation()
+        let failures = RuleFailures()
+        let value = LegadoJSCtx.$failures.withValue(failures) { applyRuleFirst(input, rule, base: base) }
+        do { try failures.check() }
+        catch {
+            try Task.checkCancellation()
+            if let deadline = LegadoJSCtx.deadline, deadline <= Date() { throw error }
+            warnings.append(field + "：" + sourceErrorMessage(error))
+            return ""
+        }
+        return value
+    }
+
     func parseBooks(_ response: SourcePage, rule: RuleSet, stage: String) throws -> [SourceBook] {
         guard !rule.name.isEmpty, !rule.bookUrl.isEmpty else {
             throw SourceFailure(stage: stage, message: "缺少书名或详情地址规则", url: response.url)
         }
         let blocks = rule.bookList.isEmpty ? [response.text] : ruleItems(response.text, rule: rule.bookList, base: response.url)
         var seen = Set<String>()
-        let books = blocks.compactMap { block -> SourceBook? in
+        let books = try blocks.compactMap { block -> SourceBook? in
+            try Task.checkCancellation()
             let name = applyRuleFirst(block, rule.name, base: response.url)
+            try LegadoJSCtx.failures?.check()
             // Search APIs may mix recommendation/group rows with book rows.
             // Do not evaluate a book-ID script on entries with no book name.
             guard !name.isEmpty else { return nil }
+            let author = applyRuleFirst(block, rule.author, base: response.url)
+            try LegadoJSCtx.failures?.check()
+            var warnings: [String] = []
+            let intro = try optionalMetadata(block, rule: rule.intro, base: response.url, field: "搜索简介", warnings: &warnings)
+            let cover = try optionalMetadata(block, rule: rule.coverUrl, base: response.url, field: "搜索封面", warnings: &warnings)
             let address = resolveUrl(applyRuleFirst(block, rule.bookUrl, base: response.url), base: response.url)
+            try LegadoJSCtx.failures?.check()
             guard isSourceURL(address), seen.insert(address).inserted else { return nil }
             var book = SourceBook(title: name, url: address, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
-            book.author = applyRuleFirst(block, rule.author, base: response.url)
-            book.cover = resolveUrl(applyRuleFirst(block, rule.coverUrl, base: response.url), base: response.url)
-            book.intro = applyRuleFirst(block, rule.intro, base: response.url)
+            book.author = author
+            book.cover = resolveUrl(cover, base: response.url)
+            book.intro = intro
+            book.ruleWarnings = warnings.isEmpty ? nil : warnings
             return book
         }
         try LegadoJSCtx.failures?.check()
@@ -1216,8 +1241,11 @@ extension LegadoSource {
         let fields = ruleBookInfo
         let name = applyRuleFirst(text, fields.name, base: response.url)
         let author = applyRuleFirst(text, fields.author, base: response.url)
-        let cover = applyRuleFirst(text, fields.coverUrl, base: response.url)
-        let intro = applyRuleFirst(text, fields.intro, base: response.url)
+        try LegadoJSCtx.failures?.check()
+        var warnings = book.ruleWarnings ?? []
+        let intro = try optionalMetadata(text, rule: fields.intro, base: response.url, field: "详情简介", warnings: &warnings)
+        let cover = try optionalMetadata(text, rule: fields.coverUrl, base: response.url, field: "详情封面", warnings: &warnings)
+        book.ruleWarnings = warnings.isEmpty ? nil : warnings
         if !name.isEmpty { book.title = name }
         if !author.isEmpty { book.author = author }
         if !cover.isEmpty { book.cover = resolveUrl(cover, base: response.url) }
