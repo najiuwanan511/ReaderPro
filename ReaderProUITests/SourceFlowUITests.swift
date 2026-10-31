@@ -6,6 +6,7 @@ final class SourceFlowUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--source-ui-fixture"] + (reset ? ["--reset-source-fixture"] : [])
         app.launch()
+        XCTAssertGreaterThan(app.windows.firstMatch.frame.width, 350, "The app must use the native device layout, not legacy 320-point compatibility mode")
         return app
     }
 
