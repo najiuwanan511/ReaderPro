@@ -12,6 +12,7 @@ enum LegadoJSCtx {
     @TaskLocal static var library = ""
     @TaskLocal static var comment = ""
     @TaskLocal static var loginURL = ""
+    @TaskLocal static var strictContentHTTP = false
     @TaskLocal static var failures: RuleFailures? = nil
     @TaskLocal static var headers: [String: String] = [:]
 }
@@ -1288,7 +1289,16 @@ extension LegadoSource {
                 try Task.checkCancellation()
                 guard visited.count < 100 else { throw SourceFailure(stage: "正文分页", message: "超过 100 页保护限制，未缓存不完整正文", url: next) }
                 guard visited.insert(next).inserted else { break }
-                let response = try await loadPage(next, stage: "正文第 \(visited.count) 页")
+                let response: SourcePage
+                do { response = try await loadPage(next, stage: "正文第 \(visited.count) 页") }
+                catch let failure as SourceFailure {
+                    // Some API sources use a chapter ID as the URL and fetch
+                    // the real endpoint inside their complete JS content rule.
+                    // Supply no error-page HTML to that script. Other rules
+                    // retain the original HTTP failure.
+                    guard failure.message.hasPrefix("HTTP "), SourceScript.loadsOwnContent(ruleContent.content) else { throw failure }
+                    response = SourcePage(text: "", url: SourceHTTP.options(next).url)
+                }
                 let raw = applyRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
                 let part = stripText(raw, preserveNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines)
                 try LegadoJSCtx.failures?.check()
@@ -1334,7 +1344,9 @@ extension LegadoSource {
     private func withChapterRules<T>(_ chapter: BookChapter, operation: () async throws -> T) async throws -> T {
         try await withRules {
             try await LegadoJSCtx.$book.withValue(chapter.ruleBook) {
-                try await LegadoJSCtx.$chapter.withValue(chapter) { try await operation() }
+                try await LegadoJSCtx.$chapter.withValue(chapter) {
+                    try await LegadoJSCtx.$strictContentHTTP.withValue(true) { try await operation() }
+                }
             }
         }
     }

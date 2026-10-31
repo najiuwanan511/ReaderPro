@@ -6,6 +6,22 @@ enum SourceScript {
         var range: Range<String.Index>
     }
 
+    static func loadsOwnContent(_ rule: String) -> Bool {
+        let rule = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !isJavaScriptRule(rule) {
+            guard rule.hasPrefix("<js>"), let close = rule.range(of: "</js>", options: .backwards) else { return false }
+            let tail = rule[close.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard tail.isEmpty || tail.hasPrefix("##") else { return false }
+        }
+        let tokens = tokenize(rule)
+        guard tokens.count >= 4 else { return false }
+        return (0..<(tokens.count - 3)).contains { index in
+            tokens[index].text == "java" && tokens[index + 1].text == "."
+                && ["ajax", "ajaxAll", "get", "post", "connect", "webView"].contains(tokens[index + 2].text)
+                && tokens[index + 3].text == "("
+        }
+    }
+
     static func adaptingJavaCalls(_ script: String) -> String {
         guard script.contains(".length()") || script.contains("\u{200b}") else { return script }
         let tokens = tokenize(script)

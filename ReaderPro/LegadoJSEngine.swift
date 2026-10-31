@@ -72,6 +72,7 @@ final class LegadoJS {
         ctx.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
         ctx.setObject(page, forKeyedSubscript: "page" as NSString)
         ctx.setObject(sourceUrl, forKeyedSubscript: "sourceUrl" as NSString)
+        ctx.setObject(LegadoJSCtx.strictContentHTTP, forKeyedSubscript: "_strictContentHTTP" as NSString)
         let geturl: @convention(block) () -> String = { baseUrl }
         ctx.setObject(geturl, forKeyedSubscript: "geturl" as NSString)
 
@@ -378,7 +379,10 @@ final class LegadoJS {
     function _response(data) {
         if (data.error) throw new Error(data.error);
         return {
-            body: function() { return data.text; },
+            body: function() {
+                if(_strictContentHTTP && (data.status<200 || data.status>=300)) throw Error('HTTP '+data.status+'：正文脚本请求失败');
+                return data.text;
+            },
             code: function() { return data.status; }, statusCode: function() { return data.status; },
             header: function(name) { return data.headers[String(name).toLowerCase()] || ''; },
             headers: function() { return data.headers; }, url: function() { return data.url; },

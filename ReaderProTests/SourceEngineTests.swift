@@ -88,6 +88,22 @@ final class SourceEngineTests: XCTestCase {
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("正文规则")) }
     }
 
+    func testSelfLoadingContentScriptsCanUseChapterIDsWithoutReturningErrorPages() async throws {
+        var source = SourceTestFixtures.json()
+        let chapter = BookChapter(title: "第一章", text: "__URL__" + base + "/missing-chapter-id", url: base + "/missing-chapter-id")
+        for rule in ["@js:JSON.parse(java.ajax('" + base + "/json/chapter')).text", "<js>JSON.parse(java.ajax('" + base + "/json/chapter')).text</js>"] {
+            source.ruleContent.content = rule
+            let text = try await source.fetchChapterContent(chapter)
+            XCTAssertEqual(text, "JSON首章正文")
+        }
+        for rule in ["@js:result", "<js>var example='java.ajax(url)';result</js>", "@js:java.ajax('" + base + "/denied')"] {
+            source.ruleContent.content = rule
+            do { _ = try await source.fetchChapterContent(chapter); XCTFail("An HTTP error page must never be chapter content") }
+            catch { XCTAssertTrue(sourceErrorMessage(error).contains("HTTP"), sourceErrorMessage(error)) }
+        }
+        XCTAssertFalse(SourceScript.loadsOwnContent("#content<js>java.ajax(baseUrl)</js>"))
+    }
+
     func testInfiniteJavaScriptRetryLoopsRespectDeadlineAndCancellation() async throws {
         let failures = RuleFailures()
         let started = Date()
