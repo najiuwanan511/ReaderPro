@@ -40,6 +40,8 @@ struct ReaderView: View {
 
     @State private var loading = false
     @State private var errorText = ""
+    @State private var chapterLoadTask: Task<Void, Never>?
+    @State private var chapterLoadToken = UUID()
     @State private var initialBrightness: CGFloat = 0.5
 
     // 仿真翻页跳转令牌（目录/书签/换章时强制重建 pageCurl）
@@ -87,7 +89,16 @@ struct ReaderView: View {
             let size = geo.size
             ZStack {
                 if loading {
-                    ProgressView("正在加载章节…").foregroundColor(Color(uiColor: theme.secondary))
+                    VStack(spacing: 20) {
+                        ProgressView("正在加载章节…")
+                        Button("取消并返回") { cancelChapterLoad(); dismiss() }
+                    }.foregroundColor(Color(uiColor: theme.secondary))
+                } else if chapter?.text.hasPrefix("__URL__") == true {
+                    VStack(spacing: 20) {
+                        Text("章节尚未加载")
+                        Button("重试") { loadChapterIfNeeded() }
+                        Button("返回目录") { dismiss() }
+                    }.foregroundColor(Color(uiColor: theme.secondary))
                 } else if book != nil, chapter != nil {
                     readerContent(size: size)
                     if showMenu { menuOverlay }
@@ -110,6 +121,7 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .tabBar)
         .preferredColorScheme(themeBrightness())
         .onDisappear {
+            cancelChapterLoad()
             saveProgress()
             let minutes = max(0, Int(Date().timeIntervalSince(readingStart) / 60))
             if minutes > 0, var b = store.books.first(where: { $0.id == bookId }) {
@@ -128,6 +140,7 @@ struct ReaderView: View {
         .sheet(isPresented: $showSourceChange) { sourceChangeSheet }
         .sheet(isPresented: $showDownloadAll) { downloadSheet }
         .alert("加载失败", isPresented: .constant(!errorText.isEmpty)) {
+            Button("重试") { errorText = ""; loadChapterIfNeeded() }
             Button("好") { errorText = "" }
         } message: { Text(errorText) }
     }
@@ -420,31 +433,42 @@ struct ReaderView: View {
 
     // MARK: 章节懒加载（web 源）
 
+    func cancelChapterLoad() {
+        chapterLoadToken = UUID()
+        chapterLoadTask?.cancel()
+        chapterLoadTask = nil
+        loading = false
+    }
+
     func loadChapterIfNeeded() {
+        cancelChapterLoad()
         guard let b = book, chapterIndex < b.chapters.count else { return }
         let ch = b.chapters[chapterIndex]
         guard ch.text.hasPrefix("__URL__") else { return }
+        guard let src = store.sourceForBook(b) else {
+            errorText = "这本书的书源已删除或未启用，无法拉取在线章节"
+            return
+        }
         loading = true
         let idx = chapterIndex
-        Task {
+        let token = chapterLoadToken
+        let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : b.chapters.first?.url
+        chapterLoadTask = Task { @MainActor in
+            defer {
+                if chapterLoadToken == token { loading = false; chapterLoadTask = nil }
+            }
             do {
-                guard let src = store.sourceForBook(b) else {
-                    await MainActor.run { errorText = "这本书的书源已删除或未启用，无法拉取在线章节"; loading = false }
-                    return
-                }
-                let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : b.chapters.first?.url
-                let content = try await src.fetchChapterContent(ch, nextChapterUrl: nextURL)
-                await MainActor.run {
-                    guard chapterIndex == idx else { loading = false; return }
-                    if var nb = store.books.first(where: { $0.id == bookId }) {
-                        nb.chapters[chapterIndex].text = content
-                        store.updateBook(nb)
-                        loading = false
-                        rebuild(size: lastSize, keepOffset: 0)
-                    }
-                }
+                // One deadline covers all pagination and synchronous JS retries.
+                let content = try await withTimeout(45) { try await src.fetchChapterContent(ch, nextChapterUrl: nextURL) }
+                guard !Task.isCancelled, chapterLoadToken == token, chapterIndex == idx,
+                      var nb = store.books.first(where: { $0.id == bookId }),
+                      nb.chapters.indices.contains(idx), nb.chapters[idx].id == ch.id else { return }
+                nb.chapters[idx].text = content
+                store.updateBook(nb)
+                rebuild(size: lastSize, keepOffset: 0)
             } catch {
-                await MainActor.run { errorText = sourceErrorMessage(error); loading = false }
+                guard !Task.isCancelled, chapterLoadToken == token else { return }
+                errorText = sourceErrorMessage(error)
             }
         }
     }

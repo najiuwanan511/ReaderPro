@@ -637,6 +637,14 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(incompatible.status, .partial)
         XCTAssertTrue(incompatible.searchableText.contains("脚本兼容性"))
         XCTAssertTrue(incompatible.steps.contains { $0.stage == "搜索" && $0.passed })
+        source = SourceTestFixtures.json(); source.exploreUrl = "旧分类::/denied"; source.enabledExplore = false
+        let searchOnly = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(searchOnly.status, .passed, searchOnly.summary)
+        XCTAssertEqual(searchOnly.steps.map(\.stage), ["搜索", "详情", "目录", "正文"])
+        source.enabledExplore = true
+        let withBrokenDiscovery = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(withBrokenDiscovery.status, .partial)
+        XCTAssertTrue(withBrokenDiscovery.steps.contains { $0.stage == "发现" && !$0.passed })
     }
 
     @MainActor func testReportPersistenceAndRuleChangesInvalidateResult() throws {

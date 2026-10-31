@@ -42,7 +42,7 @@ enum SourceValidation {
         var source = source
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        var data = Data("source-engine-20261031-v8".utf8)
+        var data = Data("source-engine-20261031-v9".utf8)
         data.append(SourceTLS.isAllowed(source.bookSourceUrl) ? 1 : 0)
         data.append((try? encoder.encode(source)) ?? Data())
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
@@ -64,9 +64,10 @@ enum SourceValidation {
                 incompatible = true
             } else { failed = true }
         }
-        if source.searchUrl.isEmpty && source.effectiveDiscoverUrl.isEmpty {
+        let checksDiscovery = source.enabledExplore && !source.effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if source.searchUrl.isEmpty && !checksDiscovery {
             report.status = .failed
-            fail("规则配置", SourceFailure(stage: "规则配置", message: "既没有搜索地址，也没有发现入口"))
+            fail("规则配置", SourceFailure(stage: "规则配置", message: "既没有搜索地址，也没有启用的发现入口"))
             return report
         }
         if !source.searchUrl.isEmpty {
@@ -78,7 +79,7 @@ enum SourceValidation {
                 } else { samples += books; ok("搜索", "「\(key)」返回 \(books.count) 本书") }
             } catch { recordFailure("搜索", error) }
         }
-        if !Task.isCancelled && !source.effectiveDiscoverUrl.isEmpty {
+        if !Task.isCancelled && checksDiscovery {
             do {
                 let books = try await withTimeout(35) { try await source.discover() }
                 samples += books; ok("发现", "首个分类返回 \(books.count) 本书")

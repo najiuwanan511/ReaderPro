@@ -14,7 +14,7 @@ from pathlib import Path
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
-        pass
+        print(f'{time.time():.3f} {self.command} {self.path} {fmt % args}', flush=True)
 
     def do_POST(self):
         self.do_GET()
