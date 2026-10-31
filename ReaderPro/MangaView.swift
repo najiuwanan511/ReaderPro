@@ -16,9 +16,9 @@ final class MangaImageStore {
         }
         guard let url = URL(string: urlString) else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 30)
-        req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+        req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, _) = try await insecureSession.data(for: req)
             if let img = UIImage(data: data) {
                 writeDisk(data, urlString, bookId: bookId)
                 mem.setObject(img, forKey: urlString as NSString)

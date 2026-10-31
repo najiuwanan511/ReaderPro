@@ -6,6 +6,8 @@ import AVFoundation
 
 // MARK: - Source management (Settings): enable/disable, delete, network import, QR import
 
+enum SourceCheckState: Equatable { case checking, ok, fail }
+
 struct SourceManagementView: View {
     @ObservedObject var store: BookStore
     @State private var showPaste = false
@@ -21,35 +23,76 @@ struct SourceManagementView: View {
     @State private var qrError = ""
     @State private var filterText = ""
     @State private var selectedSource: LegadoSource?
+    // 多选 + 校验
+    @State private var editing = false
+    @State private var selected: Set<String> = []
+    @State private var checking = false
+    @State private var checkStates: [String: SourceCheckState] = [:]
+    @State private var checkProgress = ""
+
+    var filtered: [LegadoSource] {
+        store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }
+    }
 
     var body: some View {
         List {
-            Section("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") {
+            Section {
                 TextField("按名字/分组过滤", text: $filterText).textFieldStyle(.roundedBorder)
-                HStack {
-                    Button("全部启用") { for i in store.sources.indices { store.sources[i].enabled = true }; store.save() }
-                    Button("全部停用") { for i in store.sources.indices { store.sources[i].enabled = false }; store.save() }
-                }
-                ForEach(store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }) { src in
-                    HStack {
+                // 批量操作工具栏
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        toolbarBtn(editing ? (selected.count == filtered.count && !filtered.isEmpty ? "取消全选" : "全选") : "多选", icon: editing ? "checkmark.circle" : "checkmark.circle") {
+                            if !editing { editing = true; selected = Set(filtered.map { $0.id }) }
+                            else if selected.count == filtered.count && !filtered.isEmpty { selected.removeAll() }
+                            else { selected = Set(filtered.map { $0.id }) }
+                        }
+                        toolbarBtn(checking ? "校验中…" : "校验全部", icon: "checkmark.seal") { check(editing ? selectedSources : filtered) }
+                        toolbarBtn("全部启用", icon: "power") { setEnabled(editing ? selectedSources : filtered, true) }
+                        toolbarBtn("全部停用", icon: "poweroff") { setEnabled(editing ? selectedSources : filtered, false) }
+                        if editing {
+                            toolbarBtn("删除选中", icon: "trash", tint: .red) {
+                                store.sources.removeAll { selected.contains($0.id) }
+                                selected.removeAll(); store.save()
+                            }
+                        }
+                    }
+                }.buttonStyle(.bordered)
+                if !checkProgress.isEmpty { Text(checkProgress).font(.caption2).foregroundStyle(.secondary) }
+                ForEach(filtered) { src in
+                    HStack(spacing: 10) {
+                        if editing {
+                            Image(systemName: selected.contains(src.id) ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(selected.contains(src.id) ? AppTheme.accent : .secondary)
+                                .onTapGesture { toggleSelect(src.id) }
+                        }
                         VStack(alignment: .leading) {
                             Text(src.bookSourceName).font(.headline)
                             Text(src.bookSourceUrl).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             if !src.bookSourceGroup.isEmpty { Text("分组：\(src.bookSourceGroup)").font(.caption2).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(AppTheme.accent) }
-                        Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
-                            if let i = store.sources.firstIndex(where: { $0.id == src.id }) { store.sources[i].enabled = v; store.save() }
-                        })).labelsHidden()
+                        if let st = checkStates[src.id] {
+                            switch st {
+                            case .checking: ProgressView().scaleEffect(0.7)
+                            case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                            case .fail: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                            }
+                        }
+                        if !editing {
+                            Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(AppTheme.accent) }
+                            Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
+                                if let i = store.sources.firstIndex(where: { $0.id == src.id }) { store.sources[i].enabled = v; store.save() }
+                            })).labelsHidden()
+                        }
                     }
+                    .contentShape(Rectangle())
+                    .onTapGesture { if editing { toggleSelect(src.id) } }
                 }
                 .onDelete { idx in
-                    let filtered = store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }
                     for i in idx { if i < filtered.count { store.sources.removeAll { $0.id == filtered[i].id } } }
                     store.save()
                 }
-            }
+            } header: { Text("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") }
             Section("导入") {
                 Button("粘贴 JSON 导入") { showPaste = true }
                 Button("网络链接导入（订阅源）") { showNetwork = true }
@@ -59,6 +102,14 @@ struct SourceManagementView: View {
             }
         }
         .navigationTitle("书源管理")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(editing ? "完成" : "编辑") {
+                    editing.toggle()
+                    if !editing { selected.removeAll() }
+                }
+            }
+        }
         .sheet(item: $selectedSource) { src in
             NavigationStack { SourceDetailView(source: src) }
         }
@@ -118,6 +169,72 @@ struct SourceManagementView: View {
             }
         }
     }
+    // 当前选中（编辑模式）对应的书源
+    var selectedSources: [LegadoSource] { filtered.filter { selected.contains($0.id) } }
+
+    func toggleSelect(_ id: String) {
+        if selected.contains(id) { selected.remove(id) } else { selected.insert(id) }
+    }
+
+    func setEnabled(_ targets: [LegadoSource], _ on: Bool) {
+        let ids = Set(targets.map { $0.id })
+        for i in store.sources.indices where ids.contains(store.sources[i].id) { store.sources[i].enabled = on }
+        store.save()
+    }
+
+    @ViewBuilder
+    func toolbarBtn(_ label: String, icon: String, tint: Color = AppTheme.accent, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(label, systemImage: icon).font(.caption).labelStyle(.titleAndIcon).foregroundStyle(tint)
+        }
+    }
+
+    // 校验书源可用性：探测 bookSourceUrl（为空则 searchUrl），能拿到内容即「可用」。
+    func check(_ targets: [LegadoSource]) {
+        guard !checking, !targets.isEmpty else { return }
+        checking = true
+        let total = targets.count
+        for s in targets { checkStates[s.id] = .checking }
+        checkProgress = "开始校验 \(total) 个书源…"
+        Task {
+            var done = 0
+            let batch = 30
+            var idx = 0
+            while idx < targets.count {
+                let slice = Array(targets[idx..<min(idx + batch, targets.count)])
+                await withTaskGroup(of: (String, Bool).self) { group in
+                    for s in slice {
+                        group.addTask { (s.id, await Self.probe(s)) }
+                    }
+                    for await (id, ok) in group {
+                        await MainActor.run {
+                            checkStates[id] = ok ? .ok : .fail
+                            done += 1
+                            checkProgress = "已校验 \(done)/\(total)"
+                        }
+                    }
+                }
+                idx += batch
+            }
+            await MainActor.run {
+                let ok = targets.filter { checkStates[$0.id] == .ok }.count
+                checking = false
+                checkProgress = "校验完成：\(ok) 可用 / \(total - ok) 失效（点「全部停用」停掉失效的，或手动关闭红叉源）"
+            }
+        }
+    }
+
+    static func probe(_ s: LegadoSource) async -> Bool {
+        let url = s.bookSourceUrl.isEmpty ? s.searchUrl : s.bookSourceUrl
+        guard !url.isEmpty else { return false }
+        do {
+            let html = try await fetchText(urlString: url)
+            return !html.isEmpty
+        } catch {
+            return false
+        }
+    }
+
     func handleQR(_ code: String) {
         let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("http") {

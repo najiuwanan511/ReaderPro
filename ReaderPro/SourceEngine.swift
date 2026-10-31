@@ -121,38 +121,53 @@ extension KeyedDecodingContainer {
     }
 }
 
-func fetchText(urlString: String) async throws -> String {
-    guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    // ATS 修复：截图里的失败就是 NSURLErrorAppTransportSecurity（-1022），
-    // 即系统拦了 http:// 源。Info.plist 里已有 NSAllowsArbitraryLoads，
-    // 但旧安装包/部分系统上仍会拦，所以 http 源先试 https，https 不通再回 http，
-    // 这样发现和搜索都不再因为一个 http 源全军覆没。
-    if urlString.hasPrefix("http://") {
-        let httpsString = "https://" + urlString.dropFirst("http://".count)
-        if let httpsURL = URL(string: httpsString) {
-            var req = URLRequest(url: httpsURL, timeoutInterval: 30)
-            req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
-            req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
-            if let (data, resp) = try? await URLSession.shared.data(for: req),
-               let http = resp as? HTTPURLResponse, http.statusCode < 400 {
-                return decodeTextData(data)
-            }
+// MARK: - 全局网络会话（关键：接受所有 TLS 证书）
+// 书源网站大量是 HTTP 或「证书过期/自签名/证书链不完整」的 HTTPS。
+// iOS 默认 URLSession 会直接拒绝这两种（ATS 拦 HTTP，TLS 校验拦坏证书），
+// 报错就是截图里的 "An SSL error has occurred..."。NSAllowsArbitraryLoads
+// 只能放行 HTTP，放行不了坏证书的 HTTPS；必须自定义 delegate 接受所有 serverTrust。
+final class InsecureURLSessionDelegate: NSObject, URLSessionDelegate {
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: trust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
         }
     }
+}
+
+let insecureSession: URLSession = {
+    let cfg = URLSessionConfiguration.ephemeral
+    cfg.timeoutIntervalForRequest = 90
+    cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+    return URLSession(configuration: cfg, delegate: InsecureURLSessionDelegate(), delegateQueue: nil)
+}()
+
+let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0"
+
+func fetchText(urlString: String) async throws -> String {
+    guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
     var req = URLRequest(url: url, timeoutInterval: 90)
-    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
     req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
     do {
-        let (data, _) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await insecureSession.data(for: req)
+        if let http = resp as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
         return decodeTextData(data)
     } catch {
-        // http 被 ATS 拦时，再试一次 https 版本
-        if urlString.hasPrefix("http://"),
-           let httpsURL = URL(string: "https://" + urlString.dropFirst("http://".count)) {
-            var req2 = URLRequest(url: httpsURL, timeoutInterval: 30)
-            req2.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
-            let (data, _) = try await URLSession.shared.data(for: req2)
-            return decodeTextData(data)
+        // 降级重试：https 换 http 或 http 换 https（某些站只开其中一个）
+        var alt = ""
+        if urlString.hasPrefix("https://") { alt = "http://" + urlString.dropFirst("https://".count) }
+        else if urlString.hasPrefix("http://") { alt = "https://" + urlString.dropFirst("http://".count) }
+        if !alt.isEmpty, let altURL = URL(string: alt) {
+            var req2 = URLRequest(url: altURL, timeoutInterval: 90)
+            req2.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
+            req2.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
+            let (data2, resp2) = try await insecureSession.data(for: req2)
+            if let http = resp2 as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
+            return decodeTextData(data2)
         }
         throw error
     }
@@ -160,27 +175,14 @@ func fetchText(urlString: String) async throws -> String {
 
 func fetchText(urlString: String, method: String, body: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 25)
+    var req = URLRequest(url: url, timeoutInterval: 90)
     req.httpMethod = method
-    req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
+    req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
     req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
     req.httpBody = body.data(using: .utf8)
-    do {
-        let (data, _) = try await URLSession.shared.data(for: req)
-        return decodeTextData(data)
-    } catch {
-        if urlString.hasPrefix("http://"),
-           let httpsURL = URL(string: "https://" + urlString.dropFirst("http://".count)) {
-            var req2 = URLRequest(url: httpsURL, timeoutInterval: 25)
-            req2.httpMethod = method
-            req2.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0", forHTTPHeaderField: "User-Agent")
-            req2.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
-            req2.httpBody = body.data(using: .utf8)
-            let (data, _) = try await URLSession.shared.data(for: req2)
-            return decodeTextData(data)
-        }
-        throw error
-    }
+    let (data, resp) = try await insecureSession.data(for: req)
+    if let http = resp as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
+    return decodeTextData(data)
 }
 
 func resolveUrl(_ raw: String, base: String) -> String {
