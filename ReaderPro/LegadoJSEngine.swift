@@ -229,8 +229,8 @@ final class LegadoJS {
             ctx.evaluateScript("result = _elements(result)")
         }
         SourceCrypto.install(java, context: ctx)
-        let digest: @convention(block) (String, String) -> String = { text, algorithm in
-            let data = Data(text.utf8)
+        let digest: @convention(block) (JSValue, String) -> String = { text, algorithm in
+            let data = SourceCrypto.bytes(text)
             let bytes: [UInt8]
             switch algorithm.uppercased().replacingOccurrences(of: "-", with: "") {
             case "MD5": bytes = Array(Insecure.MD5.hash(data: data))
@@ -273,6 +273,7 @@ final class LegadoJS {
         let getUA: @convention(block) () -> String = { sourceUA }
         java.setObject(getUA, forKeyedSubscript: "getWebViewUA" as NSString)
         ctx.evaluateScript(Self.javaStringScript)
+        ctx.evaluateScript(SourceJava.script)
 
         // ---- 执行 ----
         // 关键修复：JS 规则大量用「最后一行是表达式」的方式返回结果，
@@ -435,8 +436,10 @@ final class LegadoJS {
 
     private static let javaStringScript = #"""
     function _JavaString(value) {
+        if(!(this instanceof _JavaString)) return new _JavaString(value);
         var text = Array.isArray(value) ? java.bytesToStr(value) : String(value == null ? '' : value);
         this.toString = function() { return text; };
+        this.toJSON = function() { return text; };
         this.valueOf = function() { return text; };
         this.getBytes = function() { return java.strToBytes(text); };
         this.length = function() { return text.length; };

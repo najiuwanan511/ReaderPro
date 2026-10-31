@@ -106,6 +106,8 @@ ReaderPro/
 - 用户提供的 yckceo/1325 合集固定为 1466 条，以 SHA256 验证原始文件，逐条核对导入和规则保存。整包测试用生产引擎搜索「斗罗大陆」，每个配置了搜索的源都必须返回结果或明确错误，并导出逐源 JSON 报告；证书错误另测旧站点兼容模式。这不等于每个源、每个分类、每本书均可阅读。
 - 创世中文网另有真实公开网站集成测试，覆盖搜索、分类、发现、详情、完整目录与首个免费章节。其他回归使用本仓库原创样本及本地 HTTP/HTTPS 服务，证据上传为 `source-regression-evidence`。模拟器测试不能代替真机和用户所在网络的验证。
 - 搜索按源持续返回结果，显示完成数与失败原因，可随时取消和重新搜索；发现分类、分类列表与目录加载有超时和重试提示。
+- 支持脚本内书籍字段模板、节点列表转换、带排除索引的组合 CSS、嵌套替换模板、原始源身份保留与请求网址空白清理，以及带 type 的 Base64 内嵌/二进制请求。登录脚本字段随书源保存；交互登录界面仍未完整实现。
+- 常用 JavaImporter 加密接口提供 AES/DES Cipher、HMAC Mac、SecretKeySpec、IV、Base64、Arrays、HashMap 与 RSA SHA-1/256/384/512 签名适配；测试使用 NIST/RFC 向量和独立 OpenSSL 生成的 RSA 签名。测试密钥仅用于回归，无任何账户用途。
 - 网络超时同时约束脚本执行：针对部分合集中的无限 `while/catch` 重试，JSC watchdog 会直接终止脚本，避免搜索永久等待。相关测试包含无限循环、取消和后续脚本恢复。此侧载实现使用 JavaScriptCore 导出的执行中断 SPI；未来如上架 App Store，需要替换这部分实现。系统不提供该接口时会明确拒绝执行脚本。
 
 ## Android 可用但 iOS 报 SSL 错误
@@ -116,7 +118,7 @@ legado-E 的网络客户端默认忽略 HTTPS 证书及域名校验。ReaderPro 
 
 ## 已知限制
 
-- 使用 JavaScriptCore 执行 JS、SwiftSoup 解析 Jsoup/CSS 选择器、Kanna/libxml2 解析 XPath。已实现常用 `java.ajax/connect/get/post`、Cookie、WebView、jsLib、Jsoup 节点列表、AES/DES/3DES、摘要及 HMAC 接口；仍未完整实现 Android Java 环境、交互登录/验证码、RSA 等所有扩展，不能承诺通用兼容。
+- 使用 JavaScriptCore 执行 JS、SwiftSoup 解析 Jsoup/CSS 选择器、Kanna/libxml2 解析 XPath。已实现常用网络、DOM、对称加密及 RSA 签名接口；仍未完整实现 Android Java 环境、交互登录/验证码、RSA 加解密等所有扩展，不能承诺通用兼容。未知 Java 类会明确报错。
 - 第三方网站的失效域名、证书、登录、验证码、地区限制及防盗链仍可能导致失败。客户端允许旧式 HTTP；HTTPS 默认校验证书，旧站点兼容需针对该源明确开启。
 - 订阅源目前支持「导入 / 管理 / 源仓库导航」，带规则的 RSS 全文阅读（ruleArticles 解析渲染）尚未实现。
 - 带 DRM 的加密书无法读取。

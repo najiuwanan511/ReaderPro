@@ -1,8 +1,64 @@
 import Foundation
 import CommonCrypto
 import JavaScriptCore
+import Security
 
 enum SourceCrypto {
+    // SecKey expects PKCS#1. Java's key specs commonly contain PKCS#8/SPKI.
+    static func rsaKey(_ data: Data, isPrivate: Bool) throws -> SecKey {
+        let raw = [UInt8](data)
+        func field(_ offset: inout Int) -> (UInt8, Range<Int>)? {
+            guard offset + 2 <= raw.count else { return nil }
+            let tag = raw[offset]; offset += 1
+            var length = Int(raw[offset]); offset += 1
+            if length & 0x80 != 0 {
+                let count = length & 0x7f
+                guard (1...4).contains(count), offset + count <= raw.count else { return nil }
+                length = 0
+                for _ in 0..<count { length = length * 256 + Int(raw[offset]); offset += 1 }
+            }
+            guard length <= raw.count - offset else { return nil }
+            let range = offset..<(offset + length); offset += length
+            return (tag, range)
+        }
+        var cursor = 0, keyData = data
+        if let (tag, outer) = field(&cursor), tag == 0x30 {
+            cursor = outer.lowerBound
+            var fields: [(UInt8, Range<Int>)] = []
+            while cursor < outer.upperBound, let next = field(&cursor) { fields.append(next) }
+            if isPrivate, fields.count >= 3, fields[1].0 == 0x30, fields[2].0 == 0x04 {
+                keyData = Data(raw[fields[2].1])
+            } else if !isPrivate, fields.count == 2, fields[0].0 == 0x30, fields[1].0 == 0x03,
+                      let first = fields[1].1.first, raw[first] == 0 {
+                keyData = Data(raw[(first + 1)..<fields[1].1.upperBound])
+            }
+        }
+        var error: Unmanaged<CFError>?
+        let attributes = [kSecAttrKeyType as String: kSecAttrKeyTypeRSA,
+                          kSecAttrKeyClass as String: isPrivate ? kSecAttrKeyClassPrivate : kSecAttrKeyClassPublic] as CFDictionary
+        guard let key = SecKeyCreateWithData(keyData as CFData, attributes, &error) else {
+            throw SourceFailure(stage: "脚本加密", message: "无法读取 RSA 密钥：" + (error.map { ($0.takeRetainedValue() as Error).localizedDescription } ?? "密钥格式不正确"))
+        }
+        return key
+    }
+
+    static func rsaSign(_ data: Data, key: Data, algorithm: String) throws -> Data {
+        let spec: SecKeyAlgorithm
+        switch algorithm.uppercased().replacingOccurrences(of: "-", with: "") {
+        case "SHA1WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA1
+        case "SHA256WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA256
+        case "SHA384WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA384
+        case "SHA512WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA512
+        default: throw SourceFailure(stage: "脚本兼容性", message: "不支持的 RSA 签名算法：" + algorithm)
+        }
+        let privateKey = try rsaKey(key, isPrivate: true)
+        var error: Unmanaged<CFError>?
+        guard let signed = SecKeyCreateSignature(privateKey, spec, data as CFData, &error) else {
+            throw SourceFailure(stage: "脚本加密", message: error.map { ($0.takeRetainedValue() as Error).localizedDescription } ?? "RSA 签名失败")
+        }
+        return signed as Data
+    }
+
     static func bytes(_ value: JSValue) -> Data {
         if value.isArray { return Data((value.toArray() ?? []).compactMap { ($0 as? NSNumber).map { UInt8(truncating: $0) } }) }
         return Data((value.toString() ?? "").utf8)
@@ -87,7 +143,7 @@ enum SourceCrypto {
         let toBytes: @convention(block) (String) -> [Int] = { Data($0.utf8).map(Int.init) }
         let toString: @convention(block) (JSValue) -> String = { String(decoding: bytes($0), as: UTF8.self) }
         let encode64: @convention(block) (JSValue) -> String = { bytes($0).base64EncodedString() }
-        let hmac: @convention(block) (String, String, String, Bool) -> String = { text, algorithm, secret, useBase64 in
+        let hmac: @convention(block) (JSValue, String, JSValue, Bool) -> String = { text, algorithm, secret, useBase64 in
             let kind: CCHmacAlgorithm
             let length: Int
             switch algorithm.uppercased().replacingOccurrences(of: "-", with: "") {
@@ -98,7 +154,7 @@ enum SourceCrypto {
             default:
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: "不支持的 HMAC 算法：" + algorithm, in: JSContext.current()); return ""
             }
-            let key = Data(secret.utf8), input = Data(text.utf8)
+            let key = bytes(secret), input = bytes(text)
             var digest = [UInt8](repeating: 0, count: length)
             key.withUnsafeBytes { keyBytes in
                 input.withUnsafeBytes { inputBytes in CCHmac(kind, keyBytes.baseAddress, key.count, inputBytes.baseAddress, input.count, &digest) }
@@ -112,6 +168,14 @@ enum SourceCrypto {
         java.setObject(toString, forKeyedSubscript: "bytesToStr" as NSString)
         java.setObject(encode64, forKeyedSubscript: "base64Encode" as NSString)
         java.setObject(hmac, forKeyedSubscript: "_hmac" as NSString)
+        let sign: @convention(block) (JSValue, JSValue, String) -> JSValue? = { input, key, algorithm in
+            do { return JSValue(object: try rsaSign(bytes(input), key: bytes(key), algorithm: algorithm).map(Int.init), in: JSContext.current()) }
+            catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return nil
+            }
+        }
+        java.setObject(sign, forKeyedSubscript: "_rsaSign" as NSString)
         context.evaluateScript(#"""
         java.createSymmetricCrypto = function(algorithm, key, iv) {
             return {
