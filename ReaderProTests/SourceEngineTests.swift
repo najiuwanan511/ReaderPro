@@ -190,8 +190,12 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(applyRule(json, "@JSon:$.data[0].name", base: base), ["甲"])
         XCTAssertEqual(applyRule("第十二章·正文", "<js>java.toNumChapter(result)</js>\n##·##|", base: base), ["第12章|正文"])
         XCTAssertEqual(applyRuleFirst(json, "书名：{{$.data[0].name}}，{{java.getString('$.data[1].name')}}", base: base), "书名：甲，乙")
+        XCTAssertEqual(applyRuleFirst(json, "$.data[0].name<js>result+'|'+java.getString('$.data[1].name')+'|'+JSON.parse(src).data.length</js>", base: base), "甲|乙|2")
         _ = applyRule(json, #"@put:{"bookID":"$.data[0].name"}"#, base: base)
         XCTAssertEqual(applyRuleFirst(json, "https://example.org/@get:{bookID}", base: base), "https://example.org/甲")
+        _ = applyRule(json, "@put:{bookID:$.data[1].name}", base: base)
+        XCTAssertEqual(applyRuleFirst(json, "https://example.org/@get:{bookID}", base: base), "https://example.org/乙")
+        XCTAssertEqual(sourcePutFields("bid:$.id, name:'a[href*=\"x,y\"]@text'"), ["bid":"$.id", "name":"a[href*=\"x,y\"]@text"])
         XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>cookie.removeCookie(source.key); '/search?key={{key}}'</js>", key: "测试", page: 1, sourceUrl: base), "/search?key=%E6%B5%8B%E8%AF%95")
     }
 
@@ -221,6 +225,18 @@ final class SourceEngineTests: XCTestCase {
         source.ruleContent.nextContentUrl = ""
         let text = try await source.fetchChapterContent(persisted[1])
         XCTAssertEqual(text, "测试小说|第2章|1")
+    }
+
+    func testAndroidLenientRequestOptionsPreservePOSTAndWebView() throws {
+        // These formats occur in 39 real search rules in the supplied pack.
+        let request = try SourceHTTP.request("/search,{'method':'POST','body':'key={{key}}',headers:{'X-Test':'ready'},}", base: base, key: "测试")
+        XCTAssertEqual(request.url?.absoluteString, base + "/search")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Test"), "ready")
+        XCTAssertEqual(String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self), "key=%E6%B5%8B%E8%AF%95")
+        XCTAssertEqual(SourceHTTP.options("/search,{'webView':true}").options["webView"] as? Bool, true)
+        let gbk = try SourceHTTP.request("/search,{'charset':'gb2312','method':'POST','body':'key={{key}}'}", base: base, key: "测试")
+        XCTAssertEqual(String(decoding: try XCTUnwrap(gbk.httpBody), as: UTF8.self), "key=%B2%E2%CA%D4")
     }
 
     func testGBKSearchEncodesTheKeywordAsTheSourceRequires() throws {

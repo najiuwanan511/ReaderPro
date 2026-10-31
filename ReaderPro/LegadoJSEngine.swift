@@ -42,7 +42,7 @@ final class LegadoJS {
     static func run(_ js: String, input: String, baseUrl: String,
                     sourceKey: String, sourceUrl: String,
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
-                    book: BookCtx? = nil, page: Int = 1) -> String {
+                    book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil) -> String {
         let script = js.trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
@@ -53,6 +53,7 @@ final class LegadoJS {
 
         // ---- 全局变量 ----
         ctx.setObject(input, forKeyedSubscript: "result" as NSString)
+        ctx.setObject(originalContent ?? input, forKeyedSubscript: "src" as NSString)
         ctx.setObject(baseUrl, forKeyedSubscript: "baseUrl" as NSString)
         ctx.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
         ctx.setObject(page, forKeyedSubscript: "page" as NSString)
@@ -83,7 +84,7 @@ final class LegadoJS {
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "urlEncode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "encodeURI" as NSString)
-        var content = input
+        var content = originalContent ?? input
         let getString: @convention(block) (String, String, Bool) -> String = { rule, text, isURL in
             let values = applyRule(text, rule, base: baseUrl)
             let value = values.joined(separator: "\n")

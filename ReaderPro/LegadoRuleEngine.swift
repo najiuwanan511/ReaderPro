@@ -19,6 +19,39 @@ func isJavaScriptRule(_ rule: String) -> Bool {
     rule.range(of: #"^@js(?::|\s|$)"#, options: [.regularExpression, .caseInsensitive]) != nil
 }
 
+// Android's Gson also accepts bare extraction rules in @put:{bid:$.id}.
+// Parse those as data; evaluating them as JavaScript would change their meaning.
+func sourcePutFields(_ body: String) -> [String: String] {
+    if let data = ("{" + body + "}").data(using: .utf8),
+       let fields = try? JSONSerialization.jsonObject(with: data, options: .json5Allowed) as? [String: String] { return fields }
+    var fields: [String: String] = [:]
+    var pieces: [String] = [], piece = "", quote: Character?, escaped = false, depth = 0
+    for char in body {
+        if let current = quote {
+            piece.append(char)
+            if escaped { escaped = false }
+            else if char == "\\" { escaped = true }
+            else if char == current { quote = nil }
+        } else if char == "\"" || char == "'" { quote = char; piece.append(char) }
+        else if char == "[" || char == "(" { depth += 1; piece.append(char) }
+        else if char == "]" || char == ")" { depth -= 1; piece.append(char) }
+        else if char == "," && depth == 0 { pieces.append(piece); piece = "" }
+        else { piece.append(char) }
+    }
+    pieces.append(piece)
+    for pair in pieces {
+        guard let colon = pair.firstIndex(of: ":") else { continue }
+        func unquote(_ text: String) -> String {
+            let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if value.count >= 2, let first = value.first, (first == "\"" || first == "'"), value.last == first { return String(value.dropFirst().dropLast()) }
+            return value
+        }
+        let key = unquote(String(pair[..<colon]))
+        if !key.isEmpty { fields[key] = unquote(String(pair[pair.index(after: colon)...])) }
+    }
+    return fields
+}
+
 // MARK: - Legado rule engine (subset, CSS/XPath/JSON/regex + JS via JavaScriptCore)
 // Research basis (see report): gedoor/legado BookSource fields
 // bookSourceName/bookSourceUrl/bookSourceType/searchUrl/exploreUrl/
@@ -788,7 +821,7 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
         for v in vals {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
                                   sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
-                                  book: LegadoJSCtx.book)
+                                  book: LegadoJSCtx.book, originalContent: input)
             if !jr.isEmpty { jsOut.append(jr) }
         }
         current = jsOut
@@ -805,10 +838,8 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     if r.isEmpty { return [] }
     if !isJavaScriptRule(r), !r.contains("<js>") {
         if let start = r.range(of: "@put:{"), let end = r[start.upperBound...].firstIndex(of: "}") {
-            let json = "{" + r[start.upperBound..<end] + "}"
-            if let data = json.data(using: .utf8), let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
-                for (key, valueRule) in fields { LegadoJS.putVariable(key, applyRuleFirst(htmlOrJson, valueRule, base: base)) }
-            }
+            let fields = sourcePutFields(String(r[start.upperBound..<end]))
+            for (key, valueRule) in fields { LegadoJS.putVariable(key, applyRuleFirst(htmlOrJson, valueRule, base: base)) }
             r.removeSubrange(start.lowerBound...end)
             if r.isEmpty { return [htmlOrJson] }
         }
@@ -837,7 +868,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         for v in vals {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
                                   sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
-                                  book: LegadoJSCtx.book)
+                                  book: LegadoJSCtx.book, originalContent: htmlOrJson)
             if !jr.isEmpty { out.append(jr) }
         }
         return out
@@ -850,7 +881,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         for v in vals {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
                                   sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
-                                  book: LegadoJSCtx.book)
+                                  book: LegadoJSCtx.book, originalContent: htmlOrJson)
             if !jr.isEmpty { out.append(jr) }
         }
         return out

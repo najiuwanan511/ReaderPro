@@ -62,7 +62,7 @@ enum SourceHTTP {
         for match in (pattern?.matches(in: raw, range: NSRange(location: 0, length: ns.length)) ?? []).reversed() {
             let tail = ns.substring(from: match.range.location + 1).trimmingCharacters(in: .whitespacesAndNewlines)
             if let data = tail.data(using: .utf8),
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+               let object = try? JSONSerialization.jsonObject(with: data, options: .json5Allowed) as? [String: Any] {
                 return (ns.substring(to: match.range.location), object)
             }
         }
@@ -74,7 +74,7 @@ enum SourceHTTP {
             return dictionary.reduce(into: [:]) { result, pair in result[pair.key] = String(describing: pair.value) }
         }
         if let string = value as? String, let data = string.data(using: .utf8),
-           let object = try? JSONSerialization.jsonObject(with: data) { return headers(object) }
+           let object = try? JSONSerialization.jsonObject(with: data, options: .json5Allowed) { return headers(object) }
         return [:]
     }
 
