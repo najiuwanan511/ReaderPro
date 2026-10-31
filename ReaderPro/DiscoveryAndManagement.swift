@@ -470,6 +470,7 @@ struct SourceDetailView: View {
     @State private var showBrowser = false
     @State private var showEditor = false
     @State private var sourceJSON = ""
+    @State private var legacyCertificates = false
 
     var body: some View {
         List {
@@ -487,6 +488,12 @@ struct SourceDetailView: View {
                 if !source.bookSourceUrl.isEmpty {
                     Button("在浏览器打开书源网站") { showBrowser = true }
                 }
+            }
+            Section {
+                Toggle("旧站点证书兼容", isOn: $legacyCertificates)
+                    .onChange(of: legacyCertificates) { _, allowed in SourceTLS.setAllowed(allowed, for: source.bookSourceUrl) }
+            } footer: {
+                Text("默认关闭。仅影响本书源；开启后跳过 HTTPS 证书校验，可兼容部分 Android 能访问的旧站点。只为你信任的书源开启。")
             }
             Section("搜索规则") {
                 ruleRow("列表", source.ruleSearch.bookList)
@@ -524,6 +531,7 @@ struct SourceDetailView: View {
             }
         }
         .navigationTitle(source.bookSourceName)
+        .onAppear { legacyCertificates = SourceTLS.isAllowed(source.bookSourceUrl) }
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showBrowser) {
             NavigationStack { BrowserView(initialURL: source.bookSourceUrl) }

@@ -7,6 +7,9 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs
 import json
 import time
+import ssl
+import subprocess
+import threading
 from pathlib import Path
 
 class Handler(BaseHTTPRequestHandler):
@@ -119,4 +122,16 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 if __name__ == '__main__':
+    # An isolated, deliberately untrusted certificate proves that legacy TLS
+    # compatibility is opt-in per source and never weakens normal requests.
+    Path('build').mkdir(exist_ok=True)
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                    '-keyout', 'build/fixture-key.pem', '-out', 'build/fixture-cert.pem',
+                    '-days', '1', '-subj', '/CN=localhost'], check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tls = ThreadingHTTPServer(('0.0.0.0', 8766), Handler)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain('build/fixture-cert.pem', 'build/fixture-key.pem')
+    tls.socket = context.wrap_socket(tls.socket, server_side=True)
+    threading.Thread(target=tls.serve_forever, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()

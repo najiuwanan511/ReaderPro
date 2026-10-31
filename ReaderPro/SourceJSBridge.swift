@@ -9,11 +9,6 @@ enum SourceJSBridge {
         func set(_ value: Result<(Data, URLResponse), Error>) { lock.lock(); result = value; lock.unlock() }
         func get() -> Result<(Data, URLResponse), Error>? { lock.lock(); defer { lock.unlock() }; return result }
     }
-    final class NoRedirect: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-        func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-                        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
-    }
-    static let noRedirectSession = URLSession(configuration: .default, delegate: NoRedirect(), delegateQueue: nil)
 
     static func request(_ address: String, base: String, headers: [String: String],
                         method: String = "", body: String = "", timeout: Double = 20,
@@ -36,7 +31,7 @@ enum SourceJSBridge {
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(max(0.1, timeout)))
         request.timeoutInterval = max(0.1, deadline.timeIntervalSinceNow)
         let box = ResponseBox()
-        let session = SourceHTTP.testSession ?? (followRedirects ? SourceHTTP.session : noRedirectSession)
+        let session = SourceTLS.session(followRedirects: followRedirects)
         let task = session.dataTask(with: request) { data, response, error in
             if let error { box.set(.failure(error)) }
             else if let data, let response { box.set(.success((data, response))) }

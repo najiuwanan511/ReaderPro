@@ -7,6 +7,10 @@ private actor PackSearchAudit {
         rows.append(["id": update.sourceID, "name": update.sourceName,
                      "books": String(update.books.count), "error": update.error])
         if rows.count % 100 == 0 { print("USER_PACK_AUDIT completed=\(rows.count)") }
+        if rows.count % 25 == 0,
+           let data = try? JSONSerialization.data(withJSONObject: ["completed": rows.count, "results": rows], options: [.sortedKeys]) {
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("source-pack-search-audit-progress.json"), options: .atomic)
+        }
     }
 }
 
@@ -25,9 +29,29 @@ final class SourcePackAuditTests: XCTestCase {
         }
         let expected = sources.filter { !$0.searchUrl.isEmpty }.count
         XCTAssertEqual(rows.count, expected, "Every configured search must finish or report a timeout")
+        // Separately measure the certificate policy used by the Android
+        // reference, without silently enabling it in the shipping app.
+        let tlsIDs = Set(rows.filter { ($0["error"] ?? "").contains("TLS") }.compactMap { $0["id"] })
+        let tlsSources = sources.filter { tlsIDs.contains($0.id) }
+        let previous = Dictionary(uniqueKeysWithValues: tlsSources.map { ($0.bookSourceUrl, SourceTLS.isAllowed($0.bookSourceUrl)) })
+        for source in tlsSources { SourceTLS.setAllowed(true, for: source.bookSourceUrl) }
+        defer { for (url, allowed) in previous { SourceTLS.setAllowed(allowed, for: url) } }
+        let compatibility = PackSearchAudit()
+        await streamSourceSearch(tlsSources, key: "斗罗大陆", concurrency: 24, timeout: 18) { await compatibility.add($0) }
+        let legacyRows = await compatibility.rows
+        let legacyByID = Dictionary(uniqueKeysWithValues: legacyRows.compactMap { row -> (String, [String: String])? in
+            guard let id = row["id"] else { return nil }; return (id, row)
+        })
+        for index in rows.indices {
+            if let id = rows[index]["id"], let legacy = legacyByID[id] {
+                rows[index]["legacyCertificateBooks"] = legacy["books"]
+                rows[index]["legacyCertificateError"] = legacy["error"]
+            }
+        }
         let errors = rows.filter { !($0["error"] ?? "").isEmpty }.count
         let matches = rows.filter { (Int($0["books"] ?? "0") ?? 0) > 0 }.count
-        let summary = "USER_PACK_AUDIT total=\(sources.count) searched=\(rows.count) matched=\(matches) errors=\(errors) noSearch=\(sources.count-expected)"
+        let legacyMatches = legacyRows.filter { (Int($0["books"] ?? "0") ?? 0) > 0 }.count
+        let summary = "USER_PACK_AUDIT total=\(sources.count) searched=\(rows.count) matched=\(matches) errors=\(errors) noSearch=\(sources.count-expected) certificateRetried=\(legacyRows.count) certificateMatched=\(legacyMatches)"
         print(summary)
         let data = try JSONSerialization.data(withJSONObject: ["summary": summary, "keyword": "斗罗大陆", "perSourceTimeoutSeconds": 18, "results": rows], options: [.prettyPrinted, .sortedKeys])
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")

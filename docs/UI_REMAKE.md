@@ -19,8 +19,10 @@
 ## 验证
 
 - 本地检查：Git diff 空白检查、Swift 语法树检查（第三方解析器不能代替 Xcode 编译）。
-- 编译：推送 main 后由仓库现有的 macOS Actions 执行 xcodebuild archive，结果以对应提交的 Actions 记录为准。
-- 本机为 Windows，未进行 iOS 模拟器或真机的画面与交互验收。
+- 编译：推送 main 后由 macOS Actions 先执行 xcodebuild test，再执行 archive；测试失败不生成安装包。
+- 已增加 iPhone 模拟器界面测试：校验后的常驻搜索与状态筛选、报告与重启持久化、发现→详情→完整目录→点章节直接阅读、搜索→目录。截图随测试产物保存，并单独检查正文区域确实绘制了文字像素。
+- 已修复 Info.plist 被项目生成器覆盖导致的旧式屏幕尺寸和网络配置丢失，以及 TextKit 文本存储未正确连接导致的正文空白。
+- 本机为 Windows；模拟器验证在 GitHub 的 macOS 运行器上执行，未进行实体 iPhone/iPad 验收，也未声称与 Android 逐像素一致。
 
 ## 设备验收步骤（待执行）
 

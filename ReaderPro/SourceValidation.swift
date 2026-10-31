@@ -43,6 +43,7 @@ enum SourceValidation {
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
         var data = Data("source-engine-20261031-v3".utf8)
+        data.append(SourceTLS.isAllowed(source.bookSourceUrl) ? 1 : 0)
         data.append((try? encoder.encode(source)) ?? Data())
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
@@ -97,7 +98,9 @@ enum SourceValidation {
                     let images = try await withTimeout(45) { try await source.fetchChapterImages(first) }
                     guard let address = images.first else { throw SourceFailure(stage: stage, message: "图片列表为空") }
                     let request = try SourceHTTP.request(address, base: first.url ?? book.url, headers: source.requestHeaders)
-                    let (_, response) = try await (SourceHTTP.testSession ?? SourceHTTP.session).data(for: request)
+                    let (_, response) = try await SourceTLS.$allowsInvalidCertificates.withValue(SourceTLS.isAllowed(source.bookSourceUrl)) {
+                        try await SourceTLS.session().data(for: request)
+                    }
                     guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                           http.mimeType?.hasPrefix("image/") == true else {
                         throw SourceFailure(stage: stage, message: "首张图片未返回可用图片响应", url: address)
@@ -124,7 +127,7 @@ enum SourceValidation {
 @MainActor final class SourceValidationStore: ObservableObject {
     @Published private(set) var reports: [String: SourceValidationReport] = [:]
     private let url: URL
-    private var fingerprints: [String: (LegadoSource, String)] = [:]
+    private var fingerprints: [String: (LegadoSource, Bool, String)] = [:]
     @Published private(set) var persistenceError = ""
     init(url: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("source-validation.json")) {
         self.url = url
@@ -133,8 +136,9 @@ enum SourceValidation {
     func report(for source: LegadoSource) -> SourceValidationReport? {
         guard let report = reports[source.id] else { return nil }
         let fingerprint: String
-        if let cached = fingerprints[source.id], cached.0 == source { fingerprint = cached.1 }
-        else { fingerprint = SourceValidation.fingerprint(source); fingerprints[source.id] = (source, fingerprint) }
+        let tlsAllowed = SourceTLS.isAllowed(source.bookSourceUrl)
+        if let cached = fingerprints[source.id], cached.0 == source, cached.1 == tlsAllowed { fingerprint = cached.2 }
+        else { fingerprint = SourceValidation.fingerprint(source); fingerprints[source.id] = (source, tlsAllowed, fingerprint) }
         guard report.fingerprint == fingerprint else { return nil }
         return report
     }

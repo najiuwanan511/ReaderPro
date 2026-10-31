@@ -88,6 +88,38 @@ final class SourceEngineTests: XCTestCase {
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("正文规则")) }
     }
 
+    func testLegacyCertificatesRequireExplicitPermissionForEachSource() async throws {
+        let tlsBase = "https://127.0.0.1:8766"
+        var source = SourceTestFixtures.json()
+        source.bookSourceUrl = tlsBase
+        SourceTLS.setAllowed(false, for: tlsBase)
+        defer { SourceTLS.setAllowed(false, for: tlsBase) }
+        do { _ = try await source.search(key: "测试"); XCTFail("Self-signed certificates must be rejected by default") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("TLS"), sourceErrorMessage(error)) }
+        SourceTLS.setAllowed(true, for: tlsBase)
+        let books = try await source.search(key: "测试")
+        XCTAssertEqual(books.first?.title, "JSON测试")
+        let response = try await source.withRules {
+            LegadoJS.run("java.get(baseUrl+'/json/search',{}).body()", input: "", baseUrl: tlsBase, sourceKey: "", sourceUrl: tlsBase)
+        }
+        XCTAssertTrue(response.contains("JSON测试"), response)
+        let page = try await source.withRules {
+            try await SourceWebLoader.load(SourceHTTP.request("/web-script", base: tlsBase), script: "document.getElementById('dynamic').textContent")
+        }
+        XCTAssertEqual(page.text, "网页脚本正文")
+        // Another source and ordinary requests must retain strict validation.
+        var other = source; other.bookSourceUrl = tlsBase + "/other-source"
+        do { _ = try await other.search(key: "测试"); XCTFail("Permission must not leak to another source") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("TLS"), sourceErrorMessage(error)) }
+        do { _ = try await SourceHTTP.load(SourceHTTP.request("/json/search", base: tlsBase), stage: "普通请求"); XCTFail("Permission must not leak outside source tasks") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("TLS"), sourceErrorMessage(error)) }
+        do { _ = try await SourceWebLoader.load(SourceHTTP.request("/web-script", base: tlsBase)); XCTFail("WebView trust must not leak outside source tasks") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("TLS"), sourceErrorMessage(error)) }
+        SourceTLS.setAllowed(false, for: tlsBase)
+        do { _ = try await source.search(key: "测试"); XCTFail("Turning compatibility off must restore certificate validation") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("TLS"), sourceErrorMessage(error)) }
+    }
+
     func testWebViewRunsPageScriptsAndSharesCookies() async throws {
         let request = try SourceHTTP.request("/web-script", base: base)
         let page = try await SourceWebLoader.load(request, script: "document.getElementById('dynamic').textContent")

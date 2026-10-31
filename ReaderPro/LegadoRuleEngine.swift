@@ -1058,7 +1058,8 @@ extension LegadoSource {
         let failures = RuleFailures()
         let context = book.map { LegadoJS.BookCtx(bookUrl: $0.url, name: $0.title, author: $0.author,
                                                  tocUrl: $0.tocUrl ?? "", coverUrl: $0.cover) }
-        return try await LegadoJSCtx.$sourceUrl.withValue(bookSourceUrl) {
+        return try await SourceTLS.$allowsInvalidCertificates.withValue(SourceTLS.isAllowed(bookSourceUrl)) {
+          try await LegadoJSCtx.$sourceUrl.withValue(bookSourceUrl) {
             try await LegadoJSCtx.$key.withValue(key) {
                 try await LegadoJSCtx.$book.withValue(context) {
                     try await LegadoJSCtx.$library.withValue(jsLib) {
@@ -1081,6 +1082,7 @@ extension LegadoSource {
                     }
                 }
             }
+          }
         }
     }
 

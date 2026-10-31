@@ -20,7 +20,7 @@ func sourceErrorMessage(_ error: Error) -> String {
         return "系统阻止了 HTTP 请求，请检查安装包的网络配置。"
     case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted,
          NSURLErrorServerCertificateHasBadDate, NSURLErrorServerCertificateHasUnknownRoot:
-        return "TLS 连接失败：服务器协议或证书异常。请更新书源地址；不会把 HTTPS 请求悄悄改成 HTTP。"
+        return "TLS 连接失败：服务器协议或证书异常。可信旧站点可在该书源详情中开启「旧站点证书兼容」后重试。"
     case NSURLErrorTimedOut: return "请求超时，服务器未及时响应。"
     case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: return "域名无法解析，书源域名可能已失效。"
     case NSURLErrorNotConnectedToInternet: return "当前设备未联网。"
@@ -46,14 +46,15 @@ enum SourceHTTP {
     // Task-local injection lets the real engine run against deterministic HTTP
     // fixtures without changing global state or contacting arbitrary websites.
     @TaskLocal static var testSession: URLSession?
-    static let session: URLSession = {
+    static func configuration() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 30
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
         config.httpCookieStorage = .shared
-        return URLSession(configuration: config)
-    }()
+        return config
+    }
+    static let session = URLSession(configuration: configuration())
 
     static func options(_ raw: String) -> (url: String, options: [String: Any]) {
         // A comma in a URL/query is legal. Only split at a valid JSON suffix.
@@ -132,7 +133,7 @@ enum SourceHTTP {
     static func load(_ request: URLRequest, stage: String) async throws -> SourcePage {
         try Task.checkCancellation()
         do {
-            let (data, response) = try await (testSession ?? session).data(for: request)
+            let (data, response) = try await SourceTLS.session().data(for: request)
             let address = response.url?.absoluteString ?? request.url?.absoluteString ?? ""
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 let hint: String

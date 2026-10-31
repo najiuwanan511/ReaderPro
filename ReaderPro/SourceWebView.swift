@@ -1,5 +1,6 @@
 import Foundation
 import WebKit
+import Security
 
 @MainActor final class SourceWebLoader: NSObject, WKNavigationDelegate {
     private static var active: [UUID: SourceWebLoader] = [:]
@@ -10,17 +11,19 @@ import WebKit
     private var polling: Task<Void, Never>?
     private var script = ""
     private var startedPolling = false
+    private var allowsInvalidCertificates = false
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20) async throws -> SourcePage {
         while active.count >= 4 { try await Task.sleep(nanoseconds: 50_000_000) }
         let loader = SourceWebLoader()
+        loader.allowsInvalidCertificates = SourceTLS.allowsInvalidCertificates
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 active[loader.id] = loader
                 loader.continuation = continuation; loader.script = script
                 let config = WKWebViewConfiguration()
-                config.websiteDataStore = .default()
+                config.websiteDataStore = loader.allowsInvalidCertificates ? .nonPersistent() : .default()
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
@@ -71,6 +74,13 @@ import WebKit
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
+
+    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                 completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        if allowsInvalidCertificates, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
+        else { completionHandler(.performDefaultHandling, nil) }
+    }
 
     private func finish(_ result: Result<SourcePage, Error>) {
         guard let continuation else { return }
