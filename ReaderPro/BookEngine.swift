@@ -10,11 +10,13 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
     var text: String
     var imageUrls: [String] = []
     var url: String? = nil
+    var ruleBook: LegadoJS.BookCtx? = nil
+    var ruleIndex: Int? = nil
     init(id: String = UUID().uuidString, title: String, text: String, imageUrls: [String] = [], url: String? = nil) {
         self.id = id; self.title = title; self.text = text; self.imageUrls = imageUrls; self.url = url
     }
     var isComic: Bool { !imageUrls.isEmpty }
-    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls, url }
+    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls, url, ruleBook, ruleIndex }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
@@ -22,10 +24,13 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
         text = (try? c.decode(String.self, forKey: .text)) ?? ""
         imageUrls = (try? c.decode([String].self, forKey: .imageUrls)) ?? []
         url = (try? c.decode(String.self, forKey: .url)) ?? (text.hasPrefix("__URL__") ? String(text.dropFirst(7)) : nil)
+        ruleBook = try? c.decode(LegadoJS.BookCtx.self, forKey: .ruleBook)
+        ruleIndex = try? c.decode(Int.self, forKey: .ruleIndex)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(text, forKey: .text); try c.encode(imageUrls, forKey: .imageUrls); try c.encodeIfPresent(url, forKey: .url)
+        try c.encodeIfPresent(ruleBook, forKey: .ruleBook); try c.encodeIfPresent(ruleIndex, forKey: .ruleIndex)
     }
 }
 
@@ -578,22 +583,16 @@ class BookStore: ObservableObject {
     }
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
 
-    /// Merge an imported pack by source name + URL. Re-importing a pack updates
+    /// Merge by Legado's full source URL. Re-importing a pack updates
     /// its rules instead of creating hundreds of duplicate rows.
     @discardableResult
     func mergeSources(_ incoming: [LegadoSource]) -> SourceMergeResult {
         var result = SourceMergeResult()
         var seen = Set<String>()
-        func key(_ source: LegadoSource) -> String {
-            let name = source.bookSourceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            let url = source.bookSourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-                .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
-            return "\(name)|\(url)"
-        }
         var indices: [String: Int] = [:]
-        for (index, source) in sources.enumerated() { indices[key(source)] = index }
+        for (index, source) in sources.enumerated() { indices[sourceIdentityKey(source)] = index }
         for source in incoming {
-            let k = key(source)
+            let k = sourceIdentityKey(source)
             guard seen.insert(k).inserted else { result.duplicates += 1; continue }
             if let index = indices[k] {
                 var updated = source

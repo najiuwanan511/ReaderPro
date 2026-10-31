@@ -78,12 +78,27 @@ enum SourceHTTP {
         return [:]
     }
 
+    static func expand(_ raw: String, base: String, key: String, page: Int) -> String {
+        var value = LegadoSource.fillSearchTemplate(raw, key: key, page: page, sourceUrl: base)
+        let charset = (options(value).options["charset"] as? String ?? "utf-8").lowercased()
+        if charset.hasPrefix("gb"), !key.isEmpty {
+            let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
+            if let bytes = key.data(using: encoding) {
+                let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~".utf8)
+                let encoded = bytes.map { allowed.contains($0) ? String(UnicodeScalar($0)) : String(format: "%%%02X", $0) }.joined()
+                let utf8 = key.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? key
+                value = value.replacingOccurrences(of: utf8, with: encoded)
+            }
+        }
+        return value
+    }
+
     static func request(_ raw: String, base: String, headers sourceHeaders: [String: String] = [:],
                         key: String = "", page: Int = 1) throws -> URLRequest {
         let fill: (String) -> String = { LegadoSource.fillSearchTemplate($0, key: key, page: page, sourceUrl: base) }
         // Numeric templates may be unquoted in options JSON ("page":{{page}}).
         // Expand before parsing; parsed body/header strings are already expanded.
-        let parsed = options(fill(raw))
+        let parsed = options(expand(raw, base: base, key: key, page: page))
         let address = resolveUrl(parsed.url, base: base)
         guard let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
             throw SourceFailure(stage: "请求地址", message: "规则没有生成有效的 HTTP/HTTPS 地址", url: address)
@@ -156,7 +171,7 @@ extension LegadoSource {
     }
 
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {
-        let expanded = Self.fillSearchTemplate(address, key: key, page: page, sourceUrl: base ?? bookSourceUrl)
+        let expanded = SourceHTTP.expand(address, base: base ?? bookSourceUrl, key: key, page: page)
         let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page)
         let options = SourceHTTP.options(expanded).options
         if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {

@@ -134,7 +134,7 @@ extension KeyedDecodingContainer {
     }
 }
 
-let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0"
+let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
 // URLSession and synchronous JS bridge requests both observe this deadline.
 func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
@@ -182,11 +182,11 @@ func resolveUrl(_ raw: String, base: String) -> String {
 
 struct ImportResult { var sources: [LegadoSource]; var skipped: Int }
 
-private func sourceIdentityKey(_ source: LegadoSource) -> String {
-    let name = source.bookSourceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+func sourceIdentityKey(_ source: LegadoSource) -> String {
+    // Legado keys by the complete source URL. A trailing slash, path case or
+    // fragment can distinguish two separately maintained rule variants.
     let url = source.bookSourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-        .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
-    return "\(name)|\(url)"
+    return url.isEmpty ? "name:" + source.bookSourceName : url
 }
 
 private func uniqueSources(_ sources: [LegadoSource]) -> [LegadoSource] {

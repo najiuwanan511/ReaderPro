@@ -11,7 +11,7 @@ import CryptoKit
 
 final class LegadoJS {
 
-    struct BookCtx {
+    struct BookCtx: Codable, Equatable, Hashable {
         var bookUrl = ""
         var name = ""
         var author = ""
@@ -200,6 +200,12 @@ final class LegadoJS {
         bookObj.setObject(b.tocUrl, forKeyedSubscript: "tocUrl" as NSString)
         bookObj.setObject(b.coverUrl, forKeyedSubscript: "coverUrl" as NSString)
         ctx.setObject(bookObj, forKeyedSubscript: "book" as NSString)
+        let chapter = LegadoJSCtx.chapter
+        let chapterObj = JSValue(newObjectIn: ctx)!
+        chapterObj.setObject(chapter?.title ?? "", forKeyedSubscript: "title" as NSString)
+        chapterObj.setObject(chapter?.url ?? baseUrl, forKeyedSubscript: "url" as NSString)
+        chapterObj.setObject(chapter?.ruleIndex ?? 0, forKeyedSubscript: "index" as NSString)
+        ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
         ctx.evaluateScript(Self.compatibilityScript)
 
@@ -270,7 +276,9 @@ final class LegadoJS {
     java.ajax = function(url, timeout) { return java.connect(Array.isArray(url) ? url[0] : url, {}, timeout).body(); };
     java.ajaxAll = function(urls) { return _array(urls.map(function(url) { return java.connect(url); })); };
     ['get','head','post'].forEach(function(method) {
+        var storedGet = java.get;
         java[method] = function(url, body, headers, timeout) {
+            if (method === 'get' && arguments.length === 1) return storedGet(String(url));
             if (method !== 'post') { timeout = headers; headers = body; body = ''; }
             return _response(java._request(String(url), method.toUpperCase(), String(body || ''), JSON.stringify(headers || {}), timeout || 20000, false));
         };

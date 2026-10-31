@@ -56,6 +56,13 @@ enum SourceValidation {
         var samples: [SourceBook] = []
         var failed = false
         var incomplete = false
+        var incompatible = false
+        func recordFailure(_ stage: String, _ error: Error) {
+            fail(stage, error)
+            if error is CancellationError || (error as? SourceFailure)?.stage.contains("兼容性") == true || (error as? SourceFailure)?.stage == "网页脚本" {
+                incompatible = true
+            } else { failed = true }
+        }
         if source.searchUrl.isEmpty && source.effectiveDiscoverUrl.isEmpty {
             report.status = .failed
             fail("规则配置", SourceFailure(stage: "规则配置", message: "既没有搜索地址，也没有发现入口"))
@@ -68,13 +75,13 @@ enum SourceValidation {
                     incomplete = true
                     report.steps.append(.init(stage: "搜索", passed: false, detail: "关键词「\(key)」未匹配书籍，无法据此认定书源永久失效"))
                 } else { samples += books; ok("搜索", "「\(key)」返回 \(books.count) 本书") }
-            } catch { failed = true; fail("搜索", error) }
+            } catch { recordFailure("搜索", error) }
         }
         if !Task.isCancelled && !source.effectiveDiscoverUrl.isEmpty {
             do {
                 let books = try await withTimeout(35) { try await source.discover() }
                 samples += books; ok("发现", "首个分类返回 \(books.count) 本书")
-            } catch { failed = true; fail("发现", error) }
+            } catch { recordFailure("发现", error) }
         }
         if !Task.isCancelled, let sample = samples.first {
             var stage = "详情"
@@ -102,12 +109,14 @@ enum SourceValidation {
                     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SourceFailure(stage: stage, message: "首章正文为空") }
                     ok(stage, "首章「\(first.title)」读取 \(text.count) 字")
                 }
-            } catch { failed = true; fail(stage, error) }
+            } catch { recordFailure(stage, error) }
         } else {
             incomplete = true
             report.steps.append(.init(stage: "阅读链路", passed: false, detail: Task.isCancelled ? "已取消，未完成验证" : "没有样本书，详情、目录和正文未验证"))
         }
-        report.status = failed ? .failed : (incomplete ? .partial : .passed)
+        // A working search/discovery capability or an unsupported script does
+        // not establish that the entire source is dead. Keep its stage report.
+        report.status = incompatible || (failed && !samples.isEmpty) ? .partial : (failed ? .failed : (incomplete ? .partial : .passed))
         return report
     }
 }

@@ -8,6 +8,7 @@ enum LegadoJSCtx {
     @TaskLocal static var sourceUrl: String = ""
     @TaskLocal static var key: String = ""
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
+    @TaskLocal static var chapter: BookChapter?
     @TaskLocal static var library = ""
     @TaskLocal static var failures: RuleFailures? = nil
     @TaskLocal static var headers: [String: String] = [:]
@@ -530,7 +531,7 @@ func evalCss(_ html: String, _ selectorAndAttr: String) -> [String] {
     var parts = selectorAndAttr.split(separator: "@", omittingEmptySubsequences: false).map(String.init)
     var extractor: String? = nil
     if parts.count > 1, let last = parts.last,
-       ["text", "textNodes", "html", "ownText", "href", "src", "content", "data-src", "data-original"].contains(last) || last.hasPrefix("attr(") {
+       last.range(of: #"^[A-Za-z_][A-Za-z0-9_:.-]*$"#, options: .regularExpression) != nil || last.hasPrefix("attr(") {
         extractor = last; parts.removeLast()
     }
     let selector = parts.joined(separator: "@")
@@ -996,6 +997,9 @@ extension LegadoSource {
                                    book: LegadoJSCtx.book, page: page)
             out.replaceSubrange(s.lowerBound..<e.upperBound, with: val)
         }
+        while let start = out.range(of: "@get:{"), let end = out[start.upperBound...].firstIndex(of: "}") {
+            out.replaceSubrange(start.lowerBound...end, with: LegadoJS.variable(String(out[start.upperBound..<end])))
+        }
         return out
     }
 
@@ -1135,7 +1139,8 @@ extension LegadoSource {
             pageCount += 1
             let response = try await loadPage(next, stage: "目录第 \(pageCount) 页")
             visited.insert(response.url)
-            let items = ruleItems(response.text, rule: ruleToc.chapterList, base: response.url)
+            let listRule = ruleToc.chapterList.hasPrefix("-") ? String(ruleToc.chapterList.dropFirst()) : ruleToc.chapterList
+            let items = ruleItems(response.text, rule: listRule, base: response.url)
             var matched = 0
             for item in items {
                 let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
@@ -1143,7 +1148,11 @@ extension LegadoSource {
                 guard !name.isEmpty, isSourceURL(address) else { continue }
                 matched += 1
                 if seen.insert(address).inserted {
-                    chapters.append(BookChapter(id: address, title: name, text: "__URL__" + address, url: address))
+                    var chapter = BookChapter(id: address, title: name, text: "__URL__" + address, url: address)
+                    chapter.ruleBook = .init(bookUrl: detailed.url, name: detailed.title, author: detailed.author,
+                                             tocUrl: detailed.tocUrl ?? detailed.url, coverUrl: detailed.cover)
+                    chapter.ruleIndex = chapters.count
+                    chapters.append(chapter)
                 }
             }
             try LegadoJSCtx.failures?.check()
@@ -1153,12 +1162,14 @@ extension LegadoSource {
                 if isSourceURL(address), !visited.contains(address), queued.insert(address).inserted { pending.append(address) }
             }
         }
+        if ruleToc.chapterList.hasPrefix("-") { chapters.reverse() }
+        for index in chapters.indices { chapters[index].ruleIndex = index }
         return chapters
     }
 
     func fetchChapterContent(_ chapter: BookChapter, nextChapterUrl: String? = nil) async throws -> String {
         guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.text }
-        return try await withRules {
+        return try await withChapterRules(chapter) {
             guard !ruleContent.content.isEmpty else { throw SourceFailure(stage: "正文", message: "书源缺少正文规则") }
             var next = chapter.url ?? String(chapter.text.dropFirst(7))
             var visited = Set<String>(); var parts: [String] = []
@@ -1188,7 +1199,7 @@ extension LegadoSource {
 
     func fetchChapterImages(_ chapter: BookChapter) async throws -> [String] {
         guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.imageUrls }
-        return try await withRules {
+        return try await withChapterRules(chapter) {
             var next = chapter.url ?? String(chapter.text.dropFirst(7))
             var visited = Set<String>(); var seen = Set<String>(); var images: [String] = []
             while !next.isEmpty {
@@ -1208,6 +1219,14 @@ extension LegadoSource {
             return images
         }
     }
+
+    private func withChapterRules<T>(_ chapter: BookChapter, operation: () async throws -> T) async throws -> T {
+        try await withRules {
+            try await LegadoJSCtx.$book.withValue(chapter.ruleBook) {
+                try await LegadoJSCtx.$chapter.withValue(chapter) { try await operation() }
+            }
+        }
+    }
 }
 
 func isSourceURL(_ text: String) -> Bool {
@@ -1215,62 +1234,23 @@ func isSourceURL(_ text: String) -> Bool {
     return ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
 }
 
-// Multi-source search: batched TaskGroup (20 at a time, so 1000 sources do not
-// all fire at once), per-source errors swallowed, dedupe by title+author.
-// The returned list is deduped for display; callers keep the raw list separately
-// when they need "change source" alternatives.
-func searchAllSources(_ sources: [LegadoSource], key: String) async -> [SourceBook] {
-    var all: [SourceBook] = []
-    var index = 0
-    while index < sources.count {
-        let batch = Array(sources[index..<min(index + 20, sources.count)])
-        index += batch.count
-        let batchResults = await withTaskGroup(of: [SourceBook].self) { group in
-            for src in batch {
-                group.addTask {
-                    do { return try await withTimeout(25) { try await src.search(key: key) } }
-                    catch { return [] }
-                }
-            }
-            var collected: [SourceBook] = []
-            for await r in group { collected.append(contentsOf: r) }
-            return collected
-        }
-        all.append(contentsOf: batchResults)
-        if all.count >= 300 { break }
-    }
-    var seen = Set<String>(); var out: [SourceBook] = []
-    for b in all {
-        let k = (b.title + "|" + b.author).lowercased().trimmingCharacters(in: .whitespaces)
-        if seen.contains(k) { continue }
-        seen.insert(k); out.append(b)
-    }
-    return out
+private actor SourceSearchAccumulator {
+    var books: [SourceBook] = []
+    func add(_ values: [SourceBook]) { books.append(contentsOf: values) }
 }
 
-func dedupeKey(_ b: SourceBook) -> String {
-    (b.title + "|" + b.author).lowercased().trimmingCharacters(in: .whitespaces)
+func searchAllSources(_ sources: [LegadoSource], key: String) async -> [SourceBook] {
+    let all = await searchAllRawSources(sources, key: key)
+    var seen = Set<String>()
+    return all.filter { seen.insert(dedupeKey($0)).inserted }
+}
+
+func dedupeKey(_ book: SourceBook) -> String {
+    (book.title + "|" + book.author).lowercased().trimmingCharacters(in: .whitespaces)
 }
 
 func searchAllRawSources(_ sources: [LegadoSource], key: String) async -> [SourceBook] {
-    var all: [SourceBook] = []
-    var index = 0
-    while index < sources.count {
-        let batch = Array(sources[index..<min(index + 20, sources.count)])
-        index += batch.count
-        let batchResults = await withTaskGroup(of: [SourceBook].self) { group in
-            for src in batch {
-                group.addTask {
-                    do { return try await withTimeout(25) { try await src.search(key: key) } }
-                    catch { return [] }
-                }
-            }
-            var collected: [SourceBook] = []
-            for await r in group { collected.append(contentsOf: r) }
-            return collected
-        }
-        all.append(contentsOf: batchResults)
-        if all.count >= 500 { break }
-    }
-    return all
+    let collected = SourceSearchAccumulator()
+    await streamSourceSearch(sources, key: key) { result in await collected.add(result.books) }
+    return await collected.books
 }

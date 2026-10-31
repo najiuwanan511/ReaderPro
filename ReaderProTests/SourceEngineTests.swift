@@ -119,6 +119,16 @@ final class SourceEngineTests: XCTestCase {
         }
         let first = try XCTUnwrap(imported.sources.first)
         XCTAssertGreaterThan(first.exploreCategories().count, 5)
+        await MainActor.run {
+            let store = BookStore()
+            let previous = store.sources
+            defer { store.sources = previous; store.save() }
+            store.sources = []
+            XCTAssertEqual(store.mergeSources(imported.sources).added, 1466)
+            XCTAssertEqual(store.sources.count, 1466)
+            XCTAssertEqual(store.mergeSources(imported.sources).updated, 1466)
+            XCTAssertEqual(store.sources.count, 1466)
+        }
     }
 
     func testCommonAndroidJSNetworkCookieVariableAndDOMInterfaces() async throws {
