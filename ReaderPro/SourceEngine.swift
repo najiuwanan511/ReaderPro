@@ -19,6 +19,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var exploreUrl: String = ""
     var header: String = ""
     var jsLib: String = ""
+    var bookSourceComment: String = ""
     var enabledExplore: Bool = true
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
@@ -75,7 +76,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, enabledExplore
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, enabledExplore, bookSourceComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -88,6 +89,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         if header.isEmpty, let map = try? c.decode([String: String].self, forKey: .header),
            let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
         jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
+        bookSourceComment = c.tolerantString(.bookSourceComment)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
         ruleBookInfo = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleBookInfo)) ?? RuleSet()
         ruleToc = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleToc)) ?? RuleSet()
@@ -102,6 +104,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(bookSourceGroup, forKey: .bookSourceGroup); try c.encode(enabled, forKey: .enabled); try c.encode(searchUrl, forKey: .searchUrl)
         try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
         try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
+        try c.encode(bookSourceComment, forKey: .bookSourceComment)
         try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
         try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
     }
@@ -185,8 +188,8 @@ struct ImportResult { var sources: [LegadoSource]; var skipped: Int }
 func sourceIdentityKey(_ source: LegadoSource) -> String {
     // Legado keys by the complete source URL. A trailing slash, path case or
     // fragment can distinguish two separately maintained rule variants.
-    let url = source.bookSourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-    return url.isEmpty ? "name:" + source.bookSourceName : url
+    let url = source.bookSourceUrl
+    return url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "name:" + source.bookSourceName : url
 }
 
 private func uniqueSources(_ sources: [LegadoSource]) -> [LegadoSource] {

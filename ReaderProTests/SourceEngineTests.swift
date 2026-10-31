@@ -170,6 +170,39 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>cookie.removeCookie(source.key); '/search?key={{key}}'</js>", key: "测试", page: 1, sourceUrl: base), "/search?key=%E6%B5%8B%E8%AF%95")
     }
 
+    func testAndroidCryptoUsesKnownAESAndDigestVectors() {
+        let value = LegadoJS.run(#"""
+        var key=java.hexDecodeToByteArray('2b7e151628aed2a6abf7158809cf4f3c');
+        var iv=java.hexDecodeToByteArray('000102030405060708090a0b0c0d0e0f');
+        var cipher=java.createSymmetricCrypto('AES/CBC/NoPadding',key,iv);
+        var encrypted=cipher.encryptHex(java.hexDecodeToByteArray('6bc1bee22e409f96e93d7e117393172a'));
+        if(encrypted!=='7649abac8119b246cee98e9b12e9197d') throw Error('NIST AES CBC vector');
+        if(java.digestHex('abc','SHA-256')!=='ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad') throw Error('SHA256');
+        if(java.HMacHex('The quick brown fox jumps over the lazy dog','HmacMD5','key')!=='80070713463e7749b90c2dc24911e275') throw Error('HMAC');
+        var padded=java.createSymmetricCrypto('AES/CBC/PKCS7Padding','0123456789abcdef','0123456789abcdef');
+        var encoded=padded.encryptBase64('中文加密正文');
+        if(padded.decryptStr(encoded)!=='中文加密正文') throw Error('PKCS7');
+        String(new Packages.java.lang.String(java.base64DecodeToByteArray('5Lit5paH')));
+        """#, input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+        XCTAssertEqual(value, "中文")
+    }
+
+    func testChapterScriptsRetainBookAndChapterContextAcrossPersistence() async throws {
+        var source = SourceTestFixtures.html()
+        let books = try await source.discover()
+        let chapters = try await source.fetchChapters(book: XCTUnwrap(books.first))
+        let persisted = try JSONDecoder().decode([BookChapter].self, from: JSONEncoder().encode(chapters))
+        source.ruleContent.content = "@js:book.name + '|' + chapter.title + '|' + chapter.index"
+        source.ruleContent.nextContentUrl = ""
+        let text = try await source.fetchChapterContent(persisted[1])
+        XCTAssertEqual(text, "测试小说|第2章|1")
+    }
+
+    func testGBKSearchEncodesTheKeywordAsTheSourceRequires() throws {
+        let request = try SourceHTTP.request(#"/search,{"method":"POST","body":"key={{key}}","charset":"gbk"}"#, base: base, key: "测试")
+        XCTAssertEqual(String(decoding: try XCTUnwrap(request.httpBody), as: UTF8.self), "key=%B2%E2%CA%D4")
+    }
+
     @MainActor func testSearchPublishesBeforeSlowSourceAndCancelsWithoutStaleResults() async throws {
         var slow = SourceTestFixtures.json(); slow.id = "slow"; slow.searchUrl = "/slow-search"
         let fast = SourceTestFixtures.json()
@@ -281,6 +314,11 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertTrue(SourceStatusFilter.failed.matches(report: failed, checking: false))
         XCTAssertTrue(SourceStatusFilter.unchecked.matches(report: nil, checking: false))
         XCTAssertTrue(SourceStatusFilter.checking.matches(report: passed, checking: true))
+        source = SourceTestFixtures.html(); source.ruleContent.content = "@js:java.unsupportedDecoder(result)"
+        let incompatible = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(incompatible.status, .partial)
+        XCTAssertTrue(incompatible.searchableText.contains("脚本兼容性"))
+        XCTAssertTrue(incompatible.steps.contains { $0.stage == "搜索" && $0.passed })
     }
 
     @MainActor func testReportPersistenceAndRuleChangesInvalidateResult() throws {

@@ -10,6 +10,7 @@ enum LegadoJSCtx {
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
     @TaskLocal static var chapter: BookChapter?
     @TaskLocal static var library = ""
+    @TaskLocal static var comment = ""
     @TaskLocal static var failures: RuleFailures? = nil
     @TaskLocal static var headers: [String: String] = [:]
 }
@@ -887,7 +888,9 @@ struct ExploreCategory: Identifiable, Equatable {
 
 extension LegadoSource {
     func exploreCategories() -> [ExploreCategory] {
-        LegadoJSCtx.$library.withValue(jsLib) { exploreCategoriesImpl() }
+        LegadoJSCtx.$library.withValue(jsLib) {
+            LegadoJSCtx.$comment.withValue(bookSourceComment) { exploreCategoriesImpl() }
+        }
     }
 
     private func exploreCategoriesImpl() -> [ExploreCategory] {
@@ -1012,6 +1015,7 @@ extension LegadoSource {
             try await LegadoJSCtx.$key.withValue(key) {
                 try await LegadoJSCtx.$book.withValue(context) {
                     try await LegadoJSCtx.$library.withValue(jsLib) {
+                      try await LegadoJSCtx.$comment.withValue(bookSourceComment) {
                         try await LegadoJSCtx.$failures.withValue(failures) {
                             return try await LegadoJSCtx.$headers.withValue(requestHeaders) {
                               do {
@@ -1026,6 +1030,7 @@ extension LegadoSource {
                               }
                             }
                         }
+                      }
                     }
                 }
             }

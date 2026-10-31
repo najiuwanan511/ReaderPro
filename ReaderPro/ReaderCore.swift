@@ -119,7 +119,10 @@ struct FullTextReader: UIViewRepresentable {
     let width: CGFloat
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
+        let manager = NSLayoutManager(); manager.usesFontLeading = true
+        manager.addTextContainer(container)
+        let tv = UITextView(frame: .zero, textContainer: container)
         tv.backgroundColor = .clear
         tv.isEditable = false
         tv.isSelectable = false
@@ -128,7 +131,7 @@ struct FullTextReader: UIViewRepresentable {
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.textContainer.lineBreakMode = .byCharWrapping
-        tv.textContainer.widthTracksTextView = true
+        tv.textContainer.widthTracksTextView = false
         return tv
     }
 
@@ -138,12 +141,10 @@ struct FullTextReader: UIViewRepresentable {
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let fittingWidth = max(proposal.width ?? width, 1)
-        let bounds = attributed.boundingRect(
-            with: CGSize(width: fittingWidth, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
-        return CGSize(width: fittingWidth, height: ceil(bounds.height))
+        uiView.textContainer.size = CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
+        uiView.textStorage.setAttributedString(attributed)
+        uiView.layoutManager.ensureLayout(for: uiView.textContainer)
+        return CGSize(width: fittingWidth, height: ceil(uiView.layoutManager.usedRect(for: uiView.textContainer).maxY))
     }
 }
 

@@ -173,6 +173,7 @@ final class LegadoJS {
         let putConcurrent: @convention(block) (JSValue) -> Void = { v in concurrentBox.value = Int(v.toNumber()?.intValue ?? 0) }
         source.setObject(sourceUrl, forKeyedSubscript: "key" as NSString)
         source.setObject(sourceUrl, forKeyedSubscript: "bookSourceUrl" as NSString)
+        source.setObject(LegadoJSCtx.comment, forKeyedSubscript: "bookSourceComment" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
         source.setObject(getLoginMap, forKeyedSubscript: "getLoginInfoMap" as NSString)
@@ -208,6 +209,25 @@ final class LegadoJS {
         ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
         ctx.evaluateScript(Self.compatibilityScript)
+        SourceCrypto.install(java, context: ctx)
+        let digest: @convention(block) (String, String) -> String = { text, algorithm in
+            let data = Data(text.utf8)
+            let bytes: [UInt8]
+            switch algorithm.uppercased().replacingOccurrences(of: "-", with: "") {
+            case "MD5": bytes = Array(Insecure.MD5.hash(data: data))
+            case "SHA1": bytes = Array(Insecure.SHA1.hash(data: data))
+            case "SHA256": bytes = Array(SHA256.hash(data: data))
+            case "SHA384": bytes = Array(SHA384.hash(data: data))
+            case "SHA512": bytes = Array(SHA512.hash(data: data))
+            default:
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: "不支持的摘要算法：" + algorithm, in: JSContext.current()); return ""
+            }
+            return bytes.map { String(format: "%02x", $0) }.joined()
+        }
+        let randomUUID: @convention(block) () -> String = { UUID().uuidString.lowercased() }
+        java.setObject(digest, forKeyedSubscript: "digestHex" as NSString)
+        java.setObject(randomUUID, forKeyedSubscript: "randomUUID" as NSString)
+        ctx.evaluateScript(Self.javaStringScript)
 
         // ---- 执行 ----
         // 关键修复：JS 规则大量用「最后一行是表达式」的方式返回结果，
@@ -327,6 +347,31 @@ final class LegadoJS {
         get: function(key) { try { var item=JSON.parse(source.get('cache:'+key)); return item.until && item.until<Date.now() ? '' : item.value; } catch(e) { return ''; } },
         delete: function(key) { source.put('cache:'+key,''); }
     };
+    """#
+
+    private static let javaStringScript = #"""
+    function _JavaString(value) {
+        var text = Array.isArray(value) ? java.bytesToStr(value) : String(value == null ? '' : value);
+        this.toString = function() { return text; };
+        this.valueOf = function() { return text; };
+        this.getBytes = function() { return java.strToBytes(text); };
+        this.length = function() { return text.length; };
+        this.charAt = function(i) { return text.charAt(i); };
+        this.substring = function(a,b) { return text.substring(a,b); };
+        this.trim = function() { return text.trim(); };
+        this.split = function(separator) { return text.split(separator); };
+        this.replace = function(a,b) { return text.replace(a,b); };
+        this.replaceAll = function(a,b) { return text.replace(new RegExp(a,'g'),b); };
+        this.contains = function(part) { return text.indexOf(part)>=0; };
+        this.equals = function(value) { return text === String(value); };
+    }
+    java.lang = {String:_JavaString};
+    java.util = {
+        UUID:{randomUUID:java.randomUUID},
+        Base64:{getDecoder:function(){return {decode:java.base64DecodeToByteArray};},getEncoder:function(){return {encodeToString:java.base64Encode};}}
+    };
+    java.nio={charset:{StandardCharsets:{UTF_8:'UTF-8',US_ASCII:'ASCII'}}};
+    var Packages = {java:java,org:org};
     """#
 
     static let hexEncodeBlock: @convention(block) (String) -> String = { s in
