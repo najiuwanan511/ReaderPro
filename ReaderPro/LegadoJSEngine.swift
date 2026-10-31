@@ -113,10 +113,20 @@ final class LegadoJS {
         ctx.setObject(bookObj, forKeyedSubscript: "book" as NSString)
 
         // ---- 执行 ----
-        _ = ctx.evaluateScript(script)
+        // 关键修复：JS 规则大量用「最后一行是表达式」的方式返回结果，
+        // 例如 exploreUrl 的 @js:...;JSON.stringify(s)，正文规则的 @js:...;result。
+        // 之前把 evaluateScript 的返回值丢弃了、只读 result 变量，导致
+        // JSON.stringify(...) 这种「靠返回值」的规则全部拿不到结果（发现/搜索/正文全空）。
+        let ret = ctx.evaluateScript(script)
 
-        // 读回 result（JS 规则约定：执行后 result 是输出）
-        if let r = ctx.objectForKeyedSubscript("result"), let s = r.toString() { return s }
+        // 1) 优先读 evaluateScript 返回值（JSON.stringify / return 约定）
+        if let r = ret, !r.isUndefined, !r.isNull {
+            if let s = r.toString(), !s.isEmpty, s != "undefined" {
+                return s
+            }
+        }
+        // 2) 再读 result 变量（result = xxx 约定）
+        if let r = ctx.objectForKeyedSubscript("result"), let s = r.toString(), !s.isEmpty { return s }
         return input
     }
 

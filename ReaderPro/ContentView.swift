@@ -136,7 +136,7 @@ struct BookshelfView: View {
                                         Text(r.title).font(.subheadline).bold().lineLimit(1)
                                         HStack {
                                             if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                            if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.15)).cornerRadius(6) }
+                                            if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
                                         }
                                         if !r.intro.isEmpty { Text(r.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                                     }
@@ -246,7 +246,7 @@ struct BookshelfView: View {
                         }
                         Spacer()
                         if selecting {
-                            Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(.blue)
+                            Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(AppTheme.accent)
                         } else if !book.chapters.isEmpty {
                             Text("\(book.chapters.count)")
                                 .font(.caption2).foregroundStyle(.secondary)
@@ -399,7 +399,7 @@ struct SourceView: View {
                             Text(r.title).font(.headline)
                             HStack {
                                 if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.15)).cornerRadius(6) }
+                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
                             }
                             if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
                         }

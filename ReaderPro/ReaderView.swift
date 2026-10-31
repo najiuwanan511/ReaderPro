@@ -803,7 +803,7 @@ struct ReaderView: View {
                             Text(r.title).font(.headline)
                             HStack {
                                 if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(Color.blue.opacity(0.15)).cornerRadius(6) }
+                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
                             }
                         }
                     }

@@ -782,8 +782,22 @@ extension LegadoSource {
     func exploreCategories() -> [ExploreCategory] {
         let raw = effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return [] }
-        if raw.hasPrefix("@js:") || raw.hasPrefix("@JS:") || raw.contains("<js>") { return [] }
-        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // JS exploreUrl：@js:...;JSON.stringify(s) —— 执行 JS 拿到分类 JSON 数组。
+        // 之前这里直接 return []，导致 133 个 JS 分类源在发现页完全消失。
+        var t = raw
+        if t.hasPrefix("@js:") || t.hasPrefix("@JS:") {
+            let js = String(t.dropFirst(4))
+            let out = LegadoJS.run(js, input: "", baseUrl: bookSourceUrl,
+                                   sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
+                                   book: nil, page: 1)
+            t = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if t.contains("<js>") {
+            let out = LegadoJS.run(t, input: "", baseUrl: bookSourceUrl,
+                                   sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
+                                   book: nil, page: 1)
+            t = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if t.isEmpty { return [] }
         // Legado's other exploreUrl format (used by most yckceo/1325 sources):
         // one "标题::链接" per line, separated by \n. The old code only knew
         // JSON arrays and single URLs, so it treated the whole multi-line
@@ -821,8 +835,8 @@ extension LegadoSource {
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let method = (obj["method"] as? String)?.uppercased(), method == "POST",
               let bodyTemplate = obj["body"] as? String else { return nil }
-        let enc = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
-        let body = bodyTemplate.replacingOccurrences(of: "{{key}}", with: enc)
+        // body 里同样有 {{java.encodeURI(key)}}/{{page}} 等占位符，统一走模板求值
+        let body = Self.fillSearchTemplate(bodyTemplate, key: key, page: 1, sourceUrl: bookSourceUrl)
         var base = String(searchUrl[..<comma])
         if !base.hasPrefix("http") { base = resolveUrl(base, base: bookSourceUrl) }
         return (base, "POST", body)
@@ -835,13 +849,34 @@ extension LegadoSource {
             let rest = u[comma...]
             if rest.contains("{") { u = String(u[..<comma]) }
         }
-        let enc = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
-        u = u.replacingOccurrences(of: "{{key}}", with: enc)
-            .replacingOccurrences(of: "{{page}}", with: "\(page)")
-            .replacingOccurrences(of: "{{page-1}}", with: "\(page - 1)")
+        u = Self.fillSearchTemplate(u, key: key, page: page, sourceUrl: bookSourceUrl)
         if u.isEmpty { return "" }
         if u.hasPrefix("http") { return u }
         return resolveUrl(u, base: bookSourceUrl)
+    }
+
+    // 求值 searchUrl / POST body 里的 {{...}} 模板占位符。
+    // 支持 {{key}}/{{page}}/{{page-1}}，以及 {{java.encodeURI(key)}}/{{(page-1)*10+1}}
+    // 这类 JS 表达式（用 JavaScriptCore 求值，key/page 作为变量注入）。
+    // 之前只替换 {{key}}/{{page}}，导致 100+ 个用 JS 构造搜索地址的源 URL 拼错、搜不到。
+    static func fillSearchTemplate(_ template: String, key: String, page: Int, sourceUrl: String) -> String {
+        var out = template
+        let encKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+        out = out.replacingOccurrences(of: "{{key}}", with: encKey)
+        out = out.replacingOccurrences(of: "{{page}}", with: "\(page)")
+        out = out.replacingOccurrences(of: "{{page-1}}", with: "\(page - 1)")
+        // 剩余的 {{...}} 用 JS 求值（java.put 副作用返回空，java.encodeURI 返回编码值等）
+        var guardCount = 0
+        while let s = out.range(of: "{{"), let e = out[s.upperBound...].range(of: "}}"), guardCount < 20 {
+            guardCount += 1
+            let expr = String(out[s.upperBound..<e.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if expr.isEmpty { out.replaceSubrange(s.lowerBound..<e.upperBound, with: ""); continue }
+            let val = LegadoJS.run(expr, input: "", baseUrl: sourceUrl,
+                                   sourceKey: key, sourceUrl: sourceUrl,
+                                   book: nil, page: page)
+            out.replaceSubrange(s.lowerBound..<e.upperBound, with: val)
+        }
+        return out
     }
 
     func booksFromBlocks(_ blocks: [String], nameRule: String, authorRule: String, urlRule: String, coverRule: String, introRule: String) -> [SourceBook] {
@@ -948,7 +983,9 @@ extension LegadoSource {
                 $0.title.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey) ||
                 $0.author.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey)
             }
-            return Array(filtered.prefix(30))
+            if !filtered.isEmpty { return Array(filtered.prefix(30)) }
+            // 兜底：过滤后为空（可能是书名格式/编码差异），退回原始结果，避免「搜得到但被过滤光」
+            return Array(raw.prefix(10))
         }
         return Array(raw.prefix(30))
     }
@@ -962,7 +999,8 @@ extension LegadoSource {
         let cats = exploreCategories()
         let cat = category ?? cats.first
         guard let cat = cat else { return [] }
-        var url = cat.url.replacingOccurrences(of: "{{page}}", with: "1").replacingOccurrences(of: "{{page-1}}", with: "0")
+        // 分类 URL 也可能带 {{page}} / {{java...}} 占位符，统一走模板求值
+        var url = Self.fillSearchTemplate(cat.url, key: "", page: 1, sourceUrl: bookSourceUrl)
         if !url.hasPrefix("http") { url = resolveUrl(url, base: bookSourceUrl) }
         let html = try await fetchText(urlString: url)
         let rule = effectiveDiscoverRule.bookList.isEmpty ? ruleSearch : effectiveDiscoverRule
@@ -971,9 +1009,37 @@ extension LegadoSource {
             let j = booksFromJSON(html, rule: rule)
             if !j.isEmpty { return j }
         }
-        if rule.bookList.isEmpty { return [] }
-        let blocks = applyRule(html, rule.bookList, base: bookSourceUrl)
-        return booksFromBlocks(blocks, nameRule: rule.name, authorRule: rule.author, urlRule: rule.bookUrl, coverRule: rule.coverUrl, introRule: rule.intro)
+        if !rule.bookList.isEmpty {
+            let blocks = applyRule(html, rule.bookList, base: bookSourceUrl)
+            if !blocks.isEmpty {
+                let books = booksFromBlocks(blocks, nameRule: rule.name, authorRule: rule.author, urlRule: rule.bookUrl, coverRule: rule.coverUrl, introRule: rule.intro)
+                if !books.isEmpty { return books }
+            }
+        }
+        // 兜底：发现页和搜索页 HTML 结构不同，ruleSearch 的选择器常匹配不到发现页，
+        // 导致「点分类进去一片空白」。这里用通用链接提取保住分类列表。
+        return booksFromLinksFallback(html)
+    }
+
+    // 通用兜底：从页面提取所有 <a> 链接 + 文字，过滤出像书名的条目。
+    // 用于发现分类页规则不匹配时，保证「点分类能出书」。
+    func booksFromLinksFallback(_ html: String) -> [SourceBook] {
+        let links = cssExtractAll(html, "a@href")
+        let texts = cssExtractAll(html, "a@text")
+        var out: [SourceBook] = []
+        let chinese = try? NSRegularExpression(pattern: "[\\u4e00-\\u9fa5]")
+        for i in 0..<min(links.count, texts.count) {
+            let t = texts[i].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard t.count >= 2 && t.count <= 40 else { continue }
+            guard chinese?.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil else { continue }
+            // 跳过明显的导航/翻页词
+            let skip = ["首页", "下一页", "上一页", "末页", "下一页»", "加入书架", "开始阅读", "目录", "简介", "排行", "分类", "最新", "热门"]
+            if skip.contains(where: { t == $0 }) { continue }
+            let u = resolveUrl(links[i], base: bookSourceUrl)
+            out.append(SourceBook(title: t, url: u, sourceName: bookSourceName, sourceUrl: bookSourceUrl))
+            if out.count >= 50 { break }
+        }
+        return out
     }
 
     func fetchBookInfo(book: SourceBook) async throws -> SourceBook {

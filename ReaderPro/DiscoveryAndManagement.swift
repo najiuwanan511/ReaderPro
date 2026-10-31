@@ -38,7 +38,7 @@ struct SourceManagementView: View {
                             if !src.bookSourceGroup.isEmpty { Text("分组：\(src.bookSourceGroup)").font(.caption2).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(.blue) }
+                        Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(AppTheme.accent) }
                         Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
                             if let i = store.sources.firstIndex(where: { $0.id == src.id }) { store.sources[i].enabled = v; store.save() }
                         })).labelsHidden()
@@ -336,10 +336,10 @@ struct RssSourceManagementView: View {
                             Text(src.sourceName.isEmpty ? "（未命名）" : src.sourceName).font(.headline)
                             Text(src.sourceUrl).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             if !src.sourceGroup.isEmpty { Text("分组：\(src.sourceGroup)").font(.caption2).foregroundStyle(.secondary) }
-                            if src.isRssRuleSource { Text("RSS 规则源").font(.caption2).foregroundStyle(.blue) }
+                            if src.isRssRuleSource { Text("RSS 规则源").font(.caption2).foregroundStyle(AppTheme.accent) }
                         }
                         Spacer()
-                        Button { openSource = src } label: { Image(systemName: "safari").foregroundStyle(.blue) }
+                        Button { openSource = src } label: { Image(systemName: "safari").foregroundStyle(AppTheme.accent) }
                         Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
                             if let i = store.rssSources.firstIndex(where: { $0.id == src.id }) { store.rssSources[i].enabled = v; store.save() }
                         })).labelsHidden()

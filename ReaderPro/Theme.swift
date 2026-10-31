@@ -4,23 +4,23 @@ import UIKit
 // MARK: - 全局主题（开源阅读原版风）
 // 主色 + 卡片色，深浅色模式自动适配。所有页面统一从这里取色，视觉才不会散。
 enum AppTheme {
-    // 主色（accent）：靛蓝，深浅色自动适配
+    // 主色（accent）：legado 原版红色（复选框/开关/按钮/选中 tab 都是红），深浅色自动适配
     static let accent = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.55, green: 0.62, blue: 0.98, alpha: 1)
-            : UIColor(red: 0.29, green: 0.35, blue: 0.80, alpha: 1)
+            ? UIColor(red: 0.94, green: 0.33, blue: 0.33, alpha: 1)  // #EF5353
+            : UIColor(red: 0.90, green: 0.22, blue: 0.21, alpha: 1)  // #E53935
     })
     // 深主色（标题、强调）
     static let accentDeep = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.70, green: 0.76, blue: 1.0, alpha: 1)
-            : UIColor(red: 0.20, green: 0.26, blue: 0.68, alpha: 1)
+            ? UIColor(red: 0.96, green: 0.55, blue: 0.55, alpha: 1)
+            : UIColor(red: 0.78, green: 0.16, blue: 0.15, alpha: 1)  // #C62828
     })
     // 浅主色（标签底色）
     static let accentSoft = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
-            ? UIColor(red: 0.20, green: 0.23, blue: 0.45, alpha: 1)
-            : UIColor(red: 0.93, green: 0.94, blue: 0.99, alpha: 1)
+            ? UIColor(red: 0.28, green: 0.14, blue: 0.13, alpha: 1)
+            : UIColor(red: 0.99, green: 0.93, blue: 0.92, alpha: 1)
     })
     // 卡片背景（深色：藏青风，对标阅读Sigma书架 #1a2230 的暗青底）
     static let card = Color(uiColor: UIColor { trait in
