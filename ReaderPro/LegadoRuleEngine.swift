@@ -350,7 +350,7 @@ func findElementsSel(_ html: String, _ sel: Sel, token: String? = nil) -> [HtmlE
         css += "]"
     }
     if let a = sel.nthA, let b = sel.nthB {
-        css += ":" + (sel.nthLast ? "nth-last-child" : "nth-child") + "(\(a)n+\(b))"
+        css += ":" + (sel.nthLast ? "nth-last-child" : "nth-child") + "(\(a)n\(b < 0 ? "" : "+")\(b))"
     }
     if var raw = token, !raw.hasPrefix("class."), !raw.hasPrefix("tag."), !raw.hasPrefix("id.") {
         if let bang = raw.lastIndex(of: "!"), Int(raw[raw.index(after: bang)...]) != nil { raw = String(raw[..<bang]) }

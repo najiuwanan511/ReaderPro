@@ -1,5 +1,6 @@
 import Foundation
 import Kanna
+import SwiftSoup
 
 // Parse malformed HTML with libxml2 instead of treating HTML as a regular
 // language. In particular, nested lists, sibling CSS combinators and XPath
@@ -12,8 +13,21 @@ enum LegadoDOM {
     }
 
     static func css(_ html: String, _ selector: String) -> [HtmlEl] {
-        guard let document = try? Kanna.HTML(html: html, encoding: .utf8) else { return [] }
-        return document.css(selector).map(element)
+        // Android source rules use Jsoup selectors. Kanna's CSS converter both
+        // lacks those extensions and traps on valid :nth-child(n+2) rules.
+        // SwiftSoup implements the same selector dialect and throws on invalid
+        // selectors, so one imported rule cannot crash the entire source audit.
+        do {
+            let document = try SwiftSoup.parse(html)
+            return try document.select(selector).array().map { node in
+                let full = try node.outerHtml()
+                let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""
+                return HtmlEl(open: open, inner: try node.html(), full: full)
+            }
+        } catch {
+            LegadoJSCtx.failures?.add("CSS 规则解析失败：\(selector)：\(error.localizedDescription)")
+            return []
+        }
     }
 
     static func xpath(_ html: String, _ expression: String) -> [String] {

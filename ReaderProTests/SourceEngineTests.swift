@@ -237,6 +237,23 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(applyRule(html, "id.missing@text||id.info@text", base: base), ["直接嵌套尾部"])
     }
 
+    func testImportedJsoupSelectorsCannotCrashAndKeepTheirSemantics() throws {
+        let html = "<div class='SHsectionThree-middle'><p>A</p><span>X</span><p>B</p><p>C</p></div>"
+        func texts(_ selector: String) -> [String] { LegadoDOM.css(html, selector).map { stripHTML($0.inner) } }
+        // Exact selector from the 1466-source pack that crashed Kanna.
+        XCTAssertEqual(texts(".SHsectionThree-middle > p:nth-child(n+1)"), ["A", "B", "C"])
+        XCTAssertEqual(texts("p:nth-child(n)"), ["A", "B", "C"])
+        XCTAssertEqual(texts("p:nth-child(2n-1)"), ["A", "B"])
+        XCTAssertEqual(texts("p:nth-child(-n+3)"), ["A", "B"])
+        XCTAssertEqual(texts("p:nth-last-child(2)"), ["B"])
+        XCTAssertEqual(texts("p:nth-of-type(n+2)"), ["B", "C"])
+        XCTAssertEqual(texts("p:gt(0)"), ["B", "C"])
+        XCTAssertEqual(texts("p:contains(B)"), ["B"])
+        XCTAssertEqual(texts("p["), [])
+        XCTAssertEqual(texts("p:nth-child(999999999999999999999999999999)"), [])
+        XCTAssertEqual(LegadoDOM.css("<p title='😀'>中文</p>", "p[title='😀']").count, 1)
+    }
+
     func testJSArraysLibrariesExceptionsAndCategories() async throws {
         var source = SourceTestFixtures.html()
         source.jsLib = "function categoryTitle() { return '脚本分类'; }"
