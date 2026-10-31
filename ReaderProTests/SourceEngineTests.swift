@@ -164,6 +164,8 @@ final class SourceEngineTests: XCTestCase {
     func testRuleTemplatesRecursiveJSONAndStoredValues() {
         let json = #"{"data":[{"name":"甲","time":0},{"name":"乙"}]}"#
         XCTAssertEqual(applyRule(json, "$..name", base: base), ["甲", "乙"])
+        XCTAssertEqual(applyRule(json, "@JSon:$.data[0].name", base: base), ["甲"])
+        XCTAssertEqual(applyRule("第十二章·正文", "<js>java.toNumChapter(result)</js>\n##·##|", base: base), ["第12章|正文"])
         XCTAssertEqual(applyRuleFirst(json, "书名：{{$.data[0].name}}，{{java.getString('$.data[1].name')}}", base: base), "书名：甲，乙")
         _ = applyRule(json, #"@put:{"bookID":"$.data[0].name"}"#, base: base)
         XCTAssertEqual(applyRuleFirst(json, "https://example.org/@get:{bookID}", base: base), "https://example.org/甲")

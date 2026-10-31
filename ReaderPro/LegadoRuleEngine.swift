@@ -15,6 +15,10 @@ enum LegadoJSCtx {
     @TaskLocal static var headers: [String: String] = [:]
 }
 
+func isJavaScriptRule(_ rule: String) -> Bool {
+    rule.range(of: #"^@js(?::|\s|$)"#, options: [.regularExpression, .caseInsensitive]) != nil
+}
+
 // MARK: - Legado rule engine (subset, CSS/XPath/JSON/regex + JS via JavaScriptCore)
 // Research basis (see report): gedoor/legado BookSource fields
 // bookSourceName/bookSourceUrl/bookSourceType/searchUrl/exploreUrl/
@@ -560,8 +564,7 @@ func cssFirst(_ html: String, _ selector: String) -> String {
 
 func jsonPathTokens(_ path: String) -> [String] {
     var p = path.trimmingCharacters(in: .whitespaces)
-    if p.hasPrefix("@json:") { p = String(p.dropFirst(6)) }
-    else if p.hasPrefix("@Json:") { p = String(p.dropFirst(6)) }
+    if p.lowercased().hasPrefix("@json:") { p = String(p.dropFirst(6)) }
     p = p.replacingOccurrences(of: "..", with: ".**.")
     if p.hasPrefix("$.") { p = String(p.dropFirst(2)) }
     else if p == "$" { return [] }
@@ -753,7 +756,7 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
     if rule.lowercased().hasPrefix("@xpath:") { return LegadoDOM.xpath(input, String(rule.dropFirst(7))) }
     if rule.hasPrefix("//") || rule.hasPrefix("./") { return LegadoDOM.xpath(input, rule) }
     if rule.hasPrefix("@css:") { return evalCss(input, String(rule.dropFirst(5))) }
-    if rule.hasPrefix("@json:") || rule.hasPrefix("@Json:") { return jsonExtract(input, rule) }
+    if rule.lowercased().hasPrefix("@json:") { return jsonExtract(input, rule) }
     if rule.hasPrefix("$") { return jsonExtract(input, rule) }
     if rule.hasPrefix(":") { return regexExtract(input, String(rule.dropFirst())) }
     if rule.hasPrefix("@@") { return evalDefaultChain(input, String(rule.dropFirst(2))) }
@@ -779,7 +782,7 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
             vals = current
         } else {
             vals = []
-            for ci in current { vals.append(contentsOf: applyRuleNoReplace(ci, prefix, base: base)) }
+            for ci in current { vals.append(contentsOf: applyRule(ci, prefix, base: base)) }
         }
         var jsOut: [String] = []
         for v in vals {
@@ -792,7 +795,7 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
         if rest.isEmpty { out.append(contentsOf: jsOut) }
     }
     if !rest.isEmpty {
-        for ci in current { out.append(contentsOf: applyRuleNoReplace(ci, rest, base: base)) }
+        for ci in current { out.append(contentsOf: applyRule(ci, rest, base: base)) }
     }
     return out
 }
@@ -800,7 +803,7 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
 func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     var r = rule.trimmingCharacters(in: .whitespacesAndNewlines)
     if r.isEmpty { return [] }
-    if !r.lowercased().hasPrefix("@js"), !r.contains("<js>") {
+    if !isJavaScriptRule(r), !r.contains("<js>") {
         if let start = r.range(of: "@put:{"), let end = r[start.upperBound...].firstIndex(of: "}") {
             let json = "{" + r[start.upperBound..<end] + "}"
             if let data = json.data(using: .utf8), let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
@@ -814,7 +817,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         }
     }
     // 1) 整段 JS 规则：@js:code
-    if r.lowercased().hasPrefix("@js") {
+    if isJavaScriptRule(r) {
         var js = String(r.dropFirst(3)); if js.hasPrefix(":") { js.removeFirst() }
         let out = LegadoJS.run(js, input: htmlOrJson, baseUrl: base,
                                sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
@@ -899,7 +902,7 @@ extension LegadoSource {
         // JS exploreUrl：@js:...;JSON.stringify(s) —— 执行 JS 拿到分类 JSON 数组。
         // 之前这里直接 return []，导致 133 个 JS 分类源在发现页完全消失。
         var t = raw
-        if t.lowercased().hasPrefix("@js") {
+        if isJavaScriptRule(t) {
             var js = String(t.dropFirst(3)); if js.hasPrefix(":") { js.removeFirst() }
             let out = LegadoJS.run(js, input: "", baseUrl: bookSourceUrl,
                                    sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
@@ -973,7 +976,7 @@ extension LegadoSource {
     // 之前只替换 {{key}}/{{page}}，导致 100+ 个用 JS 构造搜索地址的源 URL 拼错、搜不到。
     static func fillSearchTemplate(_ template: String, key: String, page: Int, sourceUrl: String) -> String {
         var out = template.trimmingCharacters(in: .whitespacesAndNewlines)
-        if out.lowercased().hasPrefix("@js") {
+        if isJavaScriptRule(out) {
             var code = String(out.dropFirst(3)); if code.hasPrefix(":") { code.removeFirst() }
             out = LegadoJS.run(code, input: "", baseUrl: sourceUrl, sourceKey: key, sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page)
         } else {

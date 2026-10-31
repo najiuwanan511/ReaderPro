@@ -225,8 +225,32 @@ final class LegadoJS {
             return bytes.map { String(format: "%02x", $0) }.joined()
         }
         let randomUUID: @convention(block) () -> String = { UUID().uuidString.lowercased() }
+        let chapterNumber: @convention(block) (String) -> String = { text in
+            guard let regex = try? NSRegularExpression(pattern: "第([零〇一二两三四五六七八九十百千万亿]+)([章回节集卷部])") else { return text }
+            var result = text
+            let digits: [Character: Int] = ["零":0, "〇":0, "一":1, "二":2, "两":2, "三":3, "四":4, "五":5, "六":6, "七":7, "八":8, "九":9]
+            let units: [Character: Int] = ["十":10, "百":100, "千":1000, "万":10000, "亿":100000000]
+            let ns = text as NSString
+            for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+                var total = 0, section = 0, number = 0
+                for char in ns.substring(with: match.range(at: 1)) {
+                    if let digit = digits[char] { number = digit }
+                    else if let unit = units[char] {
+                        if unit < 10000 { section += max(number, 1) * unit }
+                        else { total += (section + number) * unit; section = 0 }
+                        number = 0
+                    }
+                }
+                let replacement = "第\(total + section + number)" + ns.substring(with: match.range(at: 2))
+                if let range = Range(match.range, in: result) { result.replaceSubrange(range, with: replacement) }
+            }
+            return result
+        }
         java.setObject(digest, forKeyedSubscript: "digestHex" as NSString)
         java.setObject(randomUUID, forKeyedSubscript: "randomUUID" as NSString)
+        java.setObject(chapterNumber, forKeyedSubscript: "toNumChapter" as NSString)
+        let getUA: @convention(block) () -> String = { sourceUA }
+        java.setObject(getUA, forKeyedSubscript: "getWebViewUA" as NSString)
         ctx.evaluateScript(Self.javaStringScript)
 
         // ---- 执行 ----
@@ -342,6 +366,8 @@ final class LegadoJS {
         for (var i=0;i<pairs.length;i++) { var p=pairs[i].trim(), at=p.indexOf('='); if(p.slice(0,at)===key)return p.slice(at+1); }
         return '';
     };
+    java.getCookie = function(url,key){return key == null ? cookie.getCookie(url) : cookie.getKey(url,key);};
+    java.clearCookie = cookie.removeCookie;
     var cache = {
         put: function(key, value, seconds) { return source.put('cache:'+key, JSON.stringify({value:String(value),until:seconds ? Date.now()+seconds*1000 : 0})); },
         get: function(key) { try { var item=JSON.parse(source.get('cache:'+key)); return item.until && item.until<Date.now() ? '' : item.value; } catch(e) { return ''; } },
