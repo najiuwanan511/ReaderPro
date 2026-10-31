@@ -318,7 +318,7 @@ final class LegadoJS {
     java.getElements = function(rule, content) {
         var values=java._getElements(String(rule), _text(content)).map(_typed);
         if(values.length===1 && Array.isArray(values[0])) values=values[0];
-        return _elements(values);
+        return values.every(function(value){return value && typeof value.outerHtml==='function';}) ? _elements(values) : _array(values);
     };
     java.getElement = function(rule, content) {
         var values=java.getElements(rule, content);

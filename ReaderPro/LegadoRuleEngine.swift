@@ -921,6 +921,19 @@ struct ExploreCategory: Identifiable, Equatable {
 }
 
 extension LegadoSource {
+    func fetchExploreCategories() async throws -> [ExploreCategory] {
+        try await withTimeout(30) {
+            try await self.withRules {
+                let categories = self.exploreCategories()
+                try LegadoJSCtx.failures?.check()
+                guard !categories.isEmpty else {
+                    throw SourceFailure(stage: "发现分类", message: "规则未返回可用分类，请检查发现规则或使用搜索", url: self.bookSourceUrl)
+                }
+                return categories
+            }
+        }
+    }
+
     func exploreCategories() -> [ExploreCategory] {
         LegadoJSCtx.$library.withValue(jsLib) {
             LegadoJSCtx.$comment.withValue(bookSourceComment) { exploreCategoriesImpl() }

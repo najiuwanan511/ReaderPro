@@ -83,6 +83,8 @@ struct SourceExploreCard: View {
     @State private var categories: [ExploreCategory] = []
     @State private var loadedRule: String?
     @State private var loading = false
+    @State private var categoryError = ""
+    @State private var retry = 0
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -97,7 +99,13 @@ struct SourceExploreCard: View {
             }.buttonStyle(.plain).accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }
-                else if categories.isEmpty { Text("未解析到分类，请尝试搜索该书源。").font(.caption).foregroundStyle(.secondary).padding(16) }
+                else if categories.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(categoryError.isEmpty ? "未解析到分类，请尝试搜索该书源。" : categoryError)
+                            .font(.caption).foregroundStyle(.secondary)
+                        Button("重试加载分类") { retry += 1 }.font(.caption)
+                    }.padding(16)
+                }
                 else {
                     CategoryFlow {
                         ForEach(categories) { category in
@@ -113,14 +121,18 @@ struct SourceExploreCard: View {
             }
             Divider().padding(.leading, 16)
         }
-        .task(id: expanded ? source.effectiveDiscoverUrl : "") {
+        .task(id: expanded ? source.effectiveDiscoverUrl + "|\(retry)" : "") {
             guard expanded, loadedRule != source.effectiveDiscoverUrl else { return }
-            loading = true
+            loading = true; categoryError = ""; categories = []
             let snapshot = source
-            // Decode JavaScript categories only when this source is expanded.
-            let parsed = await Task.detached(priority: .userInitiated) { snapshot.exploreCategories() }.value
-            guard !Task.isCancelled else { return }
-            categories = parsed; loadedRule = snapshot.effectiveDiscoverUrl; loading = false
+            do {
+                let parsed = try await snapshot.fetchExploreCategories()
+                guard !Task.isCancelled else { return }
+                categories = parsed; loadedRule = snapshot.effectiveDiscoverUrl; loading = false
+            } catch {
+                guard !Task.isCancelled else { return }
+                categoryError = sourceErrorMessage(error); loading = false
+            }
         }
     }
 }
@@ -175,7 +187,7 @@ struct ExploreListView: View {
     @MainActor private func load() async {
         loading = true; errorText = ""
         do {
-            let books = try await source.discover(category: category)
+            let books = try await withTimeout(45) { try await self.source.discover(category: self.category) }
             guard !Task.isCancelled else { return }
             results = books; loading = false
         } catch {

@@ -302,6 +302,8 @@ final class SourceEngineTests: XCTestCase {
         source.exploreUrl = "@js:throw new Error('测试脚本异常')"
         do { _ = try await source.discover(); XCTFail("JS exception cannot pass validation") }
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("脚本")) }
+        do { _ = try await source.fetchExploreCategories(); XCTFail("Category errors must reach the discovery UI") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("测试脚本异常")) }
         let encoded = LegadoJS.run("java.encodeURI('中&=')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
         XCTAssertEqual(encoded, "%E4%B8%AD%26%3D")
         XCTAssertEqual(LegadoJS.run("''", input: "not a result", baseUrl: base, sourceKey: "", sourceUrl: base), "")

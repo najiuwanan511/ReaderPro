@@ -53,7 +53,7 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
         task?.cancel()
         let run = UUID(); generation = run
         results = []; allResults = []; errors = []; seen = []
-        completed = 0; total = sources.filter { !$0.searchUrl.isEmpty }.count
+        completed = 0; total = sources.filter { !$0.searchUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
         keyword = trimmed; cancelled = false; searching = total > 0
         task = Task {
             await streamSourceSearch(sources, key: trimmed) { [weak self] result in

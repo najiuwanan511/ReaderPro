@@ -219,8 +219,8 @@ struct SourceBookDetailView: View {
         let target = selected
         guard let source else { errorText = "书源已被删除，请重新搜索。"; loading = false; return }
         do {
-            let fetched = try await source.fetchBookInfo(book: target)
-            let fetchedChapters = try await source.fetchChapters(book: fetched)
+            let fetched = try await withTimeout(30) { try await source.fetchBookInfo(book: target) }
+            let fetchedChapters = try await withTimeout(120) { try await source.fetchChapters(book: fetched) }
             guard !Task.isCancelled, selected.id == target.id else { return }
             info = fetched; chapters = fetchedChapters; loading = false
             if chapters.isEmpty { errorText = "该书源没有返回目录，请切换书源或重试。" }
