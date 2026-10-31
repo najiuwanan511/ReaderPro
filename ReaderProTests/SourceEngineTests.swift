@@ -88,6 +88,28 @@ final class SourceEngineTests: XCTestCase {
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("正文规则")) }
     }
 
+    func testInfiniteJavaScriptRetryLoopsRespectDeadlineAndCancellation() async throws {
+        let failures = RuleFailures()
+        let started = Date()
+        let output = await Task.detached { [base] in
+            LegadoJSCtx.$deadline.withValue(Date().addingTimeInterval(0.25)) {
+                LegadoJSCtx.$failures.withValue(failures) {
+                    LegadoJS.run("while(true){try{throw Error('retry');}catch(e){}}", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+                }
+            }
+        }.value
+        XCTAssertEqual(output, "")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+        XCTAssertThrowsError(try failures.check()) { XCTAssertTrue(sourceErrorMessage($0).contains("超时")) }
+        let task = Task.detached { [base] in LegadoJS.run("while(true){}", input: "", baseUrl: base, sourceKey: "", sourceUrl: base) }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        task.cancel()
+        let cancelled = await task.value
+        XCTAssertEqual(cancelled, "")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 3)
+        XCTAssertEqual(LegadoJS.run("1+1", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "2")
+    }
+
     func testLegacyCertificatesRequireExplicitPermissionForEachSource() async throws {
         let tlsBase = "https://127.0.0.1:8766"
         var source = SourceTestFixtures.json()

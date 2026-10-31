@@ -46,6 +46,11 @@ final class LegadoJS {
         let script = js.trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
+        guard let budget = SourceJSBudget.install(ctx) else {
+            LegadoJSCtx.failures?.add("当前系统不支持安全中断书源脚本，已停止执行")
+            return ""
+        }
+        defer { budget.clear() }
         var exception = ""
         ctx.exceptionHandler = { _, error in exception = error?.toString() ?? "未知 JavaScript 错误" }
 
@@ -271,6 +276,10 @@ final class LegadoJS {
             ctx.evaluateScript(library)
         }
         let ret = ctx.evaluateScript(script)
+        if budget.terminated {
+            LegadoJSCtx.failures?.add(Task.isCancelled ? "书源脚本已取消" : "书源脚本执行超时，已终止无限重试或长时间计算")
+            return ""
+        }
         guard exception.isEmpty else {
             LegadoJSCtx.failures?.add(exception)
             return ""

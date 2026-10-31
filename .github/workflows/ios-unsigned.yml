@@ -41,6 +41,9 @@ jobs:
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" \
             -parallel-testing-enabled NO \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 120 \
             -skip-testing:ReaderProTests/SourcePackAuditTests \
             -resultBundlePath build/SourceRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO \
