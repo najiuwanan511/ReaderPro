@@ -1234,7 +1234,8 @@ func searchAllSources(_ sources: [LegadoSource], key: String) async -> [SourceBo
         let batchResults = await withTaskGroup(of: [SourceBook].self) { group in
             for src in batch {
                 group.addTask {
-                    do { return try await src.search(key: key) } catch { return [] }
+                    do { return try await withTimeout(25) { try await src.search(key: key) } }
+                    catch { return [] }
                 }
             }
             var collected: [SourceBook] = []
@@ -1266,7 +1267,8 @@ func searchAllRawSources(_ sources: [LegadoSource], key: String) async -> [Sourc
         let batchResults = await withTaskGroup(of: [SourceBook].self) { group in
             for src in batch {
                 group.addTask {
-                    do { return try await src.search(key: key) } catch { return [] }
+                    do { return try await withTimeout(25) { try await src.search(key: key) } }
+                    catch { return [] }
                 }
             }
             var collected: [SourceBook] = []

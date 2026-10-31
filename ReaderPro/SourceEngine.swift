@@ -140,16 +140,31 @@ final class InsecureURLSessionDelegate: NSObject, URLSessionDelegate {
 
 let insecureSession: URLSession = {
     let cfg = URLSessionConfiguration.ephemeral
-    cfg.timeoutIntervalForRequest = 90
+    cfg.timeoutIntervalForRequest = 25
+    cfg.timeoutIntervalForResource = 30
     cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
     return URLSession(configuration: cfg, delegate: InsecureURLSessionDelegate(), delegateQueue: nil)
 }()
 
 let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0"
 
+// 给任意异步操作加硬超时：超时抛错并取消。用于搜索/发现，避免单个失效源把整批卡死几十秒。
+func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask { try await op() }
+        group.addTask {
+            try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            throw NSError(domain: "timeout", code: -1, userInfo: [NSLocalizedDescriptionKey: "请求超时"])
+        }
+        defer { group.cancelAll() }
+        guard let first = try await group.next() else { throw NSError(domain: "timeout", code: -1) }
+        return first
+    }
+}
+
 func fetchText(urlString: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 90)
+    var req = URLRequest(url: url, timeoutInterval: 25)
     req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
     req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
     do {
@@ -162,7 +177,7 @@ func fetchText(urlString: String) async throws -> String {
         if urlString.hasPrefix("https://") { alt = "http://" + urlString.dropFirst("https://".count) }
         else if urlString.hasPrefix("http://") { alt = "https://" + urlString.dropFirst("http://".count) }
         if !alt.isEmpty, let altURL = URL(string: alt) {
-            var req2 = URLRequest(url: altURL, timeoutInterval: 90)
+            var req2 = URLRequest(url: altURL, timeoutInterval: 25)
             req2.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
             req2.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
             let (data2, resp2) = try await insecureSession.data(for: req2)
@@ -175,7 +190,7 @@ func fetchText(urlString: String) async throws -> String {
 
 func fetchText(urlString: String, method: String, body: String) async throws -> String {
     guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 90)
+    var req = URLRequest(url: url, timeoutInterval: 25)
     req.httpMethod = method
     req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
     req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")

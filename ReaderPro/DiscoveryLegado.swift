@@ -45,6 +45,14 @@ struct DiscoveryView: View {
                                msg: searchText.isEmpty && filterMode == 0 ? "这些书源的 exploreUrl 为空或暂不支持，可去「书源」用搜索直接找书。" : "换个关键词或筛选试试。")
                 } else {
                     LazyVStack(spacing: 12) {
+                        // 统计说明：让用户明白「为什么 10 个源只显示 4 个」——发现页只展示带发现分类(exploreUrl)的源
+                        HStack(spacing: 5) {
+                            Image(systemName: "info.circle").font(.caption2)
+                            Text("\(store.enabledSources.count) 个启用源，\(sourcesWithCategories.count) 个带发现分类（其余源无发现规则，去「搜索」直接找书）")
+                                .font(.caption2)
+                        }
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                         ForEach(sourcesWithCategories) { src in
                             SourceExploreCard(source: src) { cat in
                                 exploreTarget = ExploreTarget(source: src, category: cat)
@@ -216,7 +224,7 @@ struct ExploreListView: View {
                 let res = try await source.discover(category: category)
                 await MainActor.run { results = res; loading = false }
             } catch {
-                await MainActor.run { results = []; loading = false; errorText = "加载失败：\(error.localizedDescription)" }
+                await MainActor.run { results = []; loading = false; errorText = "加载失败（\(source.bookSourceName)）：\(error.localizedDescription)" }
             }
         }
     }
