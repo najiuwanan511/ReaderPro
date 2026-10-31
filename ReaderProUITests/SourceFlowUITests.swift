@@ -51,6 +51,8 @@ final class SourceFlowUITests: XCTestCase {
         let page = app.textViews["readerPage"]
         XCTAssertTrue(page.waitForExistence(timeout: 15))
         XCTAssertTrue(page.label.contains("第1章第1段"), page.label)
+        Thread.sleep(forTimeInterval: 1) // Wait for the presentation and TextKit drawing before visual evidence.
+        let body = XCTAttachment(screenshot: page.screenshot()); body.name = "正文像素"; body.lifetime = .keepAlways; add(body)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "分类到目录直接阅读"; attachment.lifetime = .keepAlways; add(attachment)
     }
 

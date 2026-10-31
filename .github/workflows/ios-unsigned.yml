@@ -45,6 +45,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/tests.log
 
+      - name: Export UI screenshots
+        if: always()
+        continue-on-error: true
+        run: |
+          if [ -d build/SourceRegression.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/SourceRegression.xcresult --output-path build/screenshots
+          fi
+      - name: Verify the reader draws visible body glyphs
+        run: xcrun swift scripts/verify_reader_pixels.swift build/screenshots
+
       - name: Audit every configured search in the 1466-source user pack
         run: |
           set -o pipefail
@@ -57,13 +67,10 @@ jobs:
             -resultBundlePath build/UserPackAudit.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-audit.log
 
-      - name: Export UI screenshots
+      - name: Export complete source audit
         if: always()
         continue-on-error: true
         run: |
-          if [ -d build/SourceRegression.xcresult ]; then
-            xcrun xcresulttool export attachments --path build/SourceRegression.xcresult --output-path build/screenshots
-          fi
           if [ -d build/UserPackAudit.xcresult ]; then
             xcrun xcresulttool export attachments --path build/UserPackAudit.xcresult --output-path build/audit-attachments
           fi

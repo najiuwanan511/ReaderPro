@@ -76,29 +76,31 @@ enum Paginator {
 
 // MARK: - 单页渲染（与分页同一套 TextKit 属性，保证不溢出、不错位）
 
+func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextView {
+    let storage = NSTextStorage(attributedString: attributed)
+    let manager = NSLayoutManager(); manager.usesFontLeading = true
+    storage.addLayoutManager(manager)
+    let container = NSTextContainer(size: size)
+    container.lineFragmentPadding = 0
+    container.lineBreakMode = .byCharWrapping
+    container.maximumNumberOfLines = 0
+    manager.addTextContainer(container)
+    let view = UITextView(frame: CGRect(origin: .zero, size: size), textContainer: container)
+    view.backgroundColor = .clear
+    view.isEditable = false; view.isSelectable = false
+    view.isScrollEnabled = false; view.isUserInteractionEnabled = false
+    view.textContainerInset = .zero
+    container.widthTracksTextView = false; container.heightTracksTextView = false
+    view.attributedText = attributed
+    return view
+}
+
 struct PageTextView: UIViewRepresentable {
     let attributed: NSAttributedString
     let pageSize: CGSize
 
     func makeUIView(context: Context) -> UITextView {
-        let container = NSTextContainer(size: pageSize)
-        container.lineFragmentPadding = 0
-        container.lineBreakMode = .byCharWrapping
-        container.maximumNumberOfLines = 0
-        let manager = NSLayoutManager()
-        manager.usesFontLeading = true
-        manager.addTextContainer(container)
-        let tv = UITextView(frame: .zero, textContainer: container)
-        tv.backgroundColor = .clear
-        tv.isEditable = false
-        tv.isSelectable = false
-        tv.isScrollEnabled = false
-        tv.isUserInteractionEnabled = false
-        tv.textContainerInset = .zero
-        tv.textContainer.widthTracksTextView = false
-        tv.textContainer.heightTracksTextView = false
-        tv.textContainer.size = pageSize
-        tv.textStorage.setAttributedString(attributed)
+        let tv = makeReaderTextView(attributed: attributed, size: pageSize)
         tv.isAccessibilityElement = true
         tv.accessibilityIdentifier = "readerPage"
         tv.accessibilityLabel = attributed.string
@@ -107,7 +109,9 @@ struct PageTextView: UIViewRepresentable {
 
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.textContainer.size = pageSize
-        tv.textStorage.setAttributedString(attributed)
+        tv.attributedText = attributed
+        tv.layoutManager.ensureLayout(for: tv.textContainer)
+        tv.setNeedsDisplay()
         tv.accessibilityLabel = attributed.string
     }
 }
@@ -119,10 +123,7 @@ struct FullTextReader: UIViewRepresentable {
     let width: CGFloat
 
     func makeUIView(context: Context) -> UITextView {
-        let container = NSTextContainer(size: CGSize(width: width, height: .greatestFiniteMagnitude))
-        let manager = NSLayoutManager(); manager.usesFontLeading = true
-        manager.addTextContainer(container)
-        let tv = UITextView(frame: .zero, textContainer: container)
+        let tv = makeReaderTextView(attributed: attributed, size: CGSize(width: width, height: 1))
         tv.backgroundColor = .clear
         tv.isEditable = false
         tv.isSelectable = false
@@ -268,14 +269,7 @@ final class PageHostController: UIViewController {
         self.index = index
         self.pageSize = size
         if textView == nil {
-            let container = NSTextContainer(size: size)
-            container.lineFragmentPadding = 0
-            container.lineBreakMode = .byCharWrapping
-            container.maximumNumberOfLines = 0
-            let manager = NSLayoutManager()
-            manager.usesFontLeading = true
-            manager.addTextContainer(container)
-            let tv = UITextView(frame: .zero, textContainer: container)
+            let tv = makeReaderTextView(attributed: attributed, size: size)
             tv.backgroundColor = .clear
             tv.isEditable = false
             tv.isSelectable = false
@@ -288,7 +282,7 @@ final class PageHostController: UIViewController {
         }
         view.backgroundColor = background
         textView?.textContainer.size = size
-        textView?.textStorage.setAttributedString(attributed)
+        textView?.attributedText = attributed
         view.setNeedsLayout()
     }
 }
