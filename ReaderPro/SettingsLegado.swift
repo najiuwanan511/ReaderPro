@@ -21,6 +21,9 @@ struct SettingsView: View {
                     NavigationLink { SourceManagementView(store: store) } label: {
                         SettingRow(icon: "books.vertical", iconTint: .blue, title: "书源管理", summary: "管理书源、网络导入、扫码导入")
                     }
+                    NavigationLink { SourceView(store: store) } label: {
+                        SettingRow(icon: "magnifyingglass", iconTint: .indigo, title: "多源搜索", summary: "搜索书名、作者并查看目录")
+                    }
                     Button { comingSoon("TXT目录规则") } label: {
                         SettingRow(icon: "list.bullet.indent", iconTint: .teal, title: "TXT目录规则", summary: "自定义 TXT 章节识别规则")
                     }.buttonStyle(.plain)

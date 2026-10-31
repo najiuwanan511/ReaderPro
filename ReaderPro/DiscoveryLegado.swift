@@ -68,6 +68,14 @@ struct DiscoveryView: View {
             .searchable(text: $searchText, prompt: "搜书源名 / 分组")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink {
+                        SourceView(store: store)
+                    } label: {
+                        Image(systemName: "magnifyingglass")
+                    }
+                    .accessibilityLabel("多源搜索")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("全部书源") { filterMode = 0 }
                         Button("快速书源 ⚡") { filterMode = 1 }
@@ -159,6 +167,7 @@ struct ExploreListView: View {
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
     @State private var detailIsComic = false
+    @State private var readingBook: LocalBook?
 
     var body: some View {
         Group {
@@ -194,25 +203,57 @@ struct ExploreListView: View {
         .onAppear { if results.isEmpty { load() } }
         .sheet(item: $selectedResult) { r in
             NavigationStack {
-                VStack(alignment: .leading, spacing: 12) {
-                    if !r.cover.isEmpty, let url = URL(string: r.cover) {
-                        AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                            .frame(width: 110, height: 150).cornerRadius(10).clipped()
+                List {
+                    Section {
+                        HStack(alignment: .top, spacing: 12) {
+                            if !r.cover.isEmpty, let url = URL(string: r.cover) {
+                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                    .frame(width: 90, height: 124).cornerRadius(8).clipped()
+                            }
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text(r.title).font(.title3).bold()
+                                if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
+                                if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
+                                if !r.intro.isEmpty { Text(r.intro).font(.footnote).lineLimit(5) }
+                            }
+                        }
+                        Button("加入书架") {
+                            var book = makeBook(from: r)
+                            book.chapters = detailChapters
+                            store.updateBook(book)
+                            selectedResult = nil
+                        }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
                     }
-                    Text(r.title).font(.title2).bold()
-                    if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
-                    if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
-                    if !r.intro.isEmpty { Text(r.intro).font(.body) }
-                    if loadingDetail { ProgressView("正在拉取目录…") } else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
-                    Button("加入书架") {
-                        var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: detailIsComic ? "comic" : "web")
-                        book.chapters = detailChapters
-                        store.updateBook(book); selectedResult = nil
-                    }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
-                    List(detailChapters.prefix(100)) { c in Text(c.title).font(.caption) }
-                }.padding()
+                    Section {
+                        if loadingDetail {
+                            ProgressView("正在拉取目录…")
+                        } else if detailChapters.isEmpty {
+                            Text("目录为空：请换一个源，或检查这个源的目录规则。")
+                                .font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            ForEach(Array(detailChapters.prefix(300).enumerated()), id: \.offset) { index, chapter in
+                                Button {
+                                    openChapter(index, result: r)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        Text(chapter.title).lineLimit(1)
+                                        Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            }
+                        }
+                    } header: {
+                        Text(loadingDetail ? "目录" : "目录（\(detailChapters.count) 章，点击即可阅读）")
+                    }
+                }
                 .navigationTitle("书籍详情")
                 .toolbar { Button("关闭") { selectedResult = nil } }
+                .navigationDestination(item: $readingBook) { book in
+                    ReaderView(store: store, bookId: book.id)
+                }
             }
         }
     }
@@ -240,5 +281,20 @@ struct ExploreListView: View {
                 await MainActor.run { loadingDetail = false }
             }
         }
+    }
+
+    func makeBook(from result: SourceBook) -> LocalBook {
+        LocalBook(title: result.title, author: result.author, coverUrl: result.cover,
+                  sourceName: result.sourceName, sourceUrl: result.sourceUrl,
+                  fileName: result.title + ".web", kind: detailIsComic ? "comic" : "web")
+    }
+
+    func openChapter(_ index: Int, result: SourceBook) {
+        guard detailChapters.indices.contains(index) else { return }
+        var book = makeBook(from: result)
+        book.chapters = detailChapters
+        book.chapterIndex = index
+        store.updateBook(book)
+        readingBook = book
     }
 }

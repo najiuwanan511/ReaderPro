@@ -78,7 +78,7 @@ struct ReaderView: View {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(Int(size.width))|\(Int(size.height))"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(Int(size.width))|\(Int(size.height))"
     }
 
     var body: some View {
@@ -224,17 +224,20 @@ struct ReaderView: View {
     @ViewBuilder
     func scrollReader(size: CGSize) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: store.paragraphSpacing) {
+            VStack(alignment: .leading, spacing: CGFloat(store.paragraphSpacing)) {
                 if let c = chapter, store.showHeader {
                     Text(c.title)
-                        .font(.system(size: store.fontSize + 3, weight: .bold))
+                        .font(.system(size: CGFloat(store.fontSize + 3), weight: .bold))
                         .foregroundColor(Color(uiColor: theme.text))
                         .padding(.bottom, 4)
                 }
-                FullTextReader(attributed: attributed)
+                FullTextReader(
+                    attributed: attributed,
+                    width: max(size.width - CGFloat(store.pagePaddingH * 2), 100)
+                )
             }
-            .padding(.horizontal, store.pagePaddingH)
-            .padding(.vertical, store.pagePaddingV)
+            .padding(.horizontal, CGFloat(store.pagePaddingH))
+            .padding(.vertical, CGFloat(store.pagePaddingV))
         }
         .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
     }
@@ -244,10 +247,38 @@ struct ReaderView: View {
     func pageView(i: Int, size: CGSize) -> some View {
         let range = pages.indices.contains(i) ? pages[i] : NSRange(location: 0, length: 0)
         let sub = attributed.attributedSubstring(from: range)
-        PageTextView(attributed: sub)
+        PageTextView(attributed: sub, pageSize: pageSize)
             .frame(width: pageSize.width, height: pageSize.height)
             .frame(width: size.width, height: size.height)
             .background(Color.clear)
+            .overlay(alignment: .top) {
+                if store.showHeader, let c = chapter {
+                    HStack {
+                        Text(c.title)
+                            .font(.system(size: CGFloat(max(store.fontSize - 5, 11)), weight: .medium))
+                            .foregroundColor(Color(uiColor: theme.secondary))
+                            .lineLimit(1)
+                        Spacer()
+                    }
+                    .padding(.horizontal, CGFloat(store.pagePaddingH))
+                    .padding(.top, CGFloat(max(store.pagePaddingV * 0.35, 6)))
+                    .allowsHitTesting(false)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if store.showFooter {
+                    HStack {
+                        Text("第 \(i + 1) 页")
+                        Spacer()
+                        Text("共 \(max(pages.count, 1)) 页")
+                    }
+                    .font(.system(size: CGFloat(max(store.fontSize - 6, 10))))
+                    .foregroundColor(Color(uiColor: theme.secondary))
+                    .padding(.horizontal, CGFloat(store.pagePaddingH))
+                    .padding(.bottom, CGFloat(max(store.pagePaddingV * 0.35, 6)))
+                    .allowsHitTesting(false)
+                }
+            }
             .overlay(
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle()).onTapGesture { goPrev() }
@@ -291,17 +322,19 @@ struct ReaderView: View {
 
     func baseAttributes() -> [NSAttributedString.Key: Any] {
         let para = NSMutableParagraphStyle()
-        para.lineSpacing = store.lineSpacing
-        para.paragraphSpacing = store.paragraphSpacing
+        para.lineSpacing = CGFloat(store.lineSpacing)
+        para.paragraphSpacing = CGFloat(store.paragraphSpacing)
         para.alignment = .justified
+        para.lineBreakMode = .byCharWrapping
+        para.hyphenationFactor = 0
         var attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: theme.text,
             .paragraphStyle: para,
         ]
         if store.fontName.isEmpty {
-            attrs[.font] = UIFont.systemFont(ofSize: store.fontSize)
+            attrs[.font] = UIFont.systemFont(ofSize: CGFloat(store.fontSize))
         } else {
-            attrs[.font] = UIFont(name: store.fontName, size: store.fontSize) ?? UIFont.systemFont(ofSize: store.fontSize)
+            attrs[.font] = UIFont(name: store.fontName, size: CGFloat(store.fontSize)) ?? UIFont.systemFont(ofSize: CGFloat(store.fontSize))
         }
         return attrs
     }
@@ -311,11 +344,17 @@ struct ReaderView: View {
         lastSize = size
         let text = NSAttributedString(string: store.purify(c.text), attributes: baseAttributes())
         attributed = text
-        let headerSpace: CGFloat = store.showHeader ? 20 : 0
-        let footerSpace: CGFloat = store.showFooter ? 20 : 0
+        // Reserve the real overlay height. A fixed 20pt allowance is enough at
+        // the default size but lets large fonts collide with the header/footer.
+        let headerSpace: CGFloat = store.showHeader
+            ? CGFloat(max(store.fontSize - 5, 11) + max(store.pagePaddingV * 0.35, 6) + 4)
+            : 0
+        let footerSpace: CGFloat = store.showFooter
+            ? CGFloat(max(store.fontSize - 6, 10) + max(store.pagePaddingV * 0.35, 6) + 4)
+            : 0
         let newPageSize = CGSize(
-            width: max(size.width - store.pagePaddingH * 2, 100),
-            height: max(size.height - store.pagePaddingV * 2 - headerSpace - footerSpace, 100)
+            width: max(size.width - CGFloat(store.pagePaddingH * 2), 100),
+            height: max(size.height - CGFloat(store.pagePaddingV * 2) - headerSpace - footerSpace, 100)
         )
         pageSize = newPageSize
         pages = Paginator.paginate(text, pageSize: newPageSize)
@@ -867,6 +906,7 @@ struct ReaderView: View {
                     sliderRow("行距", value: $store.lineSpacing, range: 0...24, step: 1)
                     sliderRow("段距", value: $store.paragraphSpacing, range: 0...40, step: 1)
                     sliderRow("左右边距", value: $store.pagePaddingH, range: 8...48, step: 1)
+                    sliderRow("上下边距", value: $store.pagePaddingV, range: 8...48, step: 1)
                     Picker("翻页动画", selection: $store.pageTurn) {
                         Text("覆盖").tag(0); Text("平移").tag(1); Text("滚动").tag(2); Text("无").tag(3); Text("仿真").tag(4)
                     }

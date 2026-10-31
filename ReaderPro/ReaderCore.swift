@@ -46,18 +46,37 @@ enum Paginator {
         }
         let storage = NSTextStorage(attributedString: attributed)
         let layoutManager = NSLayoutManager()
+        // Keep this explicitly on TextKit 1. UITextView can otherwise choose
+        // TextKit 2 on newer iOS versions, whose line breaking metrics differ
+        // enough to make the calculated range overflow when rendered.
+        layoutManager.usesFontLeading = true
         storage.addLayoutManager(layoutManager)
         var ranges: [NSRange] = []
         var offset = 0
         while offset < attributed.length {
             let container = NSTextContainer(size: pageSize)
             container.lineFragmentPadding = 0
+            container.lineBreakMode = .byCharWrapping
+            container.maximumNumberOfLines = 0
             layoutManager.addTextContainer(container)
+            layoutManager.ensureLayout(for: container)
             let glyphRange = layoutManager.glyphRange(for: container)
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-            if charRange.length == 0 { break }
-            ranges.append(charRange)
-            offset = NSMaxRange(charRange)
+            if charRange.length == 0 || charRange.location == NSNotFound { break }
+
+            // A container must consume the next character range. Guarding this
+            // invariant prevents an iOS layout edge case from repeating a page.
+            let start = max(offset, charRange.location)
+            let end = min(attributed.length, NSMaxRange(charRange))
+            guard end > start else { break }
+            let pageRange = NSRange(location: start, length: end - start)
+            ranges.append(pageRange)
+            offset = end
+        }
+        if offset < attributed.length {
+            // Keep every character reachable even when TextKit cannot lay out a
+            // malformed trailing attachment or an unusual control character.
+            ranges.append(NSRange(location: offset, length: attributed.length - offset))
         }
         if ranges.isEmpty { ranges = [NSRange(location: 0, length: attributed.length)] }
         return ranges
@@ -68,6 +87,41 @@ enum Paginator {
 
 struct PageTextView: UIViewRepresentable {
     let attributed: NSAttributedString
+    let pageSize: CGSize
+
+    func makeUIView(context: Context) -> UITextView {
+        let container = NSTextContainer(size: pageSize)
+        container.lineFragmentPadding = 0
+        container.lineBreakMode = .byCharWrapping
+        container.maximumNumberOfLines = 0
+        let manager = NSLayoutManager()
+        manager.usesFontLeading = true
+        manager.addTextContainer(container)
+        let tv = UITextView(frame: .zero, textContainer: container)
+        tv.backgroundColor = .clear
+        tv.isEditable = false
+        tv.isSelectable = false
+        tv.isScrollEnabled = false
+        tv.isUserInteractionEnabled = false
+        tv.textContainerInset = .zero
+        tv.textContainer.widthTracksTextView = false
+        tv.textContainer.heightTracksTextView = false
+        tv.textContainer.size = pageSize
+        tv.textStorage.setAttributedString(attributed)
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        tv.textContainer.size = pageSize
+        tv.textStorage.setAttributedString(attributed)
+    }
+}
+
+// MARK: - 全文渲染（滚动模式用，不可滚动、高度自适应）
+
+struct FullTextReader: UIViewRepresentable {
+    let attributed: NSAttributedString
+    let width: CGFloat
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -86,28 +140,15 @@ struct PageTextView: UIViewRepresentable {
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.attributedText = attributed
     }
-}
 
-// MARK: - 全文渲染（滚动模式用，不可滚动、高度自适应）
-
-struct FullTextReader: UIViewRepresentable {
-    let attributed: NSAttributedString
-
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
-        tv.backgroundColor = .clear
-        tv.isEditable = false
-        tv.isSelectable = false
-        tv.isScrollEnabled = false
-        tv.isUserInteractionEnabled = false
-        tv.textContainerInset = .zero
-        tv.textContainer.lineFragmentPadding = 0
-        tv.textContainer.lineBreakMode = .byCharWrapping
-        return tv
-    }
-
-    func updateUIView(_ tv: UITextView, context: Context) {
-        tv.attributedText = attributed
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let fittingWidth = max(proposal.width ?? width, 1)
+        let bounds = attributed.boundingRect(
+            with: CGSize(width: fittingWidth, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading],
+            context: nil
+        )
+        return CGSize(width: fittingWidth, height: ceil(bounds.height))
     }
 }
 
@@ -211,33 +252,47 @@ let allFonts: [FontOption] = availableFonts()
 final class PageHostController: UIViewController {
     var index: Int = 0
     var pageSize: CGSize = .zero
-    let textView = UITextView()
+    private var textView: UITextView?
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        textView.backgroundColor = .clear
-        textView.isEditable = false
-        textView.isSelectable = false
-        textView.isScrollEnabled = false
-        textView.isUserInteractionEnabled = false
-        textView.textContainerInset = .zero
-        textView.textContainer.lineFragmentPadding = 0
-        textView.textContainer.lineBreakMode = .byCharWrapping
-        view.addSubview(textView)
+        if let textView, textView.superview == nil {
+            view.addSubview(textView)
+        }
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let w = pageSize.width > 0 ? pageSize.width : view.bounds.width
         let h = pageSize.height > 0 ? pageSize.height : view.bounds.height
-        textView.frame = CGRect(x: (view.bounds.width - w) / 2, y: (view.bounds.height - h) / 2, width: w, height: h)
+        textView?.frame = CGRect(x: (view.bounds.width - w) / 2, y: (view.bounds.height - h) / 2, width: w, height: h)
     }
 
     func configure(attributed: NSAttributedString, size: CGSize, background: UIColor, index: Int) {
         self.index = index
         self.pageSize = size
+        if textView == nil {
+            let container = NSTextContainer(size: size)
+            container.lineFragmentPadding = 0
+            container.lineBreakMode = .byCharWrapping
+            container.maximumNumberOfLines = 0
+            let manager = NSLayoutManager()
+            manager.usesFontLeading = true
+            manager.addTextContainer(container)
+            let tv = UITextView(frame: .zero, textContainer: container)
+            tv.backgroundColor = .clear
+            tv.isEditable = false
+            tv.isSelectable = false
+            tv.isScrollEnabled = false
+            tv.isUserInteractionEnabled = false
+            tv.textContainerInset = .zero
+            tv.textContainer.widthTracksTextView = false
+            tv.textContainer.heightTracksTextView = false
+            textView = tv
+        }
         view.backgroundColor = background
-        textView.attributedText = attributed
+        textView?.textContainer.size = size
+        textView?.textStorage.setAttributedString(attributed)
         view.setNeedsLayout()
     }
 }

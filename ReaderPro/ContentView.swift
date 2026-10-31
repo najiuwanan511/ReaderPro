@@ -393,6 +393,7 @@ struct SourceView: View {
     @State private var showImport = false
     @State private var importText = ""
     @State private var importError = ""
+    @State private var importStatus = ""
     @State private var selectedResult: SourceBook?
     @State private var detailChapters: [BookChapter] = []
     @State private var loadingDetail = false
@@ -400,6 +401,7 @@ struct SourceView: View {
     @State private var detailAlternatives: [SourceBook] = []
     @State private var detailAltIndex = 0
     @State private var detailIsComic = false
+    @State private var readingBook: LocalBook?
 
     var body: some View {
         NavigationStack {
@@ -443,6 +445,7 @@ struct SourceView: View {
                         Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。导入的书源默认全部启用。").font(.footnote).foregroundStyle(.secondary)
                         TextEditor(text: $importText).border(Color.gray.opacity(0.3))
                         if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
+                        if !importStatus.isEmpty { Text(importStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
                         Button("导入") { importSource() }
                         Spacer()
                     }.padding()
@@ -452,39 +455,68 @@ struct SourceView: View {
             }
             .sheet(item: $selectedResult) { r in
                 NavigationStack {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if !r.cover.isEmpty, let url = URL(string: r.cover) {
-                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                                .frame(width: 110, height: 150).cornerRadius(10).clipped()
-                        }
-                        Text(r.title).font(.title2).bold()
-                        if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
-                        if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
-                        if !r.intro.isEmpty { Text(r.intro).font(.body) }
-                        if detailAlternatives.count > 1 {
-                            Picker("换源", selection: $detailAltIndex) {
-                                ForEach(detailAlternatives.indices, id: \.self) { i in Text(detailAlternatives[i].sourceName.isEmpty ? "源 \(i + 1)" : detailAlternatives[i].sourceName).tag(i) }
-                            }.pickerStyle(.menu)
-                            .onChange(of: detailAltIndex) { _, v in
-                                if v < detailAlternatives.count { selectedResult = detailAlternatives[v]; loadDetail(detailAlternatives[v]) }
+                    List {
+                        Section {
+                            HStack(alignment: .top, spacing: 12) {
+                                if !r.cover.isEmpty, let url = URL(string: r.cover) {
+                                    AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
+                                        .frame(width: 90, height: 124).cornerRadius(8).clipped()
+                                }
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(r.title).font(.title3).bold()
+                                    if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
+                                    if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
+                                    if !r.intro.isEmpty { Text(r.intro).font(.footnote).lineLimit(5) }
+                                }
                             }
+                            if detailAlternatives.count > 1 {
+                                Picker("换源", selection: $detailAltIndex) {
+                                    ForEach(detailAlternatives.indices, id: \.self) { i in
+                                        Text(detailAlternatives[i].sourceName.isEmpty ? "源 \(i + 1)" : detailAlternatives[i].sourceName).tag(i)
+                                    }
+                                }.pickerStyle(.menu)
+                                .onChange(of: detailAltIndex) { _, v in
+                                    if v < detailAlternatives.count { selectedResult = detailAlternatives[v]; loadDetail(detailAlternatives[v]) }
+                                }
+                            }
+                            Button("加入书架") {
+                                var book = makeBook(from: r)
+                                book.chapters = detailChapters
+                                store.updateBook(book)
+                                selectedResult = nil
+                            }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
                         }
-                        if loadingDetail { ProgressView("正在拉取目录…") }
-                        else { Text("目录 \(detailChapters.count) 章").font(.caption).foregroundStyle(.secondary) }
-                        if !detailError.isEmpty { Text(detailError).font(.footnote).foregroundStyle(.red) }
-                        if detailChapters.isEmpty && !loadingDetail {
-                            Text("目录为空时：先点“换源”换一个同名结果再试——原书源的目录规则可能用了本版不支持的 JS/XPath，或该站拒绝了手机访问；换源后仍为空，把书名+书源名发我，我按那个源的真规则修。").font(.footnote).foregroundStyle(.secondary)
+                        Section {
+                            if loadingDetail {
+                                ProgressView("正在拉取目录…")
+                            } else if detailChapters.isEmpty {
+                                if !detailError.isEmpty { Text(detailError).font(.footnote).foregroundStyle(.red) }
+                                Text("目录为空：请换一个源，或检查这个源的目录规则。")
+                                    .font(.footnote).foregroundStyle(.secondary)
+                            } else {
+                                ForEach(Array(detailChapters.prefix(300).enumerated()), id: \.offset) { index, chapter in
+                                    Button {
+                                        openChapter(index, result: r)
+                                    } label: {
+                                        HStack(spacing: 10) {
+                                            Text(chapter.title).lineLimit(1)
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                    }
+                                }
+                            }
+                        } header: {
+                            Text(loadingDetail ? "目录" : "目录（\(detailChapters.count) 章，点击即可阅读）")
                         }
-                        Button("加入书架") {
-                            var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: detailIsComic ? "comic" : "web")
-                            book.chapters = detailChapters
-                            store.updateBook(book)
-                            selectedResult = nil
-                        }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
-                        List(detailChapters.prefix(100)) { c in Text(c.title).font(.caption) }
-                    }.padding()
+                    }
                     .navigationTitle("书籍详情")
                     .toolbar { Button("关闭") { selectedResult = nil } }
+                    .navigationDestination(item: $readingBook) { book in
+                        ReaderView(store: store, bookId: book.id)
+                    }
                 }
             }
         }
@@ -529,10 +561,28 @@ struct SourceView: View {
             }
         }
     }
+
+    func makeBook(from result: SourceBook) -> LocalBook {
+        LocalBook(title: result.title, author: result.author, coverUrl: result.cover,
+                  sourceName: result.sourceName, sourceUrl: result.sourceUrl,
+                  fileName: result.title + ".web", kind: detailIsComic ? "comic" : "web")
+    }
+
+    func openChapter(_ index: Int, result: SourceBook) {
+        guard detailChapters.indices.contains(index) else { return }
+        var book = makeBook(from: result)
+        book.chapters = detailChapters
+        book.chapterIndex = index
+        store.updateBook(book)
+        readingBook = book
+    }
+
     func importSource() {
         let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
+        importError = ""
+        importStatus = ""
         if trimmed.hasPrefix("http") {
-            importError = "正在拉取链接…"
+            importStatus = "正在拉取链接…"
             Task {
                 do {
                     let arr = try await importSourcesFromURL(trimmed)
@@ -540,7 +590,9 @@ struct SourceView: View {
                         if arr.isEmpty { importError = "这个链接里没有解析到书源：请确认它是返回 Legado 书源 JSON 的直链（GitHub blob 页已自动转 raw，仍失败就换 raw 链接）" }
                         else {
                             let enabled = arr.map { var x = $0; x.enabled = true; return x }
-                            store.sources.append(contentsOf: enabled); store.save(); showImport = false; importText = ""; importError = ""
+                            let merge = store.mergeSources(enabled)
+                            importText = ""
+                            importStatus = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
                         }
                     }
                 } catch {
@@ -554,8 +606,10 @@ struct SourceView: View {
             importError = "这个内容解析失败：请粘贴单个 Legado 书源 JSON、书源数组，或者一个订阅链接；不是 JSON 的文本、只有网址的页面、带 HTML 的页面都会被自动提取 JSON，仍失败就是内容本身不是书源"
         } else {
             let enabled = result.sources.map { var x = $0; x.enabled = true; return x }
-            store.sources.append(contentsOf: enabled); store.save(); showImport = false; importText = ""
-            if result.skipped > 0 { importError = "已导入 \(enabled.count) 个，跳过 \(result.skipped) 个格式不对的条目" }
+            let merge = store.mergeSources(enabled)
+            importText = ""
+            importStatus = "解析到 \(enabled.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+            if result.skipped > 0 { importStatus += "，跳过 \(result.skipped) 个格式不对的条目" }
         }
     }
 }

@@ -13,6 +13,7 @@ struct SourceManagementView: View {
     @State private var showPaste = false
     @State private var pasteText = ""
     @State private var pasteError = ""
+    @State private var pasteStatus = ""
     @State private var showNetwork = false
     @State private var networkURL = ""
     @State private var networkError = ""
@@ -118,10 +119,17 @@ struct SourceManagementView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     TextEditor(text: $pasteText).border(Color.gray.opacity(0.3))
                     if !pasteError.isEmpty { Text(pasteError).foregroundStyle(.red).font(.footnote) }
+                    if !pasteStatus.isEmpty { Text(pasteStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
                     Button("导入") {
+                        pasteError = ""; pasteStatus = ""
                         let result = importSourcesDetailed(pasteText)
                         if result.sources.isEmpty { pasteError = "解析失败：请确认是单个或数组 Legado 书源 JSON，或一个订阅链接" }
-                        else { store.sources.append(contentsOf: result.sources); store.save(); showPaste = false; pasteText = ""; if result.skipped > 0 { qrResult = "已导入 \(result.sources.count) 个，跳过 \(result.skipped) 个格式不对的条目" } }
+                        else {
+                            let merge = store.mergeSources(result.sources)
+                            pasteText = ""
+                            pasteStatus = "解析到 \(result.sources.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                            if result.skipped > 0 { pasteStatus += "，跳过 \(result.skipped) 个格式不对的条目" }
+                        }
                     }
                     Spacer()
                 }.padding().navigationTitle("粘贴导入").toolbar { Button("关闭") { showPaste = false } }
@@ -140,7 +148,11 @@ struct SourceManagementView: View {
                                 await MainActor.run {
                                     networkLoading = false
                                     if arr.isEmpty { networkError = "这个链接里没有解析到书源" }
-                                    else { store.sources.append(contentsOf: arr); store.save(); networkResult = "已导入 \(arr.count) 个书源，可继续粘贴下一个合集或点关闭"; networkURL = "" }
+                                    else {
+                                        let merge = store.mergeSources(arr)
+                                        networkResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                                        networkURL = ""
+                                    }
                                 }
                             } catch {
                                 await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }
@@ -243,7 +255,10 @@ struct SourceManagementView: View {
                 do {
                     let arr = try await importSourcesFromURL(trimmed)
                     await MainActor.run {
-                        if arr.isEmpty { qrError = "这个链接里没有解析到书源" } else { store.sources.append(contentsOf: arr); store.save(); qrResult = "已导入 \(arr.count) 个书源" }
+                        if arr.isEmpty { qrError = "这个链接里没有解析到书源" } else {
+                            let merge = store.mergeSources(arr)
+                            qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                        }
                     }
                 } catch {
                     await MainActor.run { qrError = "拉取失败：\(error.localizedDescription)" }
@@ -252,7 +267,10 @@ struct SourceManagementView: View {
         } else {
             let arr = importSourcesFromText(trimmed)
             if arr.isEmpty { qrError = "这个二维码不是书源 JSON 或链接" }
-            else { store.sources.append(contentsOf: arr); store.save(); qrResult = "已导入 \(arr.count) 个书源" }
+            else {
+                let merge = store.mergeSources(arr)
+                qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+            }
         }
     }
 }

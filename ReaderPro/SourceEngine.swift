@@ -211,6 +211,55 @@ func resolveUrl(_ raw: String, base: String) -> String {
 
 struct ImportResult { var sources: [LegadoSource]; var skipped: Int }
 
+private func sourceIdentityKey(_ source: LegadoSource) -> String {
+    let name = source.bookSourceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let url = source.bookSourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+        .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+    return "\(name)|\(url)"
+}
+
+private func uniqueSources(_ sources: [LegadoSource]) -> [LegadoSource] {
+    var seen = Set<String>()
+    return sources.filter { seen.insert(sourceIdentityKey($0)).inserted }
+}
+
+// Source packs are not consistent about their envelope. In the wild the array
+// can be under data/list/items, encoded as a JSON string, or nested several
+// levels deep. Walk the whole JSON value so one envelope cannot hide 980
+// otherwise valid sources.
+private func collectSourceDictionaries(_ value: Any, depth: Int = 0,
+                                       sources: inout [LegadoSource], skipped: inout Int) {
+    guard depth < 10 else { return }
+    if let dict = value as? [String: Any] {
+        let looksLikeSource = dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil
+        if looksLikeSource {
+            if let source = decodeOneSource(from: dict) {
+                sources.append(source)
+            } else {
+                skipped += 1
+            }
+            return
+        }
+        for nested in dict.values {
+            collectSourceDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped)
+        }
+        return
+    }
+    if let array = value as? [Any] {
+        for nested in array {
+            collectSourceDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped)
+        }
+        return
+    }
+    if let string = value as? String {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 2, (trimmed.hasPrefix("[") || trimmed.hasPrefix("{")),
+              let data = trimmed.data(using: .utf8),
+              let nested = try? JSONSerialization.jsonObject(with: data) else { return }
+        collectSourceDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped)
+    }
+}
+
 func extractJSONSubstring(_ text: String) -> String {
     var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if t.hasPrefix("\u{FEFF}") { t = String(t.dropFirst()) }
@@ -302,52 +351,44 @@ func scanEmbeddedSources(_ rawText: String) -> [LegadoSource] {
 
 func importSourcesDetailed(_ rawText: String) -> ImportResult {
     let text = extractJSONSubstring(unescapeHTMLJSON(rawText))
-    guard let data = text.data(using: .utf8),
-          let root = try? JSONSerialization.jsonObject(with: data) else {
-        // Last resort: scan for individual {...} objects (newline-separated sources, no array)
-        var sources: [LegadoSource] = []; var skipped = 0
-        var depth = 0; var start: String.Index? = nil
+    var sources: [LegadoSource] = []
+    var skipped = 0
+    if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+        collectSourceDictionaries(root, sources: &sources, skipped: &skipped)
+    } else {
+        // Last resort: scan concatenated JSON objects with string-aware brace
+        // matching. Braces inside JS/regex strings must not end an object.
+        var depth = 0; var start: String.Index?
+        var inString = false; var escaped = false
         for idx in text.indices {
             let ch = text[idx]
-            if ch == "{" { if depth == 0 { start = idx }; depth += 1 }
+            if inString {
+                if escaped { escaped = false }
+                else if ch == "\\" { escaped = true }
+                else if ch == "\"" { inString = false }
+                continue
+            }
+            if ch == "\"" { inString = true }
+            else if ch == "{" { if depth == 0 { start = idx }; depth += 1 }
             else if ch == "}" { depth -= 1; if depth == 0, let s = start {
                 let chunk = String(text[s...idx])
-                if let d = chunk.data(using: .utf8), let dict = try? JSONSerialization.jsonObject(with: d) as? [String: Any], let src = decodeOneSource(from: dict) { sources.append(src) } else { skipped += 1 }
+                if let data = chunk.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+                    collectSourceDictionaries(root, sources: &sources, skipped: &skipped)
+                } else { skipped += 1 }
                 start = nil
-            } }
+            }
         }
-        return ImportResult(sources: sources, skipped: skipped)
-    }
-    var dicts: [[String: Any]] = []
-    if let arr = root as? [Any] {
-        dicts = arr.compactMap { $0 as? [String: Any] }
-    } else if let obj = root as? [String: Any] {
-        for key in ["sources", "bookSources", "data", "list", "items", "results"] {
-            if let arr = obj[key] as? [Any] { dicts = arr.compactMap { $0 as? [String: Any] }; break }
-            if let single = obj[key] as? [String: Any], single["bookSourceName"] != nil || single["bookSourceUrl"] != nil { dicts = [single]; break }
-        }
-        if dicts.isEmpty && (obj["bookSourceName"] != nil || obj["bookSourceUrl"] != nil) { dicts = [obj] }
-    }
-    var sources: [LegadoSource] = []; var skipped = 0
-    for dict in dicts {
-        if let s = decodeOneSource(from: dict) { sources.append(s) } else { skipped += 1 }
     }
     if sources.isEmpty {
         // HTML detail page: the JSON is embedded in the page, not the whole page.
         let embedded = scanEmbeddedSources(rawText)
-        if !embedded.isEmpty { return ImportResult(sources: embedded.map { var x = $0; x.enabled = true; return x }, skipped: skipped) }
+        if !embedded.isEmpty { return ImportResult(sources: uniqueSources(embedded).map { var x = $0; x.enabled = true; return x }, skipped: skipped) }
     }
     // Legado enables imported sources by default: a JSON enabled=false must not
     // make 1000 imported sources invisible in search/discovery.
     // Dedupe by name+url: a pack that repeats the same source must not
     // inflate the count, and the count shown after import is the real count.
-    var seen = Set<String>(); var deduped: [LegadoSource] = []
-    for s in sources {
-        let k = s.bookSourceName + "|" + s.bookSourceUrl
-        if seen.contains(k) { continue }
-        seen.insert(k); deduped.append(s)
-    }
-    return ImportResult(sources: deduped.map { var x = $0; x.enabled = true; return x }, skipped: skipped)
+    return ImportResult(sources: uniqueSources(sources).map { var x = $0; x.enabled = true; return x }, skipped: skipped)
 }
 
 func importSourcesFromText(_ text: String) -> [LegadoSource] {
@@ -396,6 +437,34 @@ func yckceoJSONCandidates(_ urlString: String) -> [String] {
     return [replaced, alt]
 }
 
+private func collectSourcePackLinks(_ value: Any, baseURL: String,
+                                    links: inout [String], depth: Int = 0) {
+    guard depth < 8 else { return }
+    if let dict = value as? [String: Any] {
+        let isSource = dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil
+        if !isSource {
+            for key in ["url", "sourceUrl", "link", "src", "href"] {
+                guard let raw = dict[key] as? String, !raw.isEmpty else { continue }
+                let link = raw.hasPrefix("http") ? raw : resolveUrl(raw, base: baseURL)
+                if link.hasPrefix("http"), !links.contains(link) { links.append(link) }
+            }
+        }
+        for nested in dict.values {
+            collectSourcePackLinks(nested, baseURL: baseURL, links: &links, depth: depth + 1)
+        }
+    } else if let array = value as? [Any] {
+        for nested in array {
+            collectSourcePackLinks(nested, baseURL: baseURL, links: &links, depth: depth + 1)
+        }
+    } else if let string = value as? String {
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("[") || trimmed.hasPrefix("{"),
+              let data = trimmed.data(using: .utf8),
+              let nested = try? JSONSerialization.jsonObject(with: data) else { return }
+        collectSourcePackLinks(nested, baseURL: baseURL, links: &links, depth: depth + 1)
+    }
+}
+
 func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
     // Try the JSON API first for detail pages, then the original URL.
     var candidates: [String] = []
@@ -419,19 +488,19 @@ func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
     }
     let text = lastText
     // Subscription list: an array of {name, url} entries pointing at other source lists.
-    // Fix for "1000 sources imported, only ~18 show": the old code capped this
-    // at the first 20 links, so a link-pack of hundreds/thousands of sources
-    // silently became ~18-20. Fetch up to 300 linked lists, 20 at a time.
+    // Large packs must be expanded instead of treating the subscription index as
+    // if it were the source list itself.
     if let data = extractJSONSubstring(text).data(using: .utf8),
-       let arr = try? JSONSerialization.jsonObject(with: data) as? [Any] {
+       let root = try? JSONSerialization.jsonObject(with: data) {
         var links: [String] = []
-        for item in arr {
-            if let d = item as? [String: Any], let link = d["url"] as? String, link.hasPrefix("http"), !links.contains(link) { links.append(link) }
-        }
+        collectSourcePackLinks(root, baseURL: urlString, links: &links)
         var out: [LegadoSource] = []
         var idx = 0
-        while idx < links.count && idx < 300 {
-            let batch = Array(links[idx..<min(idx + 20, links.count, 300)])
+        // A source subscription may contain hundreds or thousands of linked
+        // JSON packs. Fetch every discovered link in bounded batches; the old
+        // 300-link cap silently dropped the tail of large subscriptions.
+        while idx < links.count && idx < 5000 {
+            let batch = Array(links[idx..<min(idx + 24, links.count, 5000)])
             idx += batch.count
             let batchSources = await withTaskGroup(of: [LegadoSource].self) { group in
                 for link in batch {
@@ -448,13 +517,7 @@ func importSourcesFromURL(_ urlString: String) async throws -> [LegadoSource] {
             }
             out.append(contentsOf: batchSources)
         }
-        // Dedupe by name+url so the same source from several links is not counted twice.
-        var seen = Set<String>(); var deduped: [LegadoSource] = []
-        for s in out {
-            let k = s.bookSourceName + "|" + s.bookSourceUrl
-            if seen.contains(k) { continue }
-            seen.insert(k); deduped.append(s)
-        }
+        let deduped = uniqueSources(out)
         if !deduped.isEmpty { return deduped }
     }
     return []

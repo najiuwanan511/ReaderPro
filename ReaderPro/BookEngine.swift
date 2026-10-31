@@ -449,6 +449,12 @@ func parseCbz(_ data: Data, fileName: String) -> (LocalBook, [String: Data])? {
 
 // MARK: - Store
 
+struct SourceMergeResult {
+    var added: Int = 0
+    var updated: Int = 0
+    var duplicates: Int = 0
+}
+
 class BookStore: ObservableObject {
     @Published var books: [LocalBook] = []
     @Published var bookmarks: [Bookmark] = []
@@ -568,6 +574,35 @@ class BookStore: ObservableObject {
         return out
     }
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
+
+    /// Merge an imported pack by source name + URL. Re-importing a pack updates
+    /// its rules instead of creating hundreds of duplicate rows.
+    @discardableResult
+    func mergeSources(_ incoming: [LegadoSource]) -> SourceMergeResult {
+        var result = SourceMergeResult()
+        var seen = Set<String>()
+        func key(_ source: LegadoSource) -> String {
+            let name = source.bookSourceName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let url = source.bookSourceUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+            return "\(name)|\(url)"
+        }
+        for source in incoming {
+            let k = key(source)
+            guard seen.insert(k).inserted else { result.duplicates += 1; continue }
+            if let index = sources.firstIndex(where: { key($0) == k }) {
+                var updated = source
+                updated.id = sources[index].id
+                sources[index] = updated
+                result.updated += 1
+            } else {
+                sources.append(source)
+                result.added += 1
+            }
+        }
+        save()
+        return result
+    }
 
     func sourceForBook(_ b: LocalBook) -> LegadoSource? {
         if !b.sourceUrl.isEmpty, let s = sources.first(where: { $0.bookSourceUrl == b.sourceUrl }) { return s }
