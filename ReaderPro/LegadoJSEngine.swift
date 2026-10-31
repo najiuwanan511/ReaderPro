@@ -322,6 +322,9 @@ final class LegadoJS {
         func string(_ value: JSValue?) -> String? {
             guard let value, !value.isNull, !value.isUndefined else { return nil }
             if value.isObject {
+                if let constructor = ctx.objectForKeyedSubscript("_JavaString"), value.isInstance(of: constructor) {
+                    return value.toString()
+                }
                 return ctx.objectForKeyedSubscript("JSON")?.invokeMethod("stringify", withArguments: [value])?.toString()
             }
             return value.toString()

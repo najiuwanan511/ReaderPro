@@ -2,6 +2,17 @@ import XCTest
 @testable import ReaderPro
 
 final class JavaCryptoTests: XCTestCase {
+    func testJavaStringContentIsReturnedAsTextAndListsRemainJSON() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let text = LegadoJS.run("new Packages.java.lang.String(java.strToBytes('首段\\n正文'))", input: "", baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
+            XCTAssertEqual(text, "首段\n正文")
+            let list = LegadoJS.run("[new Packages.java.lang.String('甲'),new Packages.java.lang.String('乙')]", input: "", baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
+            XCTAssertEqual(try JSONSerialization.jsonObject(with: Data(list.utf8)) as? [String], ["甲", "乙"])
+            try failures.check()
+        }
+    }
+
     func testJavaImporterAESDESHMACAndBinaryCodecs() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {
