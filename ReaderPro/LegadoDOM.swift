@@ -6,6 +6,29 @@ import SwiftSoup
 // language. In particular, nested lists, sibling CSS combinators and XPath
 // attributes must keep their real parent/child relationships.
 enum LegadoDOM {
+    private static func cssDocument(_ html: String) throws -> SwiftSoup.Document {
+        // Serialized rule results are fragments, including standalone table
+        // rows/cells. Parsing those as full HTML drops their tags. Restore the
+        // HTML parser's fragment context, then keep the original roots in body.
+        let firstTag = html.range(of: #"^\s*<(thead|tbody|tfoot|tr|td|th|colgroup|col|caption|option|optgroup)\b"#,
+                                  options: [.regularExpression, .caseInsensitive])
+        guard let firstTag else { return try SwiftSoup.parse(html) }
+        let tag = html[firstTag].trimmingCharacters(in: .whitespacesAndNewlines).dropFirst().lowercased()
+        let contextTag: String
+        switch tag {
+        case "tr": contextTag = "tbody"
+        case "td", "th": contextTag = "tr"
+        case "col": contextTag = "colgroup"
+        case "option", "optgroup": contextTag = "select"
+        default: contextTag = "table"
+        }
+        let context = SwiftSoup.Element(try SwiftSoup.Tag.valueOf(contextTag), "")
+        let nodes = try SwiftSoup.Parser.parseFragment(html, context, [])
+        let document = try SwiftSoup.parse("")
+        if let body = document.body() { for node in nodes { try body.appendChild(node) } }
+        return document
+    }
+
     static func element(_ node: XMLElement) -> HtmlEl {
         let full = node.toHTML ?? ""
         let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""
@@ -18,7 +41,7 @@ enum LegadoDOM {
         // SwiftSoup implements the same selector dialect and throws on invalid
         // selectors, so one imported rule cannot crash the entire source audit.
         do {
-            let document = try SwiftSoup.parse(html)
+            let document = try cssDocument(html)
             return try document.select(selector).array().map { node in
                 let full = try node.outerHtml()
                 let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""

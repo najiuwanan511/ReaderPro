@@ -345,6 +345,11 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(texts("p["), [])
         XCTAssertEqual(texts("p:nth-child(999999999999999999999999999999)"), [])
         XCTAssertEqual(LegadoDOM.css("<p title='😀'>中文</p>", "p[title='😀']").count, 1)
+        let row = #"<tr data-id="2"><td><a href="/book">书名</a></td><td>作者</td></tr>"#
+        XCTAssertEqual(applyRule(row, "td.1@text", base: base), ["作者"])
+        XCTAssertEqual(applyRule(row, "td.0@a@href", base: base), ["/book"])
+        XCTAssertEqual(LegadoDOM.css(row, "body > tr").count, 1)
+        XCTAssertEqual(applyRule("<td><a href='/chapter'>首章</a></td>", "a@text", base: base), ["首章"])
     }
 
     func testJSArraysLibrariesExceptionsAndCategories() async throws {
