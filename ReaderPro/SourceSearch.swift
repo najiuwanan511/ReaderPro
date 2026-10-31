@@ -10,7 +10,7 @@ struct SourceSearchUpdate: Sendable {
 
 // Refill a slot as soon as it finishes. A slow source must never hold back
 // results or prevent the next source from starting.
-func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = 16,
+func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = 16, timeout: Double = 25,
                         update: @escaping @Sendable (SourceSearchUpdate) async -> Void) async {
     let searchable = sources.filter { !$0.searchUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     await withTaskGroup(of: SourceSearchUpdate.self) { group in
@@ -18,7 +18,7 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
         func enqueue(_ source: LegadoSource) {
             group.addTask {
                 do {
-                    let books = try await withTimeout(25) { try await source.search(key: key) }
+                    let books = try await withTimeout(timeout) { try await source.search(key: key) }
                     return .init(sourceID: source.id, sourceName: source.bookSourceName, books: books, error: "")
                 } catch {
                     return .init(sourceID: source.id, sourceName: source.bookSourceName, books: [], error: sourceErrorMessage(error))

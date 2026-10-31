@@ -12,6 +12,7 @@ import WebKit
     private var startedPolling = false
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20) async throws -> SourcePage {
+        while active.count >= 4 { try await Task.sleep(nanoseconds: 50_000_000) }
         let loader = SourceWebLoader()
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()

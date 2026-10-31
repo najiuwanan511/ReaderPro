@@ -1,0 +1,37 @@
+import XCTest
+@testable import ReaderPro
+
+private actor PackSearchAudit {
+    var rows: [[String: String]] = []
+    func add(_ update: SourceSearchUpdate) {
+        rows.append(["id": update.sourceID, "name": update.sourceName,
+                     "books": String(update.books.count), "error": update.error])
+        if rows.count % 100 == 0 { print("USER_PACK_AUDIT completed=\(rows.count)") }
+    }
+}
+
+final class SourcePackAuditTests: XCTestCase {
+    func testSearchEverySourceInUserPackAndExportIndividualResults() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let sources = importSourcesDetailed(raw).sources
+        XCTAssertEqual(sources.count, 1466)
+        let audit = PackSearchAudit()
+        // Exercise every entry with the production engine. A failed remote
+        // request is evidence to report, not an assertion that a source is dead.
+        await streamSourceSearch(sources, key: "斗罗大陆", concurrency: 24, timeout: 18) { await audit.add($0) }
+        var rows = await audit.rows
+        for index in rows.indices {
+            rows[index]["url"] = sources.first(where: { $0.id == rows[index]["id"] })?.bookSourceUrl
+        }
+        let expected = sources.filter { !$0.searchUrl.isEmpty }.count
+        XCTAssertEqual(rows.count, expected, "Every configured search must finish or report a timeout")
+        let errors = rows.filter { !($0["error"] ?? "").isEmpty }.count
+        let matches = rows.filter { (Int($0["books"] ?? "0") ?? 0) > 0 }.count
+        let summary = "USER_PACK_AUDIT total=\(sources.count) searched=\(rows.count) matched=\(matches) errors=\(errors) noSearch=\(sources.count-expected)"
+        print(summary)
+        let data = try JSONSerialization.data(withJSONObject: ["summary": summary, "keyword": "斗罗大陆", "perSourceTimeoutSeconds": 18, "results": rows], options: [.prettyPrinted, .sortedKeys])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "1466-source-search-audit.json"; attachment.lifetime = .keepAlways; add(attachment)
+        try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("source-pack-search-audit.json"))
+    }
+}
