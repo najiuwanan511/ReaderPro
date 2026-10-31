@@ -289,6 +289,13 @@ final class LegadoJS {
                 }
             }
             ctx.evaluateScript(library)
+            if exception.contains("Cannot declare a let variable twice") {
+                let repaired = SourceScript.repairingParameterRedeclarations(library)
+                if repaired != library {
+                    exception = ""; ctx.exception = nil
+                    ctx.evaluateScript(repaired)
+                }
+            }
         }
         let ret = ctx.evaluateScript(script)
         if budget.terminated {

@@ -318,7 +318,7 @@ final class SourceEngineTests: XCTestCase {
     func testURLScriptsCanSetVariablesBeforeALiteralURL() throws {
         let raw = "<js>java.put('test17k','value')</js>\nhttps://h5.17k.com/ck/search/list?keyword={{key}}"
         XCTAssertEqual(LegadoSource.fillSearchTemplate(raw, key: "测试", page: 1, sourceUrl: base), "https://h5.17k.com/ck/search/list?keyword=%E6%B5%8B%E8%AF%95")
-        XCTAssertEqual(LegadoJS.variable("test17k"), "value")
+        XCTAssertEqual(LegadoJS.run("java.get('test17k')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "value")
         XCTAssertEqual(LegadoSource.fillSearchTemplate("/book/1<js>result+'/toc'</js>", key: "", page: 1, sourceUrl: base), "/book/1/toc")
         XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>'/book/2'</js>https://example.org@result/toc", key: "", page: 1, sourceUrl: base), "https://example.org/book/2/toc")
         let request = try SourceHTTP.request("/search", base: " \nhttps://example.org/books/   ")
@@ -349,6 +349,40 @@ final class SourceEngineTests: XCTestCase {
             LegadoJS.run("eval(source.loginUrl); login()", input: "", baseUrl: self.base, sourceKey: "", sourceUrl: restored.bookSourceUrl)
         }
         XCTAssertEqual(output, "ready")
+    }
+
+    func testRhinoParameterRedeclarationRepairPreservesOtherScopes() throws {
+        let library = #"""
+        function AESencrypt(text, key, iv) {
+            const { java } = this;
+            let key = "u0LRrbu$Enm84koA";
+            let iv = "$h$b3!iGzsYnnshj";
+            let cipher = java.createSymmetricCrypto("AES/CBC/PKCS7Padding", key, iv);
+            return cipher.encryptBase64(text);
+        }
+        function normal(key) {
+            { let key = 'nested'; if(key !== 'nested') throw Error('block scope'); }
+            for(let key of ['loop']) { if(key !== 'loop') throw Error('loop scope'); }
+            return key;
+        }
+        var literal = 'function fake(key) { let key = "must remain a string"; }';
+        var pattern = /function fake(key) { let key = "must remain a regex"; }/;
+        """#
+        let repaired = SourceScript.repairingParameterRedeclarations(library)
+        XCTAssertTrue(repaired.contains("var key = \"u0LRrbu$Enm84koA\""))
+        XCTAssertTrue(repaired.contains("var iv = \"$h$b3!iGzsYnnshj\""))
+        XCTAssertTrue(repaired.contains("{ let key = 'nested';"))
+        XCTAssertTrue(repaired.contains("for(let key of"))
+        XCTAssertTrue(repaired.contains("function fake(key) { let key = \"must remain a string\"; }"))
+        XCTAssertTrue(repaired.contains("/function fake(key) { let key = \"must remain a regex\"; }/"))
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let output = LegadoJSCtx.$library.withValue(library) {
+                LegadoJS.run(#"AESencrypt('正文','','') === java.createSymmetricCrypto('AES/CBC/PKCS7Padding','u0LRrbu$Enm84koA','$h$b3!iGzsYnnshj').encryptBase64('正文') && normal('outer') === 'outer'"#, input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            }
+            XCTAssertEqual(output, "true")
+            try failures.check()
+        }
     }
 
     func testAndroidCryptoUsesKnownAESAndDigestVectors() {

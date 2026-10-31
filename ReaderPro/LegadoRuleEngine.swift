@@ -927,6 +927,10 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         }
         return out
     }
+    // Templates also occur in the replacement pattern itself. Expand the
+    // complete non-JS rule before separating its outer replacement fields.
+    let templated = r.contains("{{")
+    if templated { r = applyRuleNoReplace(htmlOrJson, r, base: base).first ?? "" }
     var main = r; var replacePattern: String? = nil; var replaceWith = ""
     if let range = ruleReplacementStart(r) {
         main = String(r[..<range.lowerBound])
@@ -935,7 +939,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         replacePattern = fields.first
         replaceWith = fields.count > 1 ? fields[1] : ""
     }
-    let vals = main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base)
+    let vals = templated ? [main] : (main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base))
     if let pat = replacePattern, !pat.isEmpty {
         return vals.map { applyRegexReplace($0, pattern: pat, replacement: replaceWith) }
     }
