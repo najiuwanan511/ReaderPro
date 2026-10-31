@@ -19,6 +19,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.readerpro
         INFOPLIST_FILE: ReaderPro/Info.plist
         GENERATE_INFOPLIST_FILE: NO
+        CURRENT_PROJECT_VERSION: 1
+        READERPRO_GIT_SHA: development
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"

@@ -34,6 +34,7 @@ jobs:
           set -o pipefail
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
           echo "Testing on simulator $DEVICE"
+          echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcodebuild test \
             -project ReaderPro.xcodeproj \
             -scheme ReaderPro \
@@ -58,12 +59,15 @@ jobs:
       - name: Audit every configured search in the 1466-source user pack
         run: |
           set -o pipefail
-          DEVICE=$(xcrun simctl list devices booted -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
+          DEVICE=$READER_SIMULATOR_ID
           xcodebuild test \
             -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" \
             -parallel-testing-enabled NO \
             -only-testing:ReaderProTests/SourcePackAuditTests \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 1800 \
+            -maximum-test-execution-time-allowance 1800 \
             -resultBundlePath build/UserPackAudit.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-audit.log
 
@@ -74,7 +78,7 @@ jobs:
           if [ -d build/UserPackAudit.xcresult ]; then
             xcrun xcresulttool export attachments --path build/UserPackAudit.xcresult --output-path build/audit-attachments
           fi
-          CONTAINER=$(xcrun simctl get_app_container booted com.selfuse.readerpro data 2>/dev/null || true)
+          CONTAINER=$(xcrun simctl get_app_container "$READER_SIMULATOR_ID" com.selfuse.readerpro data 2>/dev/null || true)
           if [ -n "$CONTAINER" ] && [ -f "$CONTAINER/tmp/source-pack-search-audit.json" ]; then
             cp "$CONTAINER/tmp/source-pack-search-audit.json" build/source-pack-search-audit.json
           fi
@@ -114,6 +118,8 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath build/ReaderPro.xcarchive \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            READERPRO_GIT_SHA=${{ github.sha }} \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO
 
