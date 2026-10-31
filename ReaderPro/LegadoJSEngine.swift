@@ -95,7 +95,7 @@ final class LegadoJS {
         java.setObject(getString, forKeyedSubscript: "_getString" as NSString)
         java.setObject(getElements, forKeyedSubscript: "_getElements" as NSString)
         java.setObject(getContent, forKeyedSubscript: "_content" as NSString)
-        java.setObject(setContent, forKeyedSubscript: "setContent" as NSString)
+        java.setObject(setContent, forKeyedSubscript: "_setContent" as NSString)
         java.setObject(LegadoJS.urlDecodeBlock, forKeyedSubscript: "urlDecode" as NSString)
         java.setObject(LegadoJS.formatDateBlock, forKeyedSubscript: "formatDate" as NSString)
         java.setObject(LegadoJS.timeMillisBlock, forKeyedSubscript: "timeMillis" as NSString)
@@ -294,15 +294,39 @@ final class LegadoJS {
         return typeof value === 'object' ? JSON.stringify(value) : String(value);
     }
     function _array(items) {
-        items.toArray = function() { return this; };
-        items.size = function() { return this.length; };
-        items.get = function(i) { return this[i]; };
+        _methods(items, {
+            toArray:function(){return this;}, size:function(){return this.length;},
+            get:function(i){return this[i];}, isEmpty:function(){return this.length===0;}
+        });
         return items;
+    }
+    function _methods(object, methods) {
+        Object.keys(methods).forEach(function(name) {
+            Object.defineProperty(object, name, {value:methods[name], configurable:true, writable:true, enumerable:false});
+        });
+        return object;
     }
     java.getString = function(rule, content, isUrl) { return java._getString(String(rule), _text(content), !!isUrl); };
     java.getStringList = function(rule, content) { return _array(java._getElements(String(rule), _text(content))); };
-    java.getElements = java.getStringList;
-    java.getElement = function(rule, content) { return java.getElements(rule, content)[0] || ''; };
+    function _typed(value) {
+        if (typeof value !== 'string') return value;
+        if (/^\s*</.test(value)) return _element(value);
+        if (/^\s*[\[{]/.test(value)) { try { return JSON.parse(value); } catch(e) {} }
+        return value;
+    }
+    java.getElements = function(rule, content) {
+        var values=java._getElements(String(rule), _text(content)).map(_typed);
+        if(values.length===1 && Array.isArray(values[0])) values=values[0];
+        return _elements(values);
+    };
+    java.getElement = function(rule, content) {
+        var values=java.getElements(rule, content);
+        // Jsoup getElement returns Elements, while JSONPath returns the
+        // selected object/scalar (or a list for an indefinite path).
+        if(/^\s*[\[{]/.test(_text(content)) && String(rule).indexOf('*')<0) return values.length===1 ? values[0] : values;
+        return values;
+    };
+    java.setContent = function(value) { java._setContent(_text(value)); };
     function _response(data) {
         if (data.error) throw new Error(data.error);
         return {
@@ -340,7 +364,7 @@ final class LegadoJS {
     java.webView = function(html, url, script) { return java._webView(html == null ? '' : String(html), url == null ? baseUrl : String(url), script == null ? '' : String(script)); };
     function _element(html) {
         return {
-            outerHtml:function(){return html;}, toString:function(){return html;},
+            outerHtml:function(){return html;}, toString:function(){return html;}, toJSON:function(){return html;},
             text:function(){return java._textOnly(html);},
             html:function(){return html.replace(/^<[^>]+>/,'').replace(/<\/[^>]+>$/,'');},
             attr:function(name){return java._attr(html, String(name));},
@@ -352,13 +376,15 @@ final class LegadoJS {
         };
     }
     function _elements(htmls) {
-        var items=_array(htmls.map(_element));
-        items.first=function(){return this[0] || null;}; items.last=function(){return this[this.length-1] || null;};
-        items.text=function(){return this.map(function(e){return e.text();}).join(' ');};
-        items.attr=function(name){return this.length ? this[0].attr(name) : '';};
-        items.outerHtml=function(){return this.map(String).join('\n');};
-        items.select=function(selector){return _elements([].concat.apply([],this.map(function(e){return java._select(String(e),selector); })));};
-        return items;
+        var items=_array(htmls.map(_typed));
+        return _methods(items, {
+            first:function(){return this[0] || null;}, last:function(){return this[this.length-1] || null;},
+            text:function(){return this.map(function(e){return typeof e.text==='function' ? e.text() : String(e);}).join(' ');},
+            attr:function(name){return this.length && typeof this[0].attr==='function' ? this[0].attr(name) : '';},
+            html:function(){return this.map(function(e){return typeof e.html==='function' ? e.html() : String(e);}).join('\n');},
+            outerHtml:function(){return this.map(String).join('\n');}, toString:function(){return this.outerHtml();},
+            select:function(selector){return _elements([].concat.apply([],this.map(function(e){return java._select(String(e),selector); })));}
+        });
     }
     var org={jsoup:{Jsoup:{parse:function(html){return _element(String(html));}}}};
     cookie.getKey = function(url, key) {

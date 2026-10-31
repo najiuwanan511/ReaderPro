@@ -161,6 +161,29 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(remote, "远程分类")
     }
 
+    func testJavaRuleElementsPreserveDOMAndJSONTypes() throws {
+        let html = #"<ul><li data-id="2"><a href="/two">二</a></li><li data-id="1"><a href="/one">一</a></li></ul>"#
+        let result = LegadoJS.run(#"""
+        var nodes=java.getElements('ul@li');
+        var keys=[]; for(var i in nodes) keys.push(i);
+        if(keys.join(',')!=='0,1') throw Error('list helpers must not be enumerable');
+        if(nodes.isEmpty() || nodes.size()!==2 || nodes.get(0).attr('data-id')!=='2') throw Error('DOM list');
+        if(nodes.select('a').attr('href')!=='/two') throw Error('list select');
+        if(java.getElement('ul@li').text()!=='二 一') throw Error('getElement returns Elements');
+        java.setContent(nodes.get(1));
+        if(java.getString('a@text')!=='一') throw Error('setContent node');
+        java.setContent('{"items":[{"name":"甲"},{"name":"乙"}],"content":"正文"}');
+        if(java.getElements('$.items').get(1).name!=='乙') throw Error('JSON array objects');
+        if(java.getElement('$.content')!=='正文') throw Error('JSON scalar');
+        if(java.getStringList('$.items[*].name').join('|')!=='甲|乙') throw Error('string list');
+        nodes.sort(function(a,b){return a.attr('data-id')-b.attr('data-id');});
+        nodes;
+        """#, input: html, baseUrl: base, sourceKey: "", sourceUrl: base)
+        let serialized = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String])
+        XCTAssertEqual(serialized.count, 2)
+        XCTAssertTrue(serialized.first?.contains("/one") == true)
+    }
+
     func testRuleTemplatesRecursiveJSONAndStoredValues() {
         let json = #"{"data":[{"name":"甲","time":0},{"name":"乙"}]}"#
         XCTAssertEqual(applyRule(json, "$..name", base: base), ["甲", "乙"])
