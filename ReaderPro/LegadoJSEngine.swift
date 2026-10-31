@@ -37,7 +37,8 @@ final class LegadoJS {
         let script = js.trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
-        ctx.exceptionHandler = { _, _ in /* 吞异常，不崩溃 */ }
+        var exception = ""
+        ctx.exceptionHandler = { _, error in exception = error?.toString() ?? "未知 JavaScript 错误" }
 
         let storeKey = sourceUrl.isEmpty ? "global" : sourceUrl
 
@@ -71,6 +72,11 @@ final class LegadoJS {
         java.setObject(LegadoJS.md5_16Block, forKeyedSubscript: "md5Encode16" as NSString)
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "urlEncode" as NSString)
+        java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "encodeURI" as NSString)
+        let getString: @convention(block) (String) -> String = { rule in applyRuleFirst(input, rule, base: baseUrl) }
+        let getElements: @convention(block) (String) -> [String] = { rule in applyRule(input, rule, base: baseUrl) }
+        java.setObject(getString, forKeyedSubscript: "getString" as NSString)
+        java.setObject(getElements, forKeyedSubscript: "getElements" as NSString)
         java.setObject(LegadoJS.urlDecodeBlock, forKeyedSubscript: "urlDecode" as NSString)
         java.setObject(LegadoJS.formatDateBlock, forKeyedSubscript: "formatDate" as NSString)
         java.setObject(LegadoJS.timeMillisBlock, forKeyedSubscript: "timeMillis" as NSString)
@@ -117,17 +123,28 @@ final class LegadoJS {
         // 例如 exploreUrl 的 @js:...;JSON.stringify(s)，正文规则的 @js:...;result。
         // 之前把 evaluateScript 的返回值丢弃了、只读 result 变量，导致
         // JSON.stringify(...) 这种「靠返回值」的规则全部拿不到结果（发现/搜索/正文全空）。
-        let ret = ctx.evaluateScript(script)
-
-        // 1) 优先读 evaluateScript 返回值（JSON.stringify / return 约定）
-        if let r = ret, !r.isUndefined, !r.isNull {
-            if let s = r.toString(), !s.isEmpty, s != "undefined" {
-                return s
+        let library = LegadoJSCtx.library
+        if !library.isEmpty {
+            if library.hasPrefix("http://") || library.hasPrefix("https://") {
+                LegadoJSCtx.failures?.add("jsLib 是远程脚本地址，当前需要在书源中内嵌脚本内容")
+                return ""
             }
+            ctx.evaluateScript(library)
         }
-        // 2) 再读 result 变量（result = xxx 约定）
-        if let r = ctx.objectForKeyedSubscript("result"), let s = r.toString(), !s.isEmpty { return s }
-        return input
+        let ret = ctx.evaluateScript(script)
+        guard exception.isEmpty else {
+            LegadoJSCtx.failures?.add(exception)
+            return ""
+        }
+        func string(_ value: JSValue?) -> String? {
+            guard let value, !value.isNull, !value.isUndefined else { return nil }
+            if value.isObject {
+                return ctx.objectForKeyedSubscript("JSON")?.invokeMethod("stringify", withArguments: [value])?.toString()
+            }
+            return value.toString()
+        }
+        // An explicit empty string is a real result, never substitute input.
+        return string(ret) ?? string(ctx.objectForKeyedSubscript("result")) ?? ""
     }
 
     // MARK: 工具 block（静态，避免每次 run 重复创建）
@@ -174,7 +191,7 @@ final class LegadoJS {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
     static let urlEncodeBlock: @convention(block) (String) -> String = { s in
-        s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s
+        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
     }
     static let urlDecodeBlock: @convention(block) (String) -> String = { s in
         s.removingPercentEncoding ?? s

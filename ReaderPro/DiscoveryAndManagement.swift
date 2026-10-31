@@ -7,8 +7,6 @@ import UniformTypeIdentifiers
 
 // MARK: - Source management (Settings): enable/disable, delete, network import, QR import
 
-enum SourceCheckState: Equatable { case checking, ok, fail }
-
 struct SourceManagementView: View {
     @ObservedObject var store: BookStore
     @State private var showFileImport = false
@@ -33,11 +31,27 @@ struct SourceManagementView: View {
     @State private var editing = false
     @State private var selected: Set<String> = []
     @State private var checking = false
-    @State private var checkStates: [String: SourceCheckState] = [:]
+    @StateObject private var validation = SourceValidationStore()
+    @State private var checkingIDs: Set<String> = []
+    @State private var statusFilter: SourceStatusFilter = .all
+    @State private var checkKeyword = "斗罗大陆"
+    @State private var showCheckRules = false
+    @State private var selectedReport: SourceValidationReport?
+    @State private var checkTask: Task<Void, Never>?
     @State private var checkProgress = ""
 
+    var textFiltered: [LegadoSource] {
+        store.sources.filter { source in
+            let report = validation.report(for: source)
+            let text = [source.bookSourceName, source.bookSourceGroup, source.bookSourceUrl, report?.searchableText ?? ""].joined(separator: " ")
+            return filterText.isEmpty || text.localizedCaseInsensitiveContains(filterText)
+        }
+    }
     var filtered: [LegadoSource] {
-        store.sources.filter { filterText.isEmpty || $0.bookSourceName.localizedCaseInsensitiveContains(filterText) || $0.bookSourceGroup.localizedCaseInsensitiveContains(filterText) }
+        textFiltered.filter { statusFilter.matches(report: validation.report(for: $0), checking: checkingIDs.contains($0.id)) }
+    }
+    func statusCount(_ filter: SourceStatusFilter) -> Int {
+        textFiltered.filter { filter.matches(report: validation.report(for: $0), checking: checkingIDs.contains($0.id)) }.count
     }
 
     var body: some View {
@@ -51,7 +65,13 @@ struct SourceManagementView: View {
                             else if selected.count == filtered.count && !filtered.isEmpty { selected.removeAll() }
                             else { selected = Set(filtered.map { $0.id }) }
                         }
-                        toolbarBtn(checking ? "校验中…" : "校验全部", icon: "checkmark.seal") { check(editing ? selectedSources : filtered) }
+                        toolbarBtn(checking ? "取消校验" : "校验当前", icon: "checkmark.seal") {
+                            if checking { checkTask?.cancel() } else { check(editing ? selectedSources : filtered) }
+                        }
+                        toolbarBtn("校验规则", icon: "questionmark.circle") { showCheckRules = true }
+                        toolbarBtn("停用失败", icon: "xmark.circle", tint: .red) {
+                            setEnabled(filtered.filter { validation.report(for: $0)?.status == .failed }, false)
+                        }
                         toolbarBtn("全部启用", icon: "power") { setEnabled(editing ? selectedSources : filtered, true) }
                         toolbarBtn("全部停用", icon: "poweroff") { setEnabled(editing ? selectedSources : filtered, false) }
                         if editing {
@@ -76,13 +96,17 @@ struct SourceManagementView: View {
                             if !src.bookSourceGroup.isEmpty { Text("分组：\(src.bookSourceGroup)").font(.caption2).foregroundStyle(.secondary) }
                         }
                         Spacer()
-                        if let st = checkStates[src.id] {
-                            switch st {
-                            case .checking: ProgressView().scaleEffect(0.7)
-                            case .ok: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-                            case .fail: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
-                            }
-                        }
+                        if checkingIDs.contains(src.id) {
+                            VStack { ProgressView(); Text("校验中").font(.caption2) }
+                        } else if let report = validation.report(for: src) {
+                            Button { selectedReport = report } label: {
+                                VStack(alignment: .trailing, spacing: 3) {
+                                    Label(report.status.title, systemImage: report.status == .passed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                        .foregroundStyle(report.status == .passed ? Color.green : (report.status == .failed ? Color.red : Color.orange))
+                                    Text(report.steps.first(where: { !$0.passed })?.stage ?? "首章通过").foregroundStyle(.secondary)
+                                }.font(.caption2)
+                            }.buttonStyle(.plain).accessibilityLabel("查看\(src.bookSourceName)校验报告")
+                        } else { Text("未校验").font(.caption2).foregroundStyle(.secondary) }
                         if !editing {
                             Button { selectedSource = src } label: { Image(systemName: "info.circle").foregroundStyle(AppTheme.accent) }
                             Toggle("", isOn: Binding(get: { src.enabled }, set: { v in
@@ -94,7 +118,9 @@ struct SourceManagementView: View {
                     .onTapGesture { if editing { toggleSelect(src.id) } }
                 }
                 .onDelete { idx in
-                    for i in idx { if i < filtered.count { store.sources.removeAll { $0.id == filtered[i].id } } }
+                    let snapshot = filtered
+                    let ids = Set(idx.compactMap { snapshot.indices.contains($0) ? snapshot[$0].id : nil })
+                    store.sources.removeAll { ids.contains($0.id) }
                     store.save()
                 }
             } header: { Text("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") }
@@ -102,7 +128,62 @@ struct SourceManagementView: View {
         .navigationTitle("书源管理")
         .readerNavigationStyle()
         .listStyle(.plain)
-        .searchable(text: $filterText, prompt: "筛选书源 / 分组")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 8) {
+                HStack {
+                    Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                    TextField("搜索书源、分组、网址或失败原因", text: $filterText)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("sourceSearch")
+                    if !filterText.isEmpty { Button { filterText = "" } label: { Image(systemName: "xmark.circle.fill") } }
+                }.padding(10).background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 8))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack {
+                        ForEach(SourceStatusFilter.allCases, id: \.self) { filter in
+                            Button { statusFilter = filter } label: {
+                                Text("\(filter.rawValue) \(statusCount(filter))").font(.caption)
+                                    .padding(.horizontal, 10).padding(.vertical, 7)
+                                    .background(statusFilter == filter ? AppTheme.accent.opacity(0.18) : AppTheme.surfaceMuted, in: Capsule())
+                            }.buttonStyle(.plain).accessibilityIdentifier("sourceStatus-" + filter.rawValue)
+                        }
+                    }
+                }
+                if !validation.persistenceError.isEmpty { Text(validation.persistenceError).font(.caption).foregroundStyle(.red) }
+            }.padding(.horizontal, 16).padding(.vertical, 8).background(AppTheme.surface)
+        }
+        .sheet(isPresented: $showCheckRules) {
+            NavigationStack {
+                Form {
+                    Section("测试关键词") {
+                        TextField("书名或作者", text: $checkKeyword)
+                        Text("书源自带 checkKeyWord 时优先使用；没有结果记为未完整验证，不直接判死源。").font(.caption)
+                    }
+                    Section("成功标准") {
+                        Text("依次检查已配置的搜索、首个发现分类、一本样本书的详情、完整目录分页和首章正文。任何已配置环节报错均标记失败；没有样本记为未完整验证。")
+                        Text("漫画检查首章图片地址和首张图片响应。登录、验证码、WebView 或不兼容的 JavaScript 会显示具体失败阶段。")
+                    }
+                    Section("结果范围") {
+                        Text("成功仅代表校验时间的这些样本通过，不代表每个分类、每本书和所有章节均可用。结果保存在本机；规则或请求头变更后需重新校验。每批最多 4 个并发，支持取消。")
+                    }
+                }.navigationTitle("校验规则").toolbar { Button("完成") { showCheckRules = false } }
+            }
+        }
+        .sheet(item: $selectedReport) { report in
+            NavigationStack {
+                List {
+                    Section("\(report.status.title) · \(report.keyword)") {
+                        Text(report.checkedAt.formatted(date: .abbreviated, time: .standard))
+                        ForEach(Array(report.steps.enumerated()), id: \.offset) { _, step in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Label(step.stage, systemImage: step.passed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                                    .foregroundStyle(step.passed ? .green : .red)
+                                Text(step.detail).font(.footnote).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }.navigationTitle("校验报告").toolbar { Button("关闭") { selectedReport = nil } }
+            }
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(editing ? "完成" : "编辑") {
@@ -243,49 +324,35 @@ struct SourceManagementView: View {
         }
     }
 
-    // 校验书源可用性：探测 bookSourceUrl（为空则 searchUrl），能拿到内容即「可用」。
     func check(_ targets: [LegadoSource]) {
         guard !checking, !targets.isEmpty else { return }
         checking = true
-        let total = targets.count
-        for s in targets { checkStates[s.id] = .checking }
-        checkProgress = "开始校验 \(total) 个书源…"
-        Task {
+        let keyword = checkKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let key = keyword.isEmpty ? "斗罗大陆" : keyword
+        checkingIDs = Set(targets.map { $0.id })
+        checkProgress = "开始校验 \(targets.count) 个书源，包含目录与正文…"
+        checkTask = Task {
             var done = 0
-            let batch = 30
-            var idx = 0
-            while idx < targets.count {
-                let slice = Array(targets[idx..<min(idx + batch, targets.count)])
-                await withTaskGroup(of: (String, Bool).self) { group in
-                    for s in slice {
-                        group.addTask { (s.id, await Self.probe(s)) }
-                    }
-                    for await (id, ok) in group {
-                        await MainActor.run {
-                            checkStates[id] = ok ? .ok : .fail
-                            done += 1
-                            checkProgress = "已校验 \(done)/\(total)"
-                        }
+            var index = 0
+            while index < targets.count && !Task.isCancelled {
+                let slice = Array(targets[index..<min(index + 4, targets.count)])
+                await withTaskGroup(of: SourceValidationReport.self) { group in
+                    for source in slice { group.addTask { await SourceValidation.run(source, keyword: key) } }
+                    for await report in group {
+                        if !Task.isCancelled { validation.set(report) }
+                        checkingIDs.remove(report.id)
+                        done += 1
+                        checkProgress = "已校验 \(done)/\(targets.count) · 点击状态标签查看报告"
                     }
                 }
-                idx += batch
+                validation.save()
+                index += slice.count
             }
-            await MainActor.run {
-                let ok = targets.filter { checkStates[$0.id] == .ok }.count
-                checking = false
-                checkProgress = "校验完成：\(ok) 可用 / \(total - ok) 失效（点「全部停用」停掉失效的，或手动关闭红叉源）"
-            }
-        }
-    }
-
-    static func probe(_ s: LegadoSource) async -> Bool {
-        let url = s.bookSourceUrl.isEmpty ? s.searchUrl : s.bookSourceUrl
-        guard !url.isEmpty else { return false }
-        do {
-            let html = try await fetchText(urlString: url)
-            return !html.isEmpty
-        } catch {
-            return false
+            checkingIDs.removeAll()
+            checking = false
+            checkProgress = Task.isCancelled ? "已取消；完成的结果已保存" : "校验完成，可用状态筛选和搜索原因；「停用失败」仅影响失败项"
+            validation.save()
+            checkTask = nil
         }
     }
 

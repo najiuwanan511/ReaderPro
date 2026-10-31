@@ -164,7 +164,7 @@ struct SourceBookDetailView: View {
                                 Spacer()
                                 if existingBook?.chapterIndex == index { Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(AppTheme.accent) }
                             }.padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).accessibilityIdentifier("chapter-\(index)")
                         Divider().padding(.leading, 16)
                     }
                 }
@@ -219,14 +219,14 @@ struct SourceBookDetailView: View {
         let target = selected
         guard let source else { errorText = "书源已被删除，请重新搜索。"; loading = false; return }
         do {
-            let fetched = (try? await source.fetchBookInfo(book: target)) ?? target
+            let fetched = try await source.fetchBookInfo(book: target)
             let fetchedChapters = try await source.fetchChapters(book: fetched)
             guard !Task.isCancelled, selected.id == target.id else { return }
             info = fetched; chapters = fetchedChapters; loading = false
             if chapters.isEmpty { errorText = "该书源没有返回目录，请切换书源或重试。" }
         } catch {
             guard !Task.isCancelled, selected.id == target.id else { return }
-            loading = false; errorText = "目录加载失败：\(error.localizedDescription)"
+            loading = false; errorText = "目录加载失败：\(sourceErrorMessage(error))"
         }
     }
 
@@ -236,9 +236,8 @@ struct SourceBookDetailView: View {
             fileName: selected.title + ".web", kind: source?.isComic == true ? "comic" : "web")
         // Refresh the directory without discarding already downloaded content.
         let oldChapters = book.chapters
-        book.chapters = chapters.enumerated().map { index, chapter in
-            guard oldChapters.indices.contains(index), oldChapters[index].title == chapter.title else { return chapter }
-            let old = oldChapters[index]
+        book.chapters = chapters.map { chapter in
+            guard let url = chapter.url, let old = oldChapters.first(where: { $0.url == url }) else { return chapter }
             if !old.text.isEmpty && !old.text.hasPrefix("__URL__") { return old }
             if !old.imageUrls.isEmpty { return old }
             return chapter

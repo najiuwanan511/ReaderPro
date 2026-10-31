@@ -8,6 +8,7 @@ struct DiscoveryView: View {
 
     private var sources: [LegadoSource] {
         store.enabledSources.filter { source in
+            guard source.enabledExplore else { return false }
             guard !source.effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
             guard searchText.isEmpty || source.bookSourceName.localizedCaseInsensitiveContains(searchText)
                 || source.bookSourceGroup.localizedCaseInsensitiveContains(searchText) else { return false }
@@ -179,7 +180,7 @@ struct ExploreListView: View {
             results = books; loading = false
         } catch {
             guard !Task.isCancelled else { return }
-            loading = false; errorText = "加载失败：\(error.localizedDescription)"
+            loading = false; errorText = "加载失败：\(sourceErrorMessage(error))"
         }
     }
 }

@@ -1,6 +1,10 @@
 name: ReaderPro
 options:
   bundleIdPrefix: com.selfuse
+packages:
+  Kanna:
+    url: https://github.com/tid-kijyun/Kanna.git
+    exactVersion: 5.3.0
 targets:
   ReaderPro:
     type: application
@@ -8,6 +12,8 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: ReaderPro
+    dependencies:
+      - package: Kanna
     info:
       path: ReaderPro/Info.plist
     settings:
@@ -19,3 +25,35 @@ targets:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: "阅读Pro"
         INFOPLIST_KEY_CFBundleName: "阅读Pro"
+  ReaderProTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [ReaderProTests]
+    dependencies:
+      - target: ReaderPro
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+  ReaderProUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [ReaderProUITests]
+    dependencies:
+      - target: ReaderPro
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "5.0"
+schemes:
+  ReaderPro:
+    build:
+      targets:
+        ReaderPro: all
+    test:
+      gatherCoverageData: true
+      targets:
+        - ReaderProTests
+        - ReaderProUITests

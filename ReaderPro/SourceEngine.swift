@@ -17,6 +17,9 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var searchUrl: String = ""
     var discoverUrl: String = ""
     var exploreUrl: String = ""
+    var header: String = ""
+    var jsLib: String = ""
+    var enabledExplore: Bool = true
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
     var ruleToc: RuleSet = RuleSet()
@@ -43,8 +46,11 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         var lastChapter: String = ""
         var replaceRegex: String = ""
         var imageUrl: String = ""
+        var checkKeyWord: String = ""
+        var initRule: String = ""
         enum CodingKeys: String, CodingKey {
-            case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex, imageUrl
+            case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex, imageUrl, checkKeyWord
+            case initRule = "init"
         }
         init() {}
         init(from decoder: Decoder) throws {
@@ -55,6 +61,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
             chapterUrl = c.tolerantString(.chapterUrl); content = c.tolerantString(.content); nextContentUrl = c.tolerantString(.nextContentUrl)
             nextTocUrl = c.tolerantString(.nextTocUrl); kind = c.tolerantString(.kind); wordCount = c.tolerantString(.wordCount)
             lastChapter = c.tolerantString(.lastChapter); replaceRegex = c.tolerantString(.replaceRegex); imageUrl = c.tolerantString(.imageUrl)
+            checkKeyWord = c.tolerantString(.checkKeyWord); initRule = c.tolerantString(.initRule)
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
@@ -64,10 +71,11 @@ struct LegadoSource: Identifiable, Codable, Equatable {
             try c.encode(chapterUrl, forKey: .chapterUrl); try c.encode(content, forKey: .content); try c.encode(nextContentUrl, forKey: .nextContentUrl)
             try c.encode(nextTocUrl, forKey: .nextTocUrl); try c.encode(kind, forKey: .kind); try c.encode(wordCount, forKey: .wordCount)
             try c.encode(lastChapter, forKey: .lastChapter); try c.encode(replaceRegex, forKey: .replaceRegex); try c.encode(imageUrl, forKey: .imageUrl)
+            try c.encode(checkKeyWord, forKey: .checkKeyWord); try c.encode(initRule, forKey: .initRule)
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, enabledExplore
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -76,6 +84,10 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         bookSourceName = c.tolerantString(.bookSourceName); bookSourceUrl = c.tolerantString(.bookSourceUrl)
         bookSourceGroup = c.tolerantString(.bookSourceGroup); enabled = c.tolerantBool(.enabled, defaultValue: true)
         searchUrl = c.tolerantString(.searchUrl); discoverUrl = c.tolerantString(.discoverUrl); exploreUrl = c.tolerantString(.exploreUrl)
+        header = c.tolerantString(.header)
+        if header.isEmpty, let map = try? c.decode([String: String].self, forKey: .header),
+           let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
+        jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
         ruleBookInfo = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleBookInfo)) ?? RuleSet()
         ruleToc = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleToc)) ?? RuleSet()
@@ -89,6 +101,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(id, forKey: .id); try c.encode(bookSourceName, forKey: .bookSourceName); try c.encode(bookSourceUrl, forKey: .bookSourceUrl)
         try c.encode(bookSourceGroup, forKey: .bookSourceGroup); try c.encode(enabled, forKey: .enabled); try c.encode(searchUrl, forKey: .searchUrl)
         try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
+        try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
         try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
         try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
     }
@@ -121,31 +134,6 @@ extension KeyedDecodingContainer {
     }
 }
 
-// MARK: - 全局网络会话（关键：接受所有 TLS 证书）
-// 书源网站大量是 HTTP 或「证书过期/自签名/证书链不完整」的 HTTPS。
-// iOS 默认 URLSession 会直接拒绝这两种（ATS 拦 HTTP，TLS 校验拦坏证书），
-// 报错就是截图里的 "An SSL error has occurred..."。NSAllowsArbitraryLoads
-// 只能放行 HTTP，放行不了坏证书的 HTTPS；必须自定义 delegate 接受所有 serverTrust。
-final class InsecureURLSessionDelegate: NSObject, URLSessionDelegate {
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-           let trust = challenge.protectionSpace.serverTrust {
-            completionHandler(.useCredential, URLCredential(trust: trust))
-        } else {
-            completionHandler(.performDefaultHandling, nil)
-        }
-    }
-}
-
-let insecureSession: URLSession = {
-    let cfg = URLSessionConfiguration.ephemeral
-    cfg.timeoutIntervalForRequest = 25
-    cfg.timeoutIntervalForResource = 30
-    cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
-    return URLSession(configuration: cfg, delegate: InsecureURLSessionDelegate(), delegateQueue: nil)
-}()
-
 let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0"
 
 // 给任意异步操作加硬超时：超时抛错并取消。用于搜索/发现，避免单个失效源把整批卡死几十秒。
@@ -163,48 +151,30 @@ func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () as
 }
 
 func fetchText(urlString: String) async throws -> String {
-    guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 25)
-    req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
-    req.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
-    do {
-        let (data, resp) = try await insecureSession.data(for: req)
-        if let http = resp as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
-        return decodeTextData(data)
-    } catch {
-        // 降级重试：https 换 http 或 http 换 https（某些站只开其中一个）
-        var alt = ""
-        if urlString.hasPrefix("https://") { alt = "http://" + urlString.dropFirst("https://".count) }
-        else if urlString.hasPrefix("http://") { alt = "https://" + urlString.dropFirst("http://".count) }
-        if !alt.isEmpty, let altURL = URL(string: alt) {
-            var req2 = URLRequest(url: altURL, timeoutInterval: 25)
-            req2.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
-            req2.setValue("https://www.yckceo.com/", forHTTPHeaderField: "Referer")
-            let (data2, resp2) = try await insecureSession.data(for: req2)
-            if let http = resp2 as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
-            return decodeTextData(data2)
-        }
-        throw error
-    }
+    let request = try SourceHTTP.request(urlString, base: urlString)
+    return try await SourceHTTP.load(request, stage: "网络请求").text
 }
 
 func fetchText(urlString: String, method: String, body: String) async throws -> String {
-    guard let url = URL(string: urlString) else { throw NSError(domain: "url", code: 1) }
-    var req = URLRequest(url: url, timeoutInterval: 25)
-    req.httpMethod = method
-    req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
-    req.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
-    req.httpBody = body.data(using: .utf8)
-    let (data, resp) = try await insecureSession.data(for: req)
-    if let http = resp as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
-    return decodeTextData(data)
+    var request = try SourceHTTP.request(urlString, base: urlString)
+    request.httpMethod = method
+    request.httpBody = body.data(using: .utf8)
+    request.setValue("application/x-www-form-urlencoded; charset=UTF-8", forHTTPHeaderField: "Content-Type")
+    return try await SourceHTTP.load(request, stage: "网络请求").text
 }
 
 func resolveUrl(_ raw: String, base: String) -> String {
-    if raw.hasPrefix("http") { return raw }
-    if raw.hasPrefix("//") { return "https:" + raw }
-    guard let baseURL = URL(string: base), let u = URL(string: raw, relativeTo: baseURL) else { return raw }
-    return u.absoluteString
+    let parsed = SourceHTTP.options(raw)
+    if !parsed.options.isEmpty, let data = try? JSONSerialization.data(withJSONObject: parsed.options, options: .sortedKeys), let suffix = String(data: data, encoding: .utf8) {
+        let address = resolveUrl(parsed.url, base: SourceHTTP.options(base).url)
+        return address.isEmpty ? "" : address + "," + suffix
+    }
+    let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "&amp;", with: "&")
+    guard !value.isEmpty, !value.hasPrefix("javascript:"), value != "#" else { return "" }
+    if value.hasPrefix("//") { return (URL(string: base)?.scheme ?? "https") + ":" + value }
+    guard let baseURL = URL(string: base), let url = URL(string: value, relativeTo: baseURL)?.absoluteURL else { return value }
+    return url.absoluteString
 }
 
 // NOTE: rule engine, search, chapters, content and explore live in LegadoRuleEngine.swift
@@ -350,7 +320,10 @@ func scanEmbeddedSources(_ rawText: String) -> [LegadoSource] {
 }
 
 func importSourcesDetailed(_ rawText: String) -> ImportResult {
-    let text = extractJSONSubstring(unescapeHTMLJSON(rawText))
+    // Decode valid JSON first: unescaping &quot; inside rule strings corrupts JSON.
+    let direct = extractJSONSubstring(rawText)
+    let directIsJSON = direct.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } != nil
+    let text = directIsJSON ? direct : extractJSONSubstring(unescapeHTMLJSON(rawText))
     var sources: [LegadoSource] = []
     var skipped = 0
     if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
@@ -598,7 +571,10 @@ struct RssSource: Identifiable, Codable, Equatable {
 struct RssImportResult { var sources: [RssSource]; var skipped: Int }
 
 func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
-    let text = extractJSONSubstring(unescapeHTMLJSON(rawText))
+    // Decode valid JSON first: unescaping &quot; inside rule strings corrupts JSON.
+    let direct = extractJSONSubstring(rawText)
+    let directIsJSON = direct.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } != nil
+    let text = directIsJSON ? direct : extractJSONSubstring(unescapeHTMLJSON(rawText))
     guard let data = text.data(using: .utf8),
           let root = try? JSONSerialization.jsonObject(with: data) else {
         return RssImportResult(sources: [], skipped: 0)

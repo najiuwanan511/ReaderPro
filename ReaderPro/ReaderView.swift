@@ -436,14 +436,14 @@ struct ReaderView: View {
                 await MainActor.run {
                     guard chapterIndex == idx else { loading = false; return }
                     if var nb = store.books.first(where: { $0.id == bookId }) {
-                        nb.chapters[chapterIndex].text = content.isEmpty ? "（本章没有正文）" : content
+                        nb.chapters[chapterIndex].text = content
                         store.updateBook(nb)
                         loading = false
                         rebuild(size: lastSize, keepOffset: 0)
                     }
                 }
             } catch {
-                await MainActor.run { errorText = error.localizedDescription; loading = false }
+                await MainActor.run { errorText = sourceErrorMessage(error); loading = false }
             }
         }
     }
@@ -561,7 +561,7 @@ struct ReaderView: View {
                     jumpToken += 1
                 }
             } catch {
-                await MainActor.run { errorText = "换源失败：\(error.localizedDescription)" }
+                await MainActor.run { errorText = "换源失败：\(sourceErrorMessage(error))" }
             }
         }
     }

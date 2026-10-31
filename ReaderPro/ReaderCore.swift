@@ -41,19 +41,19 @@ func readerTheme(at index: Int) -> ReaderTheme {
 
 enum Paginator {
     static func paginate(_ attributed: NSAttributedString, pageSize: CGSize) -> [NSRange] {
-        guard attributed.length > 0, pageSize.width > 0, pageSize.height > 0 else {
-            return [NSRange(location: 0, length: attributed.length)]
-        }
-        let storage = NSTextStorage(attributedString: attributed)
-        let layoutManager = NSLayoutManager()
-        // Keep this explicitly on TextKit 1. UITextView can otherwise choose
-        // TextKit 2 on newer iOS versions, whose line breaking metrics differ
-        // enough to make the calculated range overflow when rendered.
-        layoutManager.usesFontLeading = true
-        storage.addLayoutManager(layoutManager)
+        guard attributed.length > 0 else { return [NSRange(location: 0, length: 0)] }
+        guard pageSize.width > 0, pageSize.height > 0 else { return [] }
         var ranges: [NSRange] = []
         var offset = 0
         while offset < attributed.length {
+            // Rendered pages are standalone substrings. Lay out each remaining
+            // substring the same way: paragraph indents/spacing at a page break
+            // otherwise differ from a multi-container continuation and overflow.
+            let rest = attributed.attributedSubstring(from: NSRange(location: offset, length: attributed.length - offset))
+            let storage = NSTextStorage(attributedString: rest)
+            let layoutManager = NSLayoutManager()
+            layoutManager.usesFontLeading = true
+            storage.addLayoutManager(layoutManager)
             let container = NSTextContainer(size: pageSize)
             container.lineFragmentPadding = 0
             container.lineBreakMode = .byCharWrapping
@@ -62,23 +62,14 @@ enum Paginator {
             layoutManager.ensureLayout(for: container)
             let glyphRange = layoutManager.glyphRange(for: container)
             let charRange = layoutManager.characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil)
-            if charRange.length == 0 || charRange.location == NSNotFound { break }
-
-            // A container must consume the next character range. Guarding this
-            // invariant prevents an iOS layout edge case from repeating a page.
-            let start = max(offset, charRange.location)
-            let end = min(attributed.length, NSMaxRange(charRange))
-            guard end > start else { break }
-            let pageRange = NSRange(location: start, length: end - start)
+            // A viewport smaller than one glyph cannot display a page. Never
+            // put all remaining text into a single overflowing fallback page.
+            guard charRange.location == 0, charRange.length > 0 else { return [] }
+            let end = min(attributed.length, offset + NSMaxRange(charRange))
+            let pageRange = NSRange(location: offset, length: end - offset)
             ranges.append(pageRange)
             offset = end
         }
-        if offset < attributed.length {
-            // Keep every character reachable even when TextKit cannot lay out a
-            // malformed trailing attachment or an unusual control character.
-            ranges.append(NSRange(location: offset, length: attributed.length - offset))
-        }
-        if ranges.isEmpty { ranges = [NSRange(location: 0, length: attributed.length)] }
         return ranges
     }
 }
@@ -108,12 +99,16 @@ struct PageTextView: UIViewRepresentable {
         tv.textContainer.heightTracksTextView = false
         tv.textContainer.size = pageSize
         tv.textStorage.setAttributedString(attributed)
+        tv.isAccessibilityElement = true
+        tv.accessibilityIdentifier = "readerPage"
+        tv.accessibilityLabel = attributed.string
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.textContainer.size = pageSize
         tv.textStorage.setAttributedString(attributed)
+        tv.accessibilityLabel = attributed.string
     }
 }
 
@@ -342,6 +337,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         }
 
         func update(_ vc: UIPageViewController, parent: CurlPageController) {
+            self.parent = parent
             let changed = lastPages != parent.pages
             lastPages = parent.pages
             vc.view.backgroundColor = parent.background

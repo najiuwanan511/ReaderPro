@@ -11,10 +11,20 @@ struct ReaderProApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            rootView
                 .preferredColorScheme(scheme)
                 .environmentObject(network)
         }
+    }
+
+    @ViewBuilder private var rootView: some View {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--source-ui-fixture") {
+            SourceFixtureRoot()
+        } else { ContentView() }
+        #else
+        ContentView()
+        #endif
     }
 
     private var scheme: ColorScheme? {

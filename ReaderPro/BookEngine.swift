@@ -9,21 +9,23 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
     var title: String
     var text: String
     var imageUrls: [String] = []
-    init(id: String = UUID().uuidString, title: String, text: String, imageUrls: [String] = []) {
-        self.id = id; self.title = title; self.text = text; self.imageUrls = imageUrls
+    var url: String? = nil
+    init(id: String = UUID().uuidString, title: String, text: String, imageUrls: [String] = [], url: String? = nil) {
+        self.id = id; self.title = title; self.text = text; self.imageUrls = imageUrls; self.url = url
     }
     var isComic: Bool { !imageUrls.isEmpty }
-    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls }
+    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls, url }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         title = (try? c.decode(String.self, forKey: .title)) ?? ""
         text = (try? c.decode(String.self, forKey: .text)) ?? ""
         imageUrls = (try? c.decode([String].self, forKey: .imageUrls)) ?? []
+        url = (try? c.decode(String.self, forKey: .url)) ?? (text.hasPrefix("__URL__") ? String(text.dropFirst(7)) : nil)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
-        try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(text, forKey: .text); try c.encode(imageUrls, forKey: .imageUrls)
+        try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(text, forKey: .text); try c.encode(imageUrls, forKey: .imageUrls); try c.encodeIfPresent(url, forKey: .url)
     }
 }
 
@@ -138,6 +140,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
 }
 
 struct SourceBook: Identifiable, Codable, Equatable, Hashable {
+    var tocUrl: String? = nil
     var id: String = UUID().uuidString
     var title: String
     var author: String = ""
@@ -587,15 +590,18 @@ class BookStore: ObservableObject {
                 .trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
             return "\(name)|\(url)"
         }
+        var indices: [String: Int] = [:]
+        for (index, source) in sources.enumerated() { indices[key(source)] = index }
         for source in incoming {
             let k = key(source)
             guard seen.insert(k).inserted else { result.duplicates += 1; continue }
-            if let index = sources.firstIndex(where: { key($0) == k }) {
+            if let index = indices[k] {
                 var updated = source
                 updated.id = sources[index].id
                 sources[index] = updated
                 result.updated += 1
             } else {
+                indices[k] = sources.count
                 sources.append(source)
                 result.added += 1
             }
@@ -605,6 +611,7 @@ class BookStore: ObservableObject {
     }
 
     func sourceForBook(_ b: LocalBook) -> LegadoSource? {
+        if let exact = sources.first(where: { $0.bookSourceUrl == b.sourceUrl && $0.bookSourceName == b.sourceName }) { return exact }
         if !b.sourceUrl.isEmpty, let s = sources.first(where: { $0.bookSourceUrl == b.sourceUrl }) { return s }
         if !b.sourceName.isEmpty, let s = sources.first(where: { $0.bookSourceName == b.sourceName }) { return s }
         return nil

@@ -245,7 +245,7 @@ struct MangaView: View {
             } catch {
                 await MainActor.run {
                     loadingChapter = false
-                    loadError = "拉取失败：\(error.localizedDescription)"
+                    loadError = "拉取失败：\(sourceErrorMessage(error))"
                 }
             }
         }
@@ -279,7 +279,7 @@ struct MangaView: View {
                 let t = try await ocrImage(ui)
                 await MainActor.run { ocrText = t.isEmpty ? "（本页没有识别到文字）" : t; ocrRunning = false; showOcr = true }
             } catch {
-                await MainActor.run { ocrText = "识别失败：\(error.localizedDescription)"; ocrRunning = false; showOcr = true }
+                await MainActor.run { ocrText = "识别失败：\(sourceErrorMessage(error))"; ocrRunning = false; showOcr = true }
             }
         }
     }

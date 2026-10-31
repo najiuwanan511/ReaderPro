@@ -7,6 +7,8 @@ enum LegadoJSCtx {
     @TaskLocal static var sourceUrl: String = ""
     @TaskLocal static var key: String = ""
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
+    @TaskLocal static var library = ""
+    @TaskLocal static var failures: RuleFailures? = nil
 }
 
 // MARK: - Legado rule engine (subset, CSS/XPath/JSON/regex + JS via JavaScriptCore)
@@ -17,7 +19,7 @@ enum LegadoJSCtx {
 // @css:, @json:/$., :regex, ##replace, && join, || first-non-empty,
 // indices .0/.1/.-1, chained @text/@href/@src/@html/@textNodes and
 // @attr(...). @js:/<js> 规则由 LegadoJSEngine.swift（JavaScriptCore）执行；
-// @xpath:// 暂不支持（返回空，不崩溃）。
+// @xpath:// 使用 libxml2 DOM 解析。
 
 struct HtmlEl {
     var open: String
@@ -330,25 +332,33 @@ func parseSelectorToken(_ token: String) -> Sel {
     return Sel(tag: tag, classes: classes, idVal: idVal, attrName: attrName, attrOp: attrOp, attrVal: attrVal, index: index, nthA: nthA, nthB: nthB, nthLast: nthLast, excludeIndex: excludeIndex)
 }
 
-func findElementsSel(_ html: String, _ sel: Sel) -> [HtmlEl] {
-    filterNth(findElements(html, tag: sel.tag, classes: sel.classes, idVal: sel.idVal, attrName: sel.attrName, attrOp: sel.attrOp, attrVal: sel.attrVal), sel: sel)
+func findElementsSel(_ html: String, _ sel: Sel, token: String? = nil) -> [HtmlEl] {
+    var css = sel.tag ?? "*"
+    for name in sel.classes { css += "." + name }
+    if let id = sel.idVal { css += "#" + id }
+    if let attribute = sel.attrName {
+        css += "[" + attribute
+        if let op = sel.attrOp, let value = sel.attrVal { css += op + "\"" + value + "\"" }
+        css += "]"
+    }
+    if let a = sel.nthA, let b = sel.nthB {
+        css += ":" + (sel.nthLast ? "nth-last-child" : "nth-child") + "(\(a)n+\(b))"
+    }
+    if var raw = token, !raw.hasPrefix("class."), !raw.hasPrefix("tag."), !raw.hasPrefix("id.") {
+        if let bang = raw.lastIndex(of: "!"), Int(raw[raw.index(after: bang)...]) != nil { raw = String(raw[..<bang]) }
+        if let dot = raw.lastIndex(of: "."), Int(raw[raw.index(after: dot)...]) != nil { raw = String(raw[..<dot]) }
+        css = raw
+    }
+    var elements = LegadoDOM.css(html, css)
+    if let excluded = sel.excludeIndex {
+        let index = excluded < 0 ? elements.count + excluded : excluded
+        if elements.indices.contains(index) { elements.remove(at: index) }
+    }
+    return elements
 }
 
 func cssElements(_ html: String, _ selector: String) -> [HtmlEl] {
-    var els: [HtmlEl] = [HtmlEl(open: "", inner: html, full: html)]
-    for seg in splitCssSelector(selector) {
-        let parsed = parseSelectorToken(seg)
-        var found: [HtmlEl] = []
-        for el in els {
-            if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
-            let searchIn = el.open.isEmpty ? el.full : el.inner
-            found.append(contentsOf: findElementsSel(searchIn, parsed))
-        }
-        els = found
-        if let idx = parsed.index { els = pickIndex(els, idx) }
-        if els.isEmpty { break }
-    }
-    return els
+    LegadoDOM.css(html, selector)
 }
 
 func pickIndex(_ els: [HtmlEl], _ idx: Int) -> [HtmlEl] {
@@ -381,9 +391,9 @@ func stripText(_ html: String, preserveNewlines: Bool) -> String {
 func extractFromElement(_ el: HtmlEl, _ ext: String) -> String {
     switch ext {
     case "text": return stripText(el.inner, preserveNewlines: false)
-    case "textNodes": return stripText(el.inner, preserveNewlines: true)
+    case "textNodes": return LegadoDOM.ownText(el.full)
     case "html": return el.inner
-    case "ownText": return stripText(el.inner, preserveNewlines: false)
+    case "ownText": return LegadoDOM.ownText(el.full).replacingOccurrences(of: "\n", with: " ")
     case "all": return el.full
     case "allText": return stripText(el.inner, preserveNewlines: false)
     default:
@@ -452,16 +462,6 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
             els = pickIndex(els, idx); prevWasSelector = false; continue
         }
         let parsed = parseSelectorToken(token)
-        // Qualifier: class.xxx / id.xxx after a selector filters the current elements
-        if (token.hasPrefix("class.") || token.hasPrefix("id.")) && prevWasSelector {
-            els = els.filter { el in
-                if token.hasPrefix("class.") { return parsed.classes.allSatisfy { classTokens(el.open).contains($0) } }
-                return htmlAttrs(el.open)["id"] == parsed.idVal
-            }
-            if let idx = parsed.index { els = pickIndex(els, idx) }
-            prevWasSelector = true
-            continue
-        }
         if token.hasPrefix("text.") {
             let needle = String(token.dropFirst(5))
             var found: [HtmlEl] = []
@@ -479,7 +479,7 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
         // CSS-style segment with spaces/child combinators, e.g. "#info p:nth-of-type(1) a"
         // or ".s2 a": the old single-token parser treated the whole string as one
         // tag and matched nothing, which broke most yckceo/1325 rules.
-        if token.contains(" ") || token.contains(">") {
+        if (token.contains(" ") || token.contains(">") || token.contains("+") || token.contains("~")) && !token.hasPrefix("class.") {
             for el in els {
                 let searchIn = el.open.isEmpty ? el.full : el.inner
                 found.append(contentsOf: cssElements(searchIn, token))
@@ -489,9 +489,9 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
             }
         } else {
             for el in els {
-                if !el.open.isEmpty && matchesSelf(el, parsed: parsed) { found.append(el) }
+
                 let searchIn = el.open.isEmpty ? el.full : el.inner
-                found.append(contentsOf: findElementsSel(searchIn, parsed))
+                found.append(contentsOf: findElementsSel(searchIn, parsed, token: token))
             }
         }
         els = found
@@ -627,6 +627,9 @@ func jsonValueToString(_ v: Any) -> String {
     if let s = v as? String { return s }
     if let n = v as? NSNumber { return n.stringValue }
     if let b = v as? Bool { return b ? "true" : "false" }
+    if JSONSerialization.isValidJSONObject(v), let data = try? JSONSerialization.data(withJSONObject: v) {
+        return String(data: data, encoding: .utf8) ?? ""
+    }
     return ""
 }
 
@@ -687,8 +690,8 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
     var pat = replaceRegex.trimmingCharacters(in: .whitespaces)
     if pat.hasPrefix("##") { pat = String(pat.dropFirst(2)) }
     if pat.isEmpty { return text }
-    if let dbl = pat.range(of: "||") {
-        return applyRegexReplace(text, pattern: String(pat[..<dbl.lowerBound]), replacement: String(pat[dbl.upperBound...]))
+    if let split = pat.range(of: "##") {
+        return applyRegexReplace(text, pattern: String(pat[..<split.lowerBound]), replacement: String(pat[split.upperBound...]))
     }
     return applyRegexReplace(text, pattern: pat, replacement: "")
 }
@@ -696,6 +699,8 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
 // MARK: - Dispatcher
 
 func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [String] {
+    if rule.hasPrefix("http://") || rule.hasPrefix("https://") { return [rule] }
+    if rule.isEmpty { return [] }
     if rule.contains("&&") {
         var out: [String] = []
         for part in rule.components(separatedBy: "&&") {
@@ -724,6 +729,8 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
         }
         if changed { return [out] }
     }
+    if rule.lowercased().hasPrefix("@xpath:") { return LegadoDOM.xpath(input, String(rule.dropFirst(7))) }
+    if rule.hasPrefix("//") || rule.hasPrefix("./") { return LegadoDOM.xpath(input, rule) }
     if rule.hasPrefix("@css:") { return evalCss(input, String(rule.dropFirst(5))) }
     if rule.hasPrefix("@json:") || rule.hasPrefix("@Json:") { return jsonExtract(input, rule) }
     if rule.hasPrefix("$.") || rule == "$" { return jsonExtract(input, rule) }
@@ -811,18 +818,15 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         }
         return out
     }
-    if r.hasPrefix("@xpath:") || r.hasPrefix("@XPath:") || r.hasPrefix("//") { return [] }
     var main = r; var replacePattern: String? = nil; var replaceWith = ""
     if let range = r.range(of: "##") {
         main = String(r[..<range.lowerBound])
         let after = String(r[range.upperBound...])
-        if let dbl = after.range(of: "||") {
-            replacePattern = String(after[..<dbl.lowerBound]); replaceWith = String(after[dbl.upperBound...])
-        } else {
-            replacePattern = after; replaceWith = ""
-        }
+        let fields = after.components(separatedBy: "##")
+        replacePattern = fields.first
+        replaceWith = fields.count > 1 ? fields[1] : ""
     }
-    let vals = applyRuleNoReplace(htmlOrJson, main, base: base)
+    let vals = main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base)
     if let pat = replacePattern, !pat.isEmpty {
         return vals.map { applyRegexReplace($0, pattern: pat, replacement: replaceWith) }
     }
@@ -874,7 +878,7 @@ extension LegadoSource {
         // string as one URL and discovery always failed.
         if t.contains("::") {
             var out: [ExploreCategory] = []
-            for line in t.components(separatedBy: .newlines) {
+            for line in t.replacingOccurrences(of: "&&", with: "\n").components(separatedBy: .newlines) {
                 let l = line.trimmingCharacters(in: .whitespaces)
                 guard let r = l.range(of: "::") else { continue }
                 let title = String(l[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
@@ -895,7 +899,7 @@ extension LegadoSource {
             return out
         }
         // Plain URL = a single "推荐" category
-        return [ExploreCategory(title: "推荐", url: raw)]
+        return [ExploreCategory(title: "推荐", url: t)]
     }
 
     func postSearchRequest(for key: String) -> (url: String, method: String, body: String)? {
@@ -931,7 +935,7 @@ extension LegadoSource {
     // 之前只替换 {{key}}/{{page}}，导致 100+ 个用 JS 构造搜索地址的源 URL 拼错、搜不到。
     static func fillSearchTemplate(_ template: String, key: String, page: Int, sourceUrl: String) -> String {
         var out = template
-        let encKey = key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? key
+        let encKey = key.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? key
         out = out.replacingOccurrences(of: "{{key}}", with: encKey)
         out = out.replacingOccurrences(of: "{{page}}", with: "\(page)")
         out = out.replacingOccurrences(of: "{{page-1}}", with: "\(page - 1)")
@@ -949,346 +953,202 @@ extension LegadoSource {
         return out
     }
 
-    func booksFromBlocks(_ blocks: [String], nameRule: String, authorRule: String, urlRule: String, coverRule: String, introRule: String) -> [SourceBook] {
-        var out: [SourceBook] = []
-        for blk in blocks {
-            let name = applyRuleFirst(blk, nameRule, base: bookSourceUrl)
-            if name.isEmpty { continue }
-            var b = SourceBook(title: name, url: resolveUrl(applyRuleFirst(blk, urlRule, base: bookSourceUrl), base: bookSourceUrl), sourceName: bookSourceName, sourceUrl: bookSourceUrl)
-            b.author = applyRuleFirst(blk, authorRule, base: bookSourceUrl)
-            b.cover = resolveUrl(applyRuleFirst(blk, coverRule, base: bookSourceUrl), base: bookSourceUrl)
-            b.intro = applyRuleFirst(blk, introRule, base: bookSourceUrl)
-            out.append(b)
-        }
-        return out
-    }
-
-    func booksFromJSON(_ text: String, rule: RuleSet) -> [SourceBook] {
-        // JSON list: either per-object blocks, or global field paths
-        if !rule.bookList.isEmpty {
-            let objs = jsonObjects(text, rule.bookList)
-            if !objs.isEmpty {
-                var out: [SourceBook] = []
-                for obj in objs {
-                    let name = applyRuleFirst(obj, rule.name, base: bookSourceUrl)
-                    if name.isEmpty { continue }
-                    var b = SourceBook(title: name, url: resolveUrl(applyRuleFirst(obj, rule.bookUrl, base: bookSourceUrl), base: bookSourceUrl), sourceName: bookSourceName, sourceUrl: bookSourceUrl)
-                    b.author = applyRuleFirst(obj, rule.author, base: bookSourceUrl)
-                    b.cover = resolveUrl(applyRuleFirst(obj, rule.coverUrl, base: bookSourceUrl), base: bookSourceUrl)
-                    b.intro = applyRuleFirst(obj, rule.intro, base: bookSourceUrl)
-                    out.append(b)
+    // Every stage uses the source headers, redirect URL and one isolated JS context.
+    func withRules<T>(key: String = "", book: SourceBook? = nil, _ operation: () async throws -> T) async throws -> T {
+        let failures = RuleFailures()
+        let context = book.map { LegadoJS.BookCtx(bookUrl: $0.url, name: $0.title, author: $0.author,
+                                                 tocUrl: $0.tocUrl ?? "", coverUrl: $0.cover) }
+        return try await LegadoJSCtx.$sourceUrl.withValue(bookSourceUrl) {
+            try await LegadoJSCtx.$key.withValue(key) {
+                try await LegadoJSCtx.$book.withValue(context) {
+                    try await LegadoJSCtx.$library.withValue(jsLib) {
+                        try await LegadoJSCtx.$failures.withValue(failures) {
+                            let result = try await operation()
+                            try failures.check()
+                            return result
+                        }
+                    }
                 }
-                if !out.isEmpty { return out }
             }
         }
-        let names = applyRule(text, rule.name, base: bookSourceUrl)
-        if names.isEmpty { return [] }
-        let authors = applyRule(text, rule.author, base: bookSourceUrl)
-        let urls = applyRule(text, rule.bookUrl, base: bookSourceUrl)
-        let covers = applyRule(text, rule.coverUrl, base: bookSourceUrl)
-        let intros = applyRule(text, rule.intro, base: bookSourceUrl)
-        var out: [SourceBook] = []
-        for i in 0..<names.count {
-            var b = SourceBook(title: names[i], url: i < urls.count ? resolveUrl(urls[i], base: bookSourceUrl) : "", sourceName: bookSourceName, sourceUrl: bookSourceUrl)
-            if i < authors.count { b.author = authors[i] }
-            if i < covers.count { b.cover = resolveUrl(covers[i], base: bookSourceUrl) }
-            if i < intros.count { b.intro = intros[i] }
-            out.append(b)
+    }
+
+    func ruleItems(_ text: String, rule: String, base: String) -> [String] {
+        let values = applyRule(text, rule, base: base)
+        return values.flatMap { value -> [String] in
+            guard let data = value.data(using: .utf8),
+                  let array = try? JSONSerialization.jsonObject(with: data) as? [Any] else { return [value] }
+            return array.compactMap { item in
+                if let string = item as? String { return string }
+                guard JSONSerialization.isValidJSONObject(item), let data = try? JSONSerialization.data(withJSONObject: item) else { return nil }
+                return String(data: data, encoding: .utf8)
+            }
         }
-        return out
+    }
+
+    func parseBooks(_ response: SourcePage, rule: RuleSet, stage: String) throws -> [SourceBook] {
+        guard !rule.name.isEmpty, !rule.bookUrl.isEmpty else {
+            throw SourceFailure(stage: stage, message: "缺少书名或详情地址规则", url: response.url)
+        }
+        let blocks = rule.bookList.isEmpty ? [response.text] : ruleItems(response.text, rule: rule.bookList, base: response.url)
+        var seen = Set<String>()
+        let books = blocks.compactMap { block -> SourceBook? in
+            let name = applyRuleFirst(block, rule.name, base: response.url)
+            let address = resolveUrl(applyRuleFirst(block, rule.bookUrl, base: response.url), base: response.url)
+            guard !name.isEmpty, isSourceURL(address), seen.insert(address).inserted else { return nil }
+            var book = SourceBook(title: name, url: address, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
+            book.author = applyRuleFirst(block, rule.author, base: response.url)
+            book.cover = resolveUrl(applyRuleFirst(block, rule.coverUrl, base: response.url), base: response.url)
+            book.intro = applyRuleFirst(block, rule.intro, base: response.url)
+            return book
+        }
+        try LegadoJSCtx.failures?.check()
+        return books
     }
 
     func search(key: String) async throws -> [SourceBook] {
-        try await LegadoJSCtx.$key.withValue(key) {
-            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-                try await self.searchImpl(key: key, filterByKeyword: true)
-            }
-        }
+        try await withRules(key: key) { try await searchImpl(key: key) }
     }
-    // 发现页兜底分类用：分类名（热门/玄幻…）不是书名，不能按关键词过滤，
-    // 否则搜回来的书标题里没有“热门”二字就全被过滤掉，发现永远是空的。
-    // 这就是截图里点分类也没书的根因。
-    func searchForDiscovery(key: String) async throws -> [SourceBook] {
-        try await LegadoJSCtx.$key.withValue(key) {
-            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-                try await self.searchImpl(key: key, filterByKeyword: false)
-            }
-        }
-    }
-    private func searchImpl(key: String, filterByKeyword: Bool = true) async throws -> [SourceBook] {
-        // POST search (common in yckceo/1325): searchUrl carries
-        // ,{"method":"post","body":"searchkey={{key}}"} after the URL.
-        // The old code stripped that part and GET-fetched the bare search
-        // page, so it returned the site's homepage junk, not results.
-        var html = ""
-        if let post = postSearchRequest(for: key) {
-            html = try await fetchText(urlString: post.url, method: post.method, body: post.body)
-        } else {
-            let url = searchURL(for: key)
-            guard !url.isEmpty else { return [] }
-            html = try await fetchText(urlString: url)
-        }
-        let trimmed = html.trimmingCharacters(in: .whitespaces)
-        var raw: [SourceBook] = []
-        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
-            let j = booksFromJSON(html, rule: ruleSearch)
-            if !j.isEmpty { raw = j }
-        }
-        if raw.isEmpty {
-            if ruleSearch.bookList.isEmpty { raw = booksFromBlocks([html], nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro) }
-            else {
-                let blocks = applyRule(html, ruleSearch.bookList, base: bookSourceUrl)
-                if !blocks.isEmpty { raw = booksFromBlocks(blocks, nameRule: ruleSearch.name, authorRule: ruleSearch.author, urlRule: ruleSearch.bookUrl, coverRule: ruleSearch.coverUrl, introRule: ruleSearch.intro) }
-            }
-        }
-        // Fix for "search 仙逆 returns a pile of unrelated books": many sites
-        // return their hot/recommend list when a search misses, or a too-broad
-        // bookList grabs the whole page. Keep only results whose title or
-        // author actually contains the keyword, and cap per-source output so
-        // one junk source cannot fill the whole 500-result budget.
-        // 发现兜底分类不走这一步（见 searchForDiscovery）。
-        let normKey = key.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: " ", with: "").lowercased()
-        if filterByKeyword && !normKey.isEmpty {
-            let filtered = raw.filter {
-                $0.title.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey) ||
-                $0.author.replacingOccurrences(of: " ", with: "").lowercased().contains(normKey)
-            }
-            if !filtered.isEmpty { return Array(filtered.prefix(30)) }
-            // 兜底：过滤后为空（可能是书名格式/编码差异），退回原始结果，避免「搜得到但被过滤光」
-            return Array(raw.prefix(10))
-        }
-        return Array(raw.prefix(30))
+    func searchForDiscovery(key: String) async throws -> [SourceBook] { try await search(key: key) }
+    private func searchImpl(key: String) async throws -> [SourceBook] {
+        guard !searchUrl.isEmpty else { throw SourceFailure(stage: "搜索", message: "书源未配置搜索地址") }
+        let response = try await loadPage(searchUrl, key: key, stage: "搜索")
+        let books = try parseBooks(response, rule: ruleSearch, stage: "搜索")
+        // The site determines its own search semantics (aliases, author, fuzzy
+        // matching). Never substitute a random navigation-link fallback.
+        return books
     }
 
     func discover(category: ExploreCategory? = nil) async throws -> [SourceBook] {
-        try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-            try await self.discoverImpl(category: category)
-        }
-    }
-    private func discoverImpl(category: ExploreCategory? = nil) async throws -> [SourceBook] {
-        let cats = exploreCategories()
-        let cat = category ?? cats.first
-        guard let cat = cat else { return [] }
-        // 分类 URL 也可能带 {{page}} / {{java...}} 占位符，统一走模板求值
-        var url = Self.fillSearchTemplate(cat.url, key: "", page: 1, sourceUrl: bookSourceUrl)
-        if !url.hasPrefix("http") { url = resolveUrl(url, base: bookSourceUrl) }
-        let html = try await fetchText(urlString: url)
-        let rule = effectiveDiscoverRule.bookList.isEmpty ? ruleSearch : effectiveDiscoverRule
-        let trimmed = html.trimmingCharacters(in: .whitespaces)
-        if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
-            let j = booksFromJSON(html, rule: rule)
-            if !j.isEmpty { return j }
-        }
-        if !rule.bookList.isEmpty {
-            let blocks = applyRule(html, rule.bookList, base: bookSourceUrl)
-            if !blocks.isEmpty {
-                let books = booksFromBlocks(blocks, nameRule: rule.name, authorRule: rule.author, urlRule: rule.bookUrl, coverRule: rule.coverUrl, introRule: rule.intro)
-                if !books.isEmpty { return books }
+        try await withRules {
+            guard let category = category ?? exploreCategories().first else {
+                throw SourceFailure(stage: "发现分类", message: "没有解析到分类，请检查 exploreUrl 或脚本兼容性")
             }
+            let response = try await loadPage(category.url, stage: "发现分类「\(category.title)」")
+            let rule = effectiveDiscoverRule.bookList.isEmpty && effectiveDiscoverRule.name.isEmpty ? ruleSearch : effectiveDiscoverRule
+            let books = try parseBooks(response, rule: rule, stage: "发现列表")
+            guard !books.isEmpty else {
+                throw SourceFailure(stage: "发现列表", message: "页面已返回，但书籍规则未匹配到有效书名和地址（也可能是验证码或登录页）", url: response.url)
+            }
+            return books
         }
-        // 兜底：发现页和搜索页 HTML 结构不同，ruleSearch 的选择器常匹配不到发现页，
-        // 导致「点分类进去一片空白」。这里用通用链接提取保住分类列表。
-        return booksFromLinksFallback(html)
-    }
-
-    // 通用兜底：从页面提取所有 <a> 链接 + 文字，过滤出像书名的条目。
-    // 用于发现分类页规则不匹配时，保证「点分类能出书」。
-    func booksFromLinksFallback(_ html: String) -> [SourceBook] {
-        let links = cssExtractAll(html, "a@href")
-        let texts = cssExtractAll(html, "a@text")
-        var out: [SourceBook] = []
-        let chinese = try? NSRegularExpression(pattern: "[\\u4e00-\\u9fa5]")
-        for i in 0..<min(links.count, texts.count) {
-            let t = texts[i].trimmingCharacters(in: .whitespacesAndNewlines)
-            guard t.count >= 2 && t.count <= 40 else { continue }
-            guard chinese?.firstMatch(in: t, range: NSRange(t.startIndex..., in: t)) != nil else { continue }
-            // 跳过明显的导航/翻页词
-            let skip = ["首页", "下一页", "上一页", "末页", "下一页»", "加入书架", "开始阅读", "目录", "简介", "排行", "分类", "最新", "热门"]
-            if skip.contains(where: { t == $0 }) { continue }
-            let u = resolveUrl(links[i], base: bookSourceUrl)
-            out.append(SourceBook(title: t, url: u, sourceName: bookSourceName, sourceUrl: bookSourceUrl))
-            if out.count >= 50 { break }
-        }
-        return out
     }
 
     func fetchBookInfo(book: SourceBook) async throws -> SourceBook {
-        let ctx = LegadoJS.BookCtx(bookUrl: book.url, name: book.title, author: book.author)
-        return try await LegadoJSCtx.$book.withValue(ctx) {
-            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-                try await LegadoJSCtx.$key.withValue(book.title) {
-                    try await self.fetchBookInfoImpl(book: book)
-                }
-            }
-        }
+        try await withRules(key: book.title, book: book) { try await fetchBookInfoImpl(book: book) }
     }
     private func fetchBookInfoImpl(book: SourceBook) async throws -> SourceBook {
-        // If ruleBookInfo is empty, the search result itself is the detail.
-        if ruleBookInfo.name.isEmpty && ruleBookInfo.tocUrl.isEmpty && ruleBookInfo.coverUrl.isEmpty && ruleBookInfo.intro.isEmpty { return book }
-        let html = try await fetchText(urlString: book.url)
-        var b = book
-        let name = applyRuleFirst(html, ruleBookInfo.name, base: bookSourceUrl)
-        if !name.isEmpty { b.title = name }
-        let author = applyRuleFirst(html, ruleBookInfo.author, base: bookSourceUrl)
-        if !author.isEmpty { b.author = author }
-        let cover = applyRuleFirst(html, ruleBookInfo.coverUrl, base: bookSourceUrl)
-        if !cover.isEmpty { b.cover = resolveUrl(cover, base: bookSourceUrl) }
-        let intro = applyRuleFirst(html, ruleBookInfo.intro, base: bookSourceUrl)
-        if !intro.isEmpty { b.intro = intro }
-        return b
+        let response = try await loadPage(book.url, stage: "书籍详情")
+        let text = ruleBookInfo.initRule.isEmpty ? response.text : applyRule(response.text, ruleBookInfo.initRule, base: response.url).joined(separator: "\n")
+        var book = book
+        if SourceHTTP.options(book.url).options.isEmpty { book.url = response.url }
+        let fields = ruleBookInfo
+        let name = applyRuleFirst(text, fields.name, base: response.url)
+        let author = applyRuleFirst(text, fields.author, base: response.url)
+        let cover = applyRuleFirst(text, fields.coverUrl, base: response.url)
+        let intro = applyRuleFirst(text, fields.intro, base: response.url)
+        if !name.isEmpty { book.title = name }
+        if !author.isEmpty { book.author = author }
+        if !cover.isEmpty { book.cover = resolveUrl(cover, base: response.url) }
+        if !intro.isEmpty { book.intro = intro }
+        if !fields.tocUrl.isEmpty {
+            let toc = resolveUrl(applyRuleFirst(text, fields.tocUrl, base: response.url), base: response.url)
+            try LegadoJSCtx.failures?.check()
+            guard isSourceURL(toc) else { throw SourceFailure(stage: "目录入口", message: "详情页目录地址规则未匹配", url: response.url) }
+            book.tocUrl = toc
+        } else { book.tocUrl = SourceHTTP.options(book.url).options.isEmpty ? response.url : book.url }
+        return book
     }
 
     func fetchChapters(book: SourceBook) async throws -> [BookChapter] {
-        let ctx = LegadoJS.BookCtx(bookUrl: book.url, name: book.title, author: book.author)
-        return try await LegadoJSCtx.$book.withValue(ctx) {
-            try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-                try await LegadoJSCtx.$key.withValue(book.title) {
-                    try await self.fetchChaptersImpl(book: book)
-                }
-            }
-        }
+        try await withRules(key: book.title, book: book) { try await fetchChaptersImpl(book: book) }
     }
     private func fetchChaptersImpl(book: SourceBook) async throws -> [BookChapter] {
-        var tocUrl = book.url
-        if !ruleBookInfo.tocUrl.isEmpty {
-            let html = try await fetchText(urlString: book.url)
-            let t = applyRuleFirst(html, ruleBookInfo.tocUrl, base: bookSourceUrl)
-            if !t.isEmpty { tocUrl = resolveUrl(t, base: bookSourceUrl) }
+        guard !ruleToc.chapterList.isEmpty, !ruleToc.chapterName.isEmpty, !ruleToc.chapterUrl.isEmpty else {
+            throw SourceFailure(stage: "目录", message: "缺少章节列表、章节名或章节地址规则")
         }
-        var chapters: [BookChapter] = []
-        var currentUrl: String? = tocUrl
-        var pages = 0
-        while let pageUrl = currentUrl, pages < 4 {
-            pages += 1
-            let html = try await fetchText(urlString: pageUrl)
-            let trimmed = html.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("{") || trimmed.hasPrefix("[") {
-                let objs = jsonObjects(html, ruleToc.chapterList)
-                if !objs.isEmpty {
-                    for obj in objs {
-                        let name = applyRuleFirst(obj, ruleToc.chapterName, base: bookSourceUrl)
-                        let url = resolveUrl(applyRuleFirst(obj, ruleToc.chapterUrl, base: bookSourceUrl), base: bookSourceUrl)
-                        let title = name.isEmpty ? stripText(obj, preserveNewlines: false) : name
-                        if !title.isEmpty { chapters.append(BookChapter(title: title, text: "__URL__" + url)) }
-                    }
-                }
-            } else if !ruleToc.chapterList.isEmpty {
-                let items = applyRule(html, ruleToc.chapterList, base: bookSourceUrl)
-                for item in items {
-                    let name = applyRuleFirst(item, ruleToc.chapterName, base: bookSourceUrl)
-                    let url = resolveUrl(applyRuleFirst(item, ruleToc.chapterUrl, base: bookSourceUrl), base: bookSourceUrl)
-                    let title = name.isEmpty ? stripText(item, preserveNewlines: false) : name
-                    if title.isEmpty { continue }
-                    chapters.append(BookChapter(title: title, text: "__URL__" + url))
+        let detailed = book.tocUrl == nil ? try await fetchBookInfoImpl(book: book) : book
+        var next = detailed.tocUrl ?? detailed.url
+        var visited = Set<String>(); var seen = Set<String>(); var chapters: [BookChapter] = []
+        while !next.isEmpty {
+            try Task.checkCancellation()
+            guard visited.count < 1000 else { throw SourceFailure(stage: "目录分页", message: "超过 1000 页保护限制，未保存不完整目录", url: next) }
+            guard visited.insert(next).inserted else { break }
+            let response = try await loadPage(next, stage: "目录第 \(visited.count) 页")
+            let items = ruleItems(response.text, rule: ruleToc.chapterList, base: response.url)
+            var matched = 0
+            for item in items {
+                let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
+                let address = resolveUrl(applyRuleFirst(item, ruleToc.chapterUrl, base: response.url), base: response.url)
+                guard !name.isEmpty, isSourceURL(address) else { continue }
+                matched += 1
+                if seen.insert(address).inserted {
+                    chapters.append(BookChapter(id: address, title: name, text: "__URL__" + address, url: address))
                 }
             }
-            if chapters.isEmpty && pages == 1 {
-                let links = cssExtractAll(html, "a@href")
-                let texts = cssExtractAll(html, "a@text")
-                for i in 0..<min(links.count, texts.count) {
-                    let t = texts[i].trimmingCharacters(in: .whitespacesAndNewlines)
-                    if t.count > 2 && t.count < 80 { chapters.append(BookChapter(title: t, text: "__URL__" + resolveUrl(links[i], base: bookSourceUrl))) }
-                }
-            }
-            // Next TOC page
-            if !ruleToc.nextTocUrl.isEmpty {
-                let next = applyRuleFirst(html, ruleToc.nextTocUrl, base: bookSourceUrl)
-                if !next.isEmpty {
-                    let nextUrl = resolveUrl(next, base: bookSourceUrl)
-                    if nextUrl != pageUrl { currentUrl = nextUrl; continue }
-                }
-            }
-            currentUrl = nil
+            try LegadoJSCtx.failures?.check()
+            guard matched > 0 else { throw SourceFailure(stage: "目录解析", message: "章节规则没有匹配到有效章节，未使用导航链接冒充目录", url: response.url) }
+            next = resolveUrl(applyRuleFirst(response.text, ruleToc.nextTocUrl, base: response.url), base: response.url)
+            if next == response.url { break }
         }
         return chapters
     }
 
     func fetchChapterContent(_ chapter: BookChapter) async throws -> String {
-        try await LegadoJSCtx.$sourceUrl.withValue(self.bookSourceUrl) {
-            try await self.fetchChapterContentImpl(chapter)
-        }
-    }
-    private func fetchChapterContentImpl(_ chapter: BookChapter) async throws -> String {
-        guard chapter.text.hasPrefix("__URL__") else { return chapter.text }
-        let url = String(chapter.text.dropFirst(7))
-        var content = ""
-        var currentUrl: String? = url
-        var pages = 0
-        while let pageUrl = currentUrl, pages < 5 {
-            pages += 1
-            let html = try await fetchText(urlString: pageUrl)
-            var part = ""
-            if !ruleContent.content.isEmpty {
-                let parts = applyRule(html, ruleContent.content, base: bookSourceUrl)
-                part = parts.joined(separator: "\n")
-                if part.isEmpty { part = stripText(html, preserveNewlines: true) }
-            } else {
-                part = stripText(html, preserveNewlines: true)
+        guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.text }
+        return try await withRules {
+            guard !ruleContent.content.isEmpty else { throw SourceFailure(stage: "正文", message: "书源缺少正文规则") }
+            var next = chapter.url ?? String(chapter.text.dropFirst(7))
+            var visited = Set<String>(); var parts: [String] = []
+            while !next.isEmpty {
+                try Task.checkCancellation()
+                guard visited.count < 100 else { throw SourceFailure(stage: "正文分页", message: "超过 100 页保护限制，未缓存不完整正文", url: next) }
+                guard visited.insert(next).inserted else { break }
+                let response = try await loadPage(next, stage: "正文第 \(visited.count) 页")
+                let raw = applyRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
+                let part = stripText(raw, preserveNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines)
+                try LegadoJSCtx.failures?.check()
+                guard !part.isEmpty else { throw SourceFailure(stage: "正文解析", message: "正文规则未匹配到内容，请检查规则、登录状态或验证码", url: response.url) }
+                parts.append(part)
+                next = resolveUrl(applyRuleFirst(response.text, ruleContent.nextContentUrl, base: response.url), base: response.url)
+                if next == response.url { break }
             }
-            if !content.isEmpty { content += "\n" }
-            content += part
-            if !ruleContent.nextContentUrl.isEmpty {
-                let next = applyRuleFirst(html, ruleContent.nextContentUrl, base: bookSourceUrl)
-                if !next.isEmpty {
-                    let nextUrl = resolveUrl(next, base: bookSourceUrl)
-                    if nextUrl != pageUrl { currentUrl = nextUrl; continue }
-                }
+            var content = parts.joined(separator: "\n")
+            if !ruleContent.replaceRegex.isEmpty { content = applyRuleReplace(content, replaceRegex: ruleContent.replaceRegex) }
+            guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SourceFailure(stage: "正文替换", message: "替换规则移除了全部正文")
             }
-            currentUrl = nil
+            return content
         }
-        if !ruleContent.replaceRegex.isEmpty { content = applyRuleReplace(content, replaceRegex: ruleContent.replaceRegex) }
-        // If a content rule returned raw HTML, strip it for reading
-        if content.contains("<") && content.contains(">") {
-            content = stripText(content, preserveNewlines: true)
-        }
-        return content.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    // 拉取漫画章节的图片 URL 列表（用 ruleContent.imageUrl 规则，兜底 img@src，支持多页正文）
     func fetchChapterImages(_ chapter: BookChapter) async throws -> [String] {
-        guard chapter.text.hasPrefix("__URL__") else { return chapter.imageUrls }
-        let url = String(chapter.text.dropFirst(7))
-        var images: [String] = []
-        var currentUrl: String? = url
-        var pages = 0
-        while let pageUrl = currentUrl, pages < 5 {
-            pages += 1
-            let html = try await fetchText(urlString: pageUrl)
-            var pageImages: [String] = []
-            // 1) 优先用漫画书源的图片规则 imageUrl（如 @css:.content img@src）
-            if !ruleContent.imageUrl.isEmpty {
-                pageImages = applyRule(html, ruleContent.imageUrl, base: bookSourceUrl)
-                    .map { resolveUrl($0, base: bookSourceUrl) }
+        guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.imageUrls }
+        return try await withRules {
+            var next = chapter.url ?? String(chapter.text.dropFirst(7))
+            var visited = Set<String>(); var seen = Set<String>(); var images: [String] = []
+            while !next.isEmpty {
+                guard visited.count < 100 else { throw SourceFailure(stage: "漫画分页", message: "超过 100 页保护限制", url: next) }
+                guard visited.insert(next).inserted else { break }
+                let response = try await loadPage(next, stage: "漫画正文")
+                let rule = ruleContent.imageUrl.isEmpty ? ruleContent.content : ruleContent.imageUrl
+                let extracted = applyRule(response.text, rule, base: response.url)
+                let addresses = extracted.flatMap { value in
+                    value.contains("<img") ? cssExtractAll(value, "img@src") : [value]
+                }.map { resolveUrl($0, base: response.url) }.filter { isSourceURL($0) }
+                guard !addresses.isEmpty else { throw SourceFailure(stage: "漫画解析", message: "图片规则未匹配，不使用页面广告图片冒充正文", url: response.url) }
+                for url in addresses where seen.insert(url).inserted { images.append(url) }
+                next = resolveUrl(applyRuleFirst(response.text, ruleContent.nextContentUrl, base: response.url), base: response.url)
+                if next == response.url { break }
             }
-            // 2) 兜底：从 content 规则结果里提图片
-            if pageImages.isEmpty && !ruleContent.content.isEmpty {
-                let parts = applyRule(html, ruleContent.content, base: bookSourceUrl)
-                for p in parts {
-                    if p.hasPrefix("http") || p.hasPrefix("//") {
-                        pageImages.append(resolveUrl(p, base: bookSourceUrl))
-                    } else if p.lowercased().contains("<img") {
-                        pageImages.append(contentsOf: cssExtractAll(p, "img@src").map { resolveUrl($0, base: bookSourceUrl) })
-                    }
-                }
-            }
-            // 3) 兜底：从整页 HTML 提所有 img 的 src
-            if pageImages.isEmpty {
-                pageImages = cssExtractAll(html, "img@src").map { resolveUrl($0, base: bookSourceUrl) }
-            }
-            pageImages = pageImages.filter { !$0.isEmpty && !$0.hasPrefix("data:") }
-            images.append(contentsOf: pageImages)
-            // 下一页正文（漫画一章可能分多页）
-            if !ruleContent.nextContentUrl.isEmpty {
-                let next = applyRuleFirst(html, ruleContent.nextContentUrl, base: bookSourceUrl)
-                if !next.isEmpty {
-                    let nextUrl = resolveUrl(next, base: bookSourceUrl)
-                    if nextUrl != pageUrl { currentUrl = nextUrl; continue }
-                }
-            }
-            currentUrl = nil
+            return images
         }
-        return images
     }
+}
+
+func isSourceURL(_ text: String) -> Bool {
+    guard let url = URL(string: SourceHTTP.options(text).url) else { return false }
+    return ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
 }
 
 // Multi-source search: batched TaskGroup (20 at a time, so 1000 sources do not

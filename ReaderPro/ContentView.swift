@@ -391,6 +391,7 @@ struct SourceView: View {
         VStack {
             HStack {
                 TextField("书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("bookSearch")
                     .submitLabel(.search).onSubmit { if !searching { search() } }
                 Button { search() } label: {
                     Image(systemName: "magnifyingglass")
@@ -400,6 +401,7 @@ struct SourceView: View {
                         .background(AppTheme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .disabled(key.isEmpty || searching)
+                .accessibilityIdentifier("submitBookSearch")
             }.padding(.horizontal)
             HStack(spacing: 8) {
                 Label("\(store.enabledSources.count) 个启用源", systemImage: "checkmark.seal.fill")
