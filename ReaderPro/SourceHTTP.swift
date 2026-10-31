@@ -178,8 +178,13 @@ extension LegadoSource {
         }
         text = Self.fillSearchTemplate(text, key: LegadoJSCtx.key, page: 1, sourceUrl: bookSourceUrl)
         if SourceHTTP.headers(text).isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
-            text = LegadoJS.run("(" + text + ")", input: "", baseUrl: bookSourceUrl,
-                                sourceKey: LegadoJSCtx.key, sourceUrl: bookSourceUrl)
+            // The reference tolerates malformed optional header configuration.
+            // Still evaluate valid JS-valued maps, without poisoning unrelated
+            // extraction rules if a subscription contains broken header JSON.
+            text = LegadoJSCtx.$failures.withValue(nil) {
+                LegadoJS.run("(" + text + ")", input: "", baseUrl: bookSourceUrl,
+                             sourceKey: LegadoJSCtx.key, sourceUrl: bookSourceUrl)
+            }
         }
         return SourceHTTP.headers(text)
     }

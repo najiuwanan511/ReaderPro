@@ -51,7 +51,7 @@ final class LegadoJS {
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
                     book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil,
                     structuredResult: Any? = nil, expandTemplates: Bool = true) -> String {
-        let script = (expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
+        let script = SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
                                               page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
@@ -268,6 +268,17 @@ final class LegadoJS {
             return result
         }
         java.setObject(digest, forKeyedSubscript: "digestHex" as NSString)
+        let timeFormatUTC: @convention(block) (JSValue, String, Int) -> String = { value, format, offset in
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.timeZone = TimeZone(secondsFromGMT: 0)
+            formatter.dateFormat = format
+            // legado-E passes sh directly to SimpleTimeZone (milliseconds).
+            let millis = value.toNumber()?.doubleValue ?? 0
+            guard millis.isFinite else { return "" }
+            return formatter.string(from: Date(timeIntervalSince1970: (millis + Double(offset)) / 1000))
+        }
+        java.setObject(timeFormatUTC, forKeyedSubscript: "timeFormatUTC" as NSString)
         java.setObject(randomUUID, forKeyedSubscript: "randomUUID" as NSString)
         java.setObject(chapterNumber, forKeyedSubscript: "toNumChapter" as NSString)
         let getUA: @convention(block) () -> String = { sourceUA }
@@ -289,6 +300,7 @@ final class LegadoJS {
                     LegadoJSCtx.failures?.add("远程 jsLib：" + sourceErrorMessage(error)); return ""
                 }
             }
+            library = SourceScript.adaptingJavaCalls(library)
             ctx.evaluateScript(library)
             if exception.contains("Cannot declare a let variable twice") {
                 let repaired = SourceScript.repairingParameterRedeclarations(library)

@@ -351,6 +351,57 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(output, "ready")
     }
 
+    func testMixedJSONSearchSkipsNamelessRowsBeforeBookIDScript() throws {
+        var source = SourceTestFixtures.json()
+        source.ruleSearch.bookUrl = "<js>var id={{$.id}}; '/book/'+id</js>"
+        let response = SourcePage(text: #"{"data":[{"recommendation":true},{"name":"有效书籍","id":123}]}"#, url: base)
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let books = try source.parseBooks(response, rule: source.ruleSearch, stage: "搜索")
+            XCTAssertEqual(books.count, 1)
+            XCTAssertEqual(books.first?.url, base + "/book/123")
+            try failures.check()
+        }
+    }
+
+    func testMalformedOptionalHeadersDoNotPoisonReadingRules() async throws {
+        var source = SourceTestFixtures.json()
+        source.header = "{\"Accept-Language\":\"zh-CN,\n\"Referer\":\"https://example.org\"\njava.getCookie('x',null) => example\n}"
+        let books = try await source.search(key: "测试")
+        XCTAssertEqual(books.first?.title, "JSON测试")
+        source.header = #"{"X-Test":java.md5Encode('abc')}"#
+        XCTAssertEqual(source.requestHeaders["X-Test"], "900150983cd24fb0d6963f7d28e17f72")
+    }
+
+    func testJavaLengthAndInvisibleSourceMethodAdaptation() throws {
+        let script = #"""
+        var digest=java.digestHex('abc','sha-256');
+        if(digest.length()!==64 || digest.getBytes().length!==64) throw Error('Java string length/bytes');
+        var object={value:'中文',length:function(){return 7;}};
+        if(object.length()!==7 || object.value.length()!==2) throw Error('Receiver semantics');
+        var literal='digest.length()'; var regex=/digest.length()/;
+        if(literal!=='digest.length()' || !regex.test('digestXlength')) throw Error('Literal changed');
+        if(Packages.java.lang.Integer.parseInt('ff',16)!==255) throw Error('Integer');
+        """# + "\nsource.getSource\u{200b}().bookSourceComment;"
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let result = LegadoJSCtx.$comment.withValue("source metadata") {
+                LegadoJS.run(script, input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            }
+            XCTAssertEqual(result, "source metadata")
+            try failures.check()
+        }
+    }
+
+    func testUTCFormatMatchesReferenceMillisecondOffsetAndDateCoercion() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let result = LegadoJS.run("java.timeFormatUTC(new Date(0),'yyyyMMdd HH:mm:ss',28800000)+'|'+java.timeFormatUTC(0,'yyyyMMdd HH:mm:ss',8)", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            XCTAssertEqual(result, "19700101 08:00:00|19700101 00:00:00")
+            try failures.check()
+        }
+    }
+
     func testRhinoParameterRedeclarationRepairPreservesOtherScopes() throws {
         let library = #"""
         function AESencrypt(text, key, iv) {

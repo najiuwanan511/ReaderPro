@@ -6,6 +6,29 @@ enum SourceScript {
         var range: Range<String.Index>
     }
 
+    static func adaptingJavaCalls(_ script: String) -> String {
+        guard script.contains(".length()") || script.contains("\u{200b}") else { return script }
+        let tokens = tokenize(script)
+        var edits: [(Range<String.Index>, String)] = []
+        for index in tokens.indices {
+            if tokens[index].text == "\u{200b}", index > 0, index + 1 < tokens.count,
+               tokens[index - 1].text == "getSource", tokens[index + 1].text == "(" {
+                edits.append((tokens[index].range, ""))
+            }
+            guard index >= 2, index + 2 < tokens.count,
+                  tokens[index].text == "length", tokens[index - 1].text == ".",
+                  tokens[index + 1].text == "(", tokens[index + 2].text == ")",
+                  identifier(tokens[index - 2].text) else { continue }
+            var start = index - 2
+            while start >= 2, tokens[start - 1].text == ".", identifier(tokens[start - 2].text) { start -= 2 }
+            let receiver = String(script[tokens[start].range.lowerBound..<tokens[index - 1].range.lowerBound])
+            edits.append((tokens[start].range.lowerBound..<tokens[index + 2].range.upperBound, "_javaLength(" + receiver + ")"))
+        }
+        var output = script
+        for (range, value) in edits.sorted(by: { $0.0.lowerBound > $1.0.lowerBound }) { output.replaceSubrange(range, with: value) }
+        return output
+    }
+
     // Rhino accepts `function f(key) { let key = ...; }`. JSC rejects the
     // entire library, including unrelated search functions. Repair only a
     // simple, single binding at function-body scope that shadows a parameter.

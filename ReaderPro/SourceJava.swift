@@ -4,6 +4,12 @@ import Foundation
 // errors; cryptographic operations use the iOS implementations in SourceCrypto.
 enum SourceJava {
     static let script = #"""
+    function _javaLength(value){return typeof value.length==='function' ? value.length() : value.length;}
+    _methods(String.prototype,{getBytes:function(){return java.strToBytes(String(this));}});
+    java.lang.Integer={parseInt:function(value,radix){
+        var number=parseInt(String(value),radix || 10);if(!Number.isFinite(number))throw Error('Invalid integer');return number;
+    }};
+    source.getSource=function(){return source;};
     java.util.Arrays = {
         copyOfRange:function(value,from,to){
             if(from<0 || from>value.length || to<from) throw Error('Invalid array range');

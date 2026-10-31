@@ -1161,8 +1161,11 @@ extension LegadoSource {
         var seen = Set<String>()
         let books = blocks.compactMap { block -> SourceBook? in
             let name = applyRuleFirst(block, rule.name, base: response.url)
+            // Search APIs may mix recommendation/group rows with book rows.
+            // Do not evaluate a book-ID script on entries with no book name.
+            guard !name.isEmpty else { return nil }
             let address = resolveUrl(applyRuleFirst(block, rule.bookUrl, base: response.url), base: response.url)
-            guard !name.isEmpty, isSourceURL(address), seen.insert(address).inserted else { return nil }
+            guard isSourceURL(address), seen.insert(address).inserted else { return nil }
             var book = SourceBook(title: name, url: address, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
             book.author = applyRuleFirst(block, rule.author, base: response.url)
             book.cover = resolveUrl(applyRuleFirst(block, rule.coverUrl, base: response.url), base: response.url)
