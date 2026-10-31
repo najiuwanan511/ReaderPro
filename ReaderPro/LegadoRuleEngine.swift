@@ -114,27 +114,104 @@ func attrMatches(_ value: String, op: String, val: String) -> Bool {
     }
 }
 
+// 平衡匹配 <tag>...</tag>：正确处理同名标签嵌套。
+// 用栈记录每个开标签位置，遇到闭标签就弹出最近的未闭合开标签，取两者之间的内容。
+func findBalanced(_ html: String, tag: String) -> [HtmlEl] {
+    let ns = html as NSString
+    let t = NSRegularExpression.escapedPattern(for: tag)
+    guard let openRe = try? NSRegularExpression(pattern: "<\(t)\\b([^>]*)>", options: [.caseInsensitive]),
+          let closeRe = try? NSRegularExpression(pattern: "</\(t)\\s*>", options: [.caseInsensitive]) else { return [] }
+
+    // (位置, 是否开标签, 属性串, 长度)
+    var marks: [(loc: Int, isOpen: Bool, attrs: String, len: Int)] = []
+    for m in openRe.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        marks.append((m.range.location, true, ns.substring(with: m.range(at: 1)), m.range.length))
+    }
+    for m in closeRe.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        marks.append((m.range.location, false, "", m.range.length))
+    }
+    marks.sort { $0.loc < $1.loc }
+
+    var out: [HtmlEl] = []
+    var stack: [(loc: Int, attrs: String, len: Int)] = []
+    for m in marks {
+        if m.isOpen {
+            stack.append((m.loc, m.attrs, m.len))
+        } else if let open = stack.popLast() {
+            let openEnd = open.loc + open.len
+            if m.loc < openEnd { continue }
+            let inner = ns.substring(with: NSRange(location: openEnd, length: m.loc - openEnd))
+            let full = ns.substring(with: NSRange(location: open.loc, length: m.loc + m.len - open.loc))
+            out.append(HtmlEl(open: "<\(tag) \(open.attrs)>", inner: inner, full: full))
+        }
+    }
+    return out
+}
+
+// 通用平衡匹配：匹配所有标签（正确配对嵌套），返回 (标签名, open, inner, full)。
+// 供无显式标签名的选择器（class./id./[attr]）使用，避免同名嵌套截断。
+struct AnyHtmlEl {
+    var open: String
+    var inner: String
+    var full: String
+}
+
+func findBalancedAny(_ html: String) -> [AnyHtmlEl] {
+    let ns = html as NSString
+    guard let openRe = try? NSRegularExpression(pattern: "<([A-Za-z][A-Za-z0-9]*)\\b([^>]*)>", options: [.caseInsensitive]),
+          let closeRe = try? NSRegularExpression(pattern: "</([A-Za-z][A-Za-z0-9]*)\\s*>", options: [.caseInsensitive]) else { return [] }
+
+    // (位置, 是否开标签, 标签名小写, 属性串, 长度)
+    var marks: [(loc: Int, isOpen: Bool, tag: String, attrs: String, len: Int)] = []
+    for m in openRe.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        marks.append((m.range.location, true, ns.substring(with: m.range(at: 1)).lowercased(), ns.substring(with: m.range(at: 2)), m.range.length))
+    }
+    for m in closeRe.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+        marks.append((m.range.location, false, ns.substring(with: m.range(at: 1)).lowercased(), "", m.range.length))
+    }
+    marks.sort { $0.loc < $1.loc }
+
+    var out: [AnyHtmlEl] = []
+    var stack: [(loc: Int, tag: String, attrs: String, len: Int)] = []
+    for m in marks {
+        if m.isOpen {
+            stack.append((m.loc, m.tag, m.attrs, m.len))
+        } else {
+            // 容错配对：从栈尾往前找最近同名未闭合开标签（不严格嵌套也能配）
+            var idx = -1
+            for i in stride(from: stack.count - 1, through: 0, by: -1) where stack[i].tag == m.tag { idx = i; break }
+            guard idx >= 0 else { continue }
+            let open = stack.remove(at: idx)
+            let openEnd = open.loc + open.len
+            if m.loc < openEnd { continue }
+            let inner = ns.substring(with: NSRange(location: openEnd, length: m.loc - openEnd))
+            let full = ns.substring(with: NSRange(location: open.loc, length: m.loc + m.len - open.loc))
+            out.append(AnyHtmlEl(open: "<\(open.tag) \(open.attrs)>", inner: inner, full: full))
+        }
+    }
+    return out
+}
+
 func findElements(_ html: String, tag: String?, classes: [String], idVal: String?, attrName: String?, attrOp: String?, attrVal: String?) -> [HtmlEl] {
     var out: [HtmlEl] = []
     let ns = html as NSString
     let voidTags: Set<String> = ["img", "input", "br", "hr", "link", "meta", "source", "area", "base", "col", "embed", "track", "wbr"]
-    // Paired elements
+    // Paired elements: use a balanced (stack-based) matcher so nested
+    // same-name tags are handled correctly. The old non-greedy regex
+    // "<div\b([^>]*)>(.*?)</div>" stopped at the FIRST nested "</div>", so a
+    // bookList like "div.c_row" (whose rows contain a cover <div> and a text
+    // <div>) lost everything after the cover — name/author matched nothing and
+    // search/discovery came back empty. This is why e.g. 穿越小说 (kk169.la)
+    // returned no results while 文桑小说 (dl, no nesting) worked.
     if let tag = tag {
-        let pat = "<\(NSRegularExpression.escapedPattern(for: tag))\\b([^>]*)>(.*?)</\(NSRegularExpression.escapedPattern(for: tag))>"
-        if let re = try? NSRegularExpression(pattern: pat, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
-            for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-                let full = ns.substring(with: m.range)
-                let openAttrs = ns.substring(with: m.range(at: 1))
-                let inner = ns.substring(with: m.range(at: 2))
-                let open = "<\(tag) \(openAttrs)>"
-                if !classes.allSatisfy({ classTokens(open).contains($0) }) { continue }
-                if let idv = idVal, htmlAttrs(open)["id"] != idv { continue }
-                if let an = attrName {
-                    let v = htmlAttrs(open)[an.lowercased()] ?? ""
-                    if !attrMatches(v, op: attrOp ?? "=", val: attrVal ?? "") { continue }
-                }
-                out.append(HtmlEl(open: open, inner: inner, full: full))
+        for el in findBalanced(html, tag: tag) {
+            if !classes.allSatisfy({ classTokens(el.open).contains($0) }) { continue }
+            if let idv = idVal, htmlAttrs(el.open)["id"] != idv { continue }
+            if let an = attrName {
+                let v = htmlAttrs(el.open)[an.lowercased()] ?? ""
+                if !attrMatches(v, op: attrOp ?? "=", val: attrVal ?? "") { continue }
             }
+            out.append(el)
         }
         // Void elements (img etc.) have no closing tag
         if voidTags.contains(tag.lowercased()) {
@@ -155,23 +232,16 @@ func findElements(_ html: String, tag: String?, classes: [String], idVal: String
             }
         }
     } else {
-        // Any tag
-        let pat = "<([A-Za-z][A-Za-z0-9]*)\\b([^>]*)>(.*?)</\\1>"
-        if let re = try? NSRegularExpression(pattern: pat, options: [.dotMatchesLineSeparators, .caseInsensitive]) {
-            for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
-                let full = ns.substring(with: m.range)
-                let tagName = ns.substring(with: m.range(at: 1))
-                let openAttrs = ns.substring(with: m.range(at: 2))
-                let inner = ns.substring(with: m.range(at: 3))
-                let open = "<\(tagName) \(openAttrs)>"
-                if !classes.allSatisfy({ classTokens(open).contains($0) }) { continue }
-                if let idv = idVal, htmlAttrs(open)["id"] != idv { continue }
-                if let an = attrName {
-                    let v = htmlAttrs(open)[an.lowercased()] ?? ""
-                    if !attrMatches(v, op: attrOp ?? "=", val: attrVal ?? "") { continue }
-                }
-                out.append(HtmlEl(open: open, inner: inner, full: full))
+        // Any tag (id-only / class-only / attr-only selectors): balanced matcher,
+        // same fix as the paired-tag case so nested same-name tags don't truncate.
+        for el in findBalancedAny(html) {
+            if !classes.allSatisfy({ classTokens(el.open).contains($0) }) { continue }
+            if let idv = idVal, htmlAttrs(el.open)["id"] != idv { continue }
+            if let an = attrName {
+                let v = htmlAttrs(el.open)[an.lowercased()] ?? ""
+                if !attrMatches(v, op: attrOp ?? "=", val: attrVal ?? "") { continue }
             }
+            out.append(HtmlEl(open: el.open, inner: el.inner, full: el.full))
         }
     }
     return out
