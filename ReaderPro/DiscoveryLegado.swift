@@ -88,10 +88,13 @@ struct DiscoveryView: View {
 }
 
 // 发现页跳转目标（source + category 一起传递）
-struct ExploreTarget: Identifiable {
+struct ExploreTarget: Identifiable, Hashable {
     let id = UUID()
     let source: LegadoSource
     let category: ExploreCategory
+
+    static func == (l: ExploreTarget, r: ExploreTarget) -> Bool { l.id == r.id }
+    func hash(into hasher: inout Hasher) { hasher.combine(id) }
 }
 
 // legado-E 发现分组卡片：书源名头部 + 分类按钮 flex 换行宫格
