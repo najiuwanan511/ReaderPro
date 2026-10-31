@@ -16,3 +16,6 @@ Payload/
 # Swift Package Manager
 .build/
 .swiftpm/
+
+# 本地下载/校验临时目录
+build-ipa/
