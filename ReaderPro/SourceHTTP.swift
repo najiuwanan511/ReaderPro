@@ -35,6 +35,14 @@ struct SourcePage {
 }
 
 enum SourceHTTP {
+    static func decode(_ data: Data, response: URLResponse) -> String {
+        if let charset = response.textEncodingName {
+            let cf = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
+            if cf != kCFStringEncodingInvalidId,
+               let text = String(data: data, encoding: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cf))) { return text }
+        }
+        return decodeTextData(data)
+    }
     // Task-local injection lets the real engine run against deterministic HTTP
     // fixtures without changing global state or contacting arbitrary websites.
     @TaskLocal static var testSession: URLSession?
@@ -80,9 +88,6 @@ enum SourceHTTP {
         guard let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
             throw SourceFailure(stage: "请求地址", message: "规则没有生成有效的 HTTP/HTTPS 地址", url: address)
         }
-        if parsed.options["webView"] as? Bool == true || !(parsed.options["webJs"] as? String ?? "").isEmpty {
-            throw SourceFailure(stage: "规则兼容性", message: "此请求依赖网页脚本或 WebView，请使用支持直接 HTTP 请求的书源", url: address)
-        }
         var req = URLRequest(url: url, timeoutInterval: 20)
         req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         // Use the originating page, never an unrelated source subscription site.
@@ -126,12 +131,7 @@ enum SourceHTTP {
                 throw SourceFailure(stage: stage, message: "HTTP \(http.statusCode)：\(hint)", url: address)
             }
             guard !data.isEmpty else { throw SourceFailure(stage: stage, message: "服务器返回空内容", url: address) }
-            var text: String?
-            if let charset = response.textEncodingName {
-                let cf = CFStringConvertIANACharSetNameToEncoding(charset as CFString)
-                if cf != kCFStringEncodingInvalidId { text = String(data: data, encoding: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(cf))) }
-            }
-            return SourcePage(text: text ?? decodeTextData(data), url: address)
+            return SourcePage(text: decode(data, response: response), url: address)
         } catch let failure as SourceFailure { throw failure }
         catch {
             if Task.isCancelled { throw CancellationError() }
@@ -147,11 +147,21 @@ extension LegadoSource {
             text = LegadoJS.run(String(text.dropFirst(4)), input: "", baseUrl: bookSourceUrl,
                                 sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl)
         }
+        text = Self.fillSearchTemplate(text, key: LegadoJSCtx.key, page: 1, sourceUrl: bookSourceUrl)
+        if SourceHTTP.headers(text).isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+            text = LegadoJS.run("(" + text + ")", input: "", baseUrl: bookSourceUrl,
+                                sourceKey: LegadoJSCtx.key, sourceUrl: bookSourceUrl)
+        }
         return SourceHTTP.headers(text)
     }
 
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {
-        let req = try SourceHTTP.request(address, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page)
+        let expanded = Self.fillSearchTemplate(address, key: key, page: page, sourceUrl: base ?? bookSourceUrl)
+        let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page)
+        let options = SourceHTTP.options(expanded).options
+        if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {
+            return try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20))
+        }
         return try await SourceHTTP.load(req, stage: stage)
     }
 }

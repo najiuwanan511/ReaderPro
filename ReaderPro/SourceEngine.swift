@@ -136,10 +136,11 @@ extension KeyedDecodingContainer {
 
 let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) ReaderPro/1.0"
 
-// 给任意异步操作加硬超时：超时抛错并取消。用于搜索/发现，避免单个失效源把整批卡死几十秒。
+// URLSession and synchronous JS bridge requests both observe this deadline.
 func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
     try await withThrowingTaskGroup(of: T.self) { group in
-        group.addTask { try await op() }
+        let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(seconds))
+        group.addTask { try await LegadoJSCtx.$deadline.withValue(deadline) { try await op() } }
         group.addTask {
             try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
             throw NSError(domain: "timeout", code: -1, userInfo: [NSLocalizedDescriptionKey: "请求超时"])

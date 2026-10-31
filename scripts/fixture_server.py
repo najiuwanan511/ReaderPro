@@ -6,6 +6,8 @@ URLSession, so an ATS regression fails instead of passing via URLProtocol.
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlsplit, parse_qs
 import json
+import time
+from pathlib import Path
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -19,6 +21,29 @@ class Handler(BaseHTTPRequestHandler):
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
+        elif path == '/packs/user':
+            mime = 'application/json; charset=utf-8'
+            body = Path('build/source-pack-1325.json').read_text(encoding='utf-8')
+        elif path == '/packs/chuangshi':
+            mime = 'application/json; charset=utf-8'
+            entries = json.loads(Path('build/source-pack-1325.json').read_text(encoding='utf-8'))
+            body = json.dumps(next(s for s in entries if s['bookSourceUrl'] == 'https://chuangshi.qq.com/'), ensure_ascii=False)
+        elif path == '/slow-search':
+            time.sleep(4)
+            mime, body = 'application/json; charset=utf-8', '{"data":[]}'
+        elif path == '/web-script':
+            body = '<html><body><div id="dynamic"></div><script>setTimeout(function(){document.getElementById("dynamic").innerHTML="网页脚本正文";document.cookie="wv=ready; path=/";},100);</script></body></html>'
+        elif path == '/bridge-cookie':
+            body = self.headers.get('Cookie', '')
+        elif path == '/bridge-library':
+            body = "function remoteCategory() { return '远程分类'; }"
+        elif path == '/bridge-post':
+            body = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()
+        elif path == '/bridge-redirect':
+            self.send_response(302)
+            self.send_header('Location', '/json/search')
+            self.end_headers()
+            return
         elif path == '/packs/mixed':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'data': [{'bookSourceName': 'direct', 'bookSourceUrl': 'https://direct.test',
@@ -62,12 +87,15 @@ class Handler(BaseHTTPRequestHandler):
             # A back-edge and repeated chapter prove cycle and dedup handling.
             nxt = str(page + 1 if page < 6 else 1)
             body = f'<section id="chapters"><p><a href="../chapter/{page}">第{page}章</a></p><p><a href="../chapter/1">第1章</a></p></section><a class="next" href="{nxt}">下一页</a>'
+            body += '<select>' + ''.join(f'<option value="{i}">{i}</option>' for i in range(1, 7)) + '</select>'
         elif path.startswith('/book/1/chapter/'):
             chapter = int(path.rsplit('/', 1)[1])
             page = int(parse_qs(urlsplit(self.path).query).get('page', ['1'])[0])
             body = f'<article id="content"><p>第{chapter}章第{page}段。这是完整正文。</p></article>'
             if page < 7:
                 body += f'<a class="next" href="{chapter}?page={page + 1}">下一页</a>'
+            else:
+                body += f'<a class="next-chapter" href="{chapter + 1}">下一章</a>'
         elif path == '/json/noresults':
             mime, body = 'application/json; charset=utf-8', '{"data":[]}'
         elif path == '/json/search':

@@ -26,6 +26,7 @@ struct SourceManagementView: View {
     @State private var qrResult = ""
     @State private var qrError = ""
     @State private var filterText = ""
+    @FocusState private var sourceSearchFocused: Bool
     @State private var selectedSource: LegadoSource?
     // 多选 + 校验
     @State private var editing = false
@@ -86,9 +87,10 @@ struct SourceManagementView: View {
                 ForEach(filtered) { src in
                     HStack(spacing: 10) {
                         if editing {
-                            Image(systemName: selected.contains(src.id) ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(selected.contains(src.id) ? AppTheme.accent : .secondary)
-                                .onTapGesture { toggleSelect(src.id) }
+                            Button { toggleSelect(src.id) } label: {
+                                Image(systemName: selected.contains(src.id) ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(selected.contains(src.id) ? AppTheme.accent : .secondary)
+                            }.buttonStyle(.plain)
                         }
                         VStack(alignment: .leading) {
                             Text(src.bookSourceName).font(.headline)
@@ -99,7 +101,7 @@ struct SourceManagementView: View {
                         if checkingIDs.contains(src.id) {
                             VStack { ProgressView(); Text("校验中").font(.caption2) }
                         } else if let report = validation.report(for: src) {
-                            Button { selectedReport = report } label: {
+                            Button { sourceSearchFocused = false; selectedReport = report } label: {
                                 VStack(alignment: .trailing, spacing: 3) {
                                     Label(report.status.title, systemImage: report.status == .passed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                                         .foregroundStyle(report.status == .passed ? Color.green : (report.status == .failed ? Color.red : Color.orange))
@@ -115,7 +117,6 @@ struct SourceManagementView: View {
                         }
                     }
                     .contentShape(Rectangle())
-                    .onTapGesture { if editing { toggleSelect(src.id) } }
                 }
                 .onDelete { idx in
                     let snapshot = filtered
@@ -128,12 +129,15 @@ struct SourceManagementView: View {
         .navigationTitle("书源管理")
         .readerNavigationStyle()
         .listStyle(.plain)
+        .scrollDismissesKeyboard(.interactively)
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 8) {
                 HStack {
                     Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                     TextField("搜索书源、分组、网址或失败原因", text: $filterText)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .focused($sourceSearchFocused)
+                        .onSubmit { sourceSearchFocused = false }
                         .accessibilityIdentifier("sourceSearch")
                     if !filterText.isEmpty { Button { filterText = "" } label: { Image(systemName: "xmark.circle.fill") } }
                 }.padding(10).background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 8))

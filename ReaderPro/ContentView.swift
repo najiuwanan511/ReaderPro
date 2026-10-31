@@ -58,9 +58,7 @@ struct BookshelfView: View {
     @State private var exportURL: URL?
     @State private var showExport = false
     @State private var searchText = ""
-    @State private var sourceResults: [SourceBook] = []
-    @State private var sourceSearching = false
-    @State private var sourceSearchedKey = ""
+    @StateObject private var shelfSearch = SourceSearchController()
     @AppStorage("shelfSortMode") private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
     @AppStorage("shelfViewMode") private var viewMode = 2 // 0 封面叠字, 1 列表, 2 封面下方书名
     @State private var selectedGroup = 0
@@ -136,12 +134,7 @@ struct BookshelfView: View {
                 if !searchText.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Button {
-                            sourceSearching = true; sourceResults = []; sourceSearchedKey = searchText
-                            let k = searchText
-                            Task {
-                                let res = await searchAllSources(store.enabledSources, key: k)
-                                await MainActor.run { sourceResults = res; sourceSearching = false }
-                            }
+                            shelfSearch.start(store.enabledSources, key: searchText)
                         } label: {
                             HStack {
                                 Image(systemName: "magnifyingglass")
@@ -149,15 +142,17 @@ struct BookshelfView: View {
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption)
                             }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
-                        }.buttonStyle(.plain).disabled(sourceSearching)
-                        if sourceSearching { ProgressView("正在多源搜索…") }
-                        else if !sourceSearchedKey.isEmpty {
-                            Text("源搜索结果 \(sourceResults.count) 本（只留标题/作者含关键词的）").font(.caption).foregroundStyle(.secondary)
-                            ForEach(sourceResults) { result in
+                        }.buttonStyle(.plain)
+                        if shelfSearch.searching {
+                            HStack { ProgressView("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)"); Spacer(); Button("停止") { shelfSearch.cancel() } }
+                        }
+                        if !shelfSearch.keyword.isEmpty {
+                            Text("源搜索结果 \(shelfSearch.results.count) 本").font(.caption).foregroundStyle(.secondary)
+                            ForEach(shelfSearch.results) { result in
                                 Button { shelfResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
                                 Divider()
                             }
-                            if sourceResults.isEmpty {
+                            if shelfSearch.results.isEmpty && !shelfSearch.searching {
                                 Text("这个关键词在启用源里没搜到书：换个书名/作者，或者去设置 → 书源管理确认源已启用。").font(.footnote).foregroundStyle(.secondary)
                             }
                         }
@@ -378,10 +373,8 @@ struct BookshelfView: View {
 struct SourceView: View {
     @ObservedObject var store: BookStore
     @State private var key = ""
-    @State private var results: [SourceBook] = []
-    @State private var allResults: [SourceBook] = []
-    @State private var searching = false
-    @State private var searchedCount = 0
+    @StateObject private var searchState = SourceSearchController()
+    @State private var showSearchErrors = false
     @State private var showImport = false
     @State private var importText = ""
     @State private var importError = ""
@@ -392,7 +385,7 @@ struct SourceView: View {
             HStack {
                 TextField("书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("bookSearch")
-                    .submitLabel(.search).onSubmit { if !searching { search() } }
+                    .submitLabel(.search).onSubmit { search() }
                 Button { search() } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 15, weight: .semibold))
@@ -400,7 +393,7 @@ struct SourceView: View {
                         .frame(width: 34, height: 34)
                         .background(AppTheme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
-                .disabled(key.isEmpty || searching)
+                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("submitBookSearch")
             }.padding(.horizontal)
             HStack(spacing: 8) {
@@ -410,12 +403,20 @@ struct SourceView: View {
                 Spacer()
             }
             .font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
-            if searching {
-                ProgressView("正在搜索 \(store.enabledSources.count) 个书源…")
-            } else if searchedCount > 0 {
-                Text("找到 \(results.count) 本书 · 点击查看详情与目录").font(.caption).foregroundStyle(.secondary)
+            if searchState.searching {
+                HStack {
+                    ProgressView("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.results.count) 本")
+                    Spacer()
+                    Button("停止") { searchState.cancel() }.accessibilityIdentifier("cancelBookSearch")
+                }.padding(.horizontal).font(.caption)
+            } else if !searchState.keyword.isEmpty {
+                Text("\(searchState.cancelled ? "已停止" : "搜索完成") · 已搜索 \(searchState.completed)/\(searchState.total) · 找到 \(searchState.results.count) 本")
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            List(results) { r in
+            if !searchState.errors.isEmpty {
+                Button("查看 \(searchState.errors.count) 个书源的错误原因") { showSearchErrors = true }.font(.caption)
+            }
+            List(searchState.results) { r in
                 Button {
                     selectedResult = r
                 } label: {
@@ -423,8 +424,8 @@ struct SourceView: View {
                 }
             }
             .listStyle(.plain)
-            if results.isEmpty && !searching {
-                Text(store.enabledSources.isEmpty ? "还没有启用的书源，请先导入书源。" : (searchedCount > 0 ? "没有找到相关书籍，试试其他书名或作者。" : "输入书名或作者，搜索已启用的书源。"))
+            if searchState.results.isEmpty && !searchState.searching {
+                Text(store.enabledSources.isEmpty ? "还没有启用的书源，请先导入书源。" : (!searchState.keyword.isEmpty ? "没有找到相关书籍，试试其他书名或作者。" : "输入书名或作者，搜索已启用的书源。"))
                     .font(.footnote).foregroundStyle(.secondary).padding()
             }
         }
@@ -452,28 +453,20 @@ struct SourceView: View {
                 .toolbar { Button("关闭") { showImport = false } }
             }
         }
+        .sheet(isPresented: $showSearchErrors) {
+            NavigationStack {
+                List(Array(searchState.errors.enumerated()), id: \.offset) { _, message in
+                    Text(message).font(.footnote).textSelection(.enabled)
+                }.navigationTitle("搜索错误").toolbar { Button("关闭") { showSearchErrors = false } }
+            }
+        }
+        .onDisappear { searchState.cancel() }
         .sheet(item: $selectedResult) { result in
             SourceBookDetailView(store: store, result: result,
-                alternatives: allResults.filter { dedupeKey($0) == dedupeKey(result) })
+                alternatives: searchState.allResults.filter { dedupeKey($0) == dedupeKey(result) })
         }
     }
-    func search() {
-        guard !searching, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        let enabled = store.enabledSources
-        guard !enabled.isEmpty else { results = []; allResults = []; return }
-        searching = true; searchedCount = 0
-        let k = key
-        Task {
-            let raw = await searchAllRawSources(enabled, key: k)
-            var seen = Set<String>(); var deduped: [SourceBook] = []
-            for b in raw {
-                let kk = dedupeKey(b)
-                if seen.contains(kk) { continue }
-                seen.insert(kk); deduped.append(b)
-            }
-            await MainActor.run { allResults = raw; results = deduped; searchedCount = enabled.count; searching = false }
-        }
-    }
+    func search() { searchState.start(store.enabledSources, key: key) }
     func importSource() {
         let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
         importError = ""

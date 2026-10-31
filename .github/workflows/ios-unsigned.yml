@@ -20,6 +20,7 @@ jobs:
       - name: Start deterministic HTTP fixtures
         run: |
           mkdir -p build
+          python3 scripts/fetch_user_pack.py
           python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
           for i in {1..20}; do
             if curl --fail --silent http://127.0.0.1:8765/health; then exit 0; fi
@@ -60,6 +61,7 @@ jobs:
             build/tests.log
             build/fixture-server.log
             build/screenshots
+            build/source-pack-audit.json
 
       - name: Verify source ATS configuration
         run: |

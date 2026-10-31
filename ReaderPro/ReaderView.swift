@@ -432,7 +432,8 @@ struct ReaderView: View {
                     await MainActor.run { errorText = "这本书的书源已删除或未启用，无法拉取在线章节"; loading = false }
                     return
                 }
-                let content = try await src.fetchChapterContent(ch)
+                let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : b.chapters.first?.url
+                let content = try await src.fetchChapterContent(ch, nextChapterUrl: nextURL)
                 await MainActor.run {
                     guard chapterIndex == idx else { loading = false; return }
                     if var nb = store.books.first(where: { $0.id == bookId }) {

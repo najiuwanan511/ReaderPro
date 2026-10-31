@@ -29,6 +29,15 @@ final class LegadoJS {
     private static var store: [String: [String: String]] = [:]
     private static let storeLock = NSLock()
 
+    static func variable(_ key: String) -> String {
+        storeLock.lock(); defer { storeLock.unlock() }
+        return store[LegadoJSCtx.sourceUrl]?[key] ?? ""
+    }
+    static func putVariable(_ key: String, _ value: String) {
+        storeLock.lock(); defer { storeLock.unlock() }
+        store[LegadoJSCtx.sourceUrl, default: [:]][key] = value
+    }
+
     // 执行一段 JS 规则。input 是规则输入（result 初始值），返回执行后 result 的字符串值。
     static func run(_ js: String, input: String, baseUrl: String,
                     sourceKey: String, sourceUrl: String,
@@ -57,10 +66,11 @@ final class LegadoJS {
             storeLock.lock(); defer { storeLock.unlock() }
             return store[storeKey]?[k] ?? ""
         }
-        let jput: @convention(block) (String, JSValue) -> Void = { k, v in
+        let jput: @convention(block) (String, JSValue) -> String = { k, v in
             storeLock.lock(); defer { storeLock.unlock() }
             if store[storeKey] == nil { store[storeKey] = [:] }
             store[storeKey]?[k] = v.toString() ?? ""
+            return v.toString() ?? ""
         }
         java.setObject(jget, forKeyedSubscript: "get" as NSString)
         java.setObject(jput, forKeyedSubscript: "put" as NSString)
@@ -73,10 +83,19 @@ final class LegadoJS {
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "urlEncode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "encodeURI" as NSString)
-        let getString: @convention(block) (String) -> String = { rule in applyRuleFirst(input, rule, base: baseUrl) }
-        let getElements: @convention(block) (String) -> [String] = { rule in applyRule(input, rule, base: baseUrl) }
-        java.setObject(getString, forKeyedSubscript: "getString" as NSString)
-        java.setObject(getElements, forKeyedSubscript: "getElements" as NSString)
+        var content = input
+        let getString: @convention(block) (String, String, Bool) -> String = { rule, text, isURL in
+            let values = applyRule(text, rule, base: baseUrl)
+            let value = values.joined(separator: "\n")
+            return isURL ? resolveUrl(value, base: baseUrl) : value
+        }
+        let getElements: @convention(block) (String, String) -> [String] = { rule, text in applyRule(text, rule, base: baseUrl) }
+        let getContent: @convention(block) () -> String = { content }
+        let setContent: @convention(block) (String) -> Void = { content = $0 }
+        java.setObject(getString, forKeyedSubscript: "_getString" as NSString)
+        java.setObject(getElements, forKeyedSubscript: "_getElements" as NSString)
+        java.setObject(getContent, forKeyedSubscript: "_content" as NSString)
+        java.setObject(setContent, forKeyedSubscript: "setContent" as NSString)
         java.setObject(LegadoJS.urlDecodeBlock, forKeyedSubscript: "urlDecode" as NSString)
         java.setObject(LegadoJS.formatDateBlock, forKeyedSubscript: "formatDate" as NSString)
         java.setObject(LegadoJS.timeMillisBlock, forKeyedSubscript: "timeMillis" as NSString)
@@ -85,6 +104,60 @@ final class LegadoJS {
         java.setObject(LegadoJS.substringBlock, forKeyedSubscript: "substring" as NSString)
         java.setObject(LegadoJS.strBlock, forKeyedSubscript: "str" as NSString)
         ctx.setObject(java, forKeyedSubscript: "java" as NSString)
+
+        let request: @convention(block) (String, String, String, String, Double, Bool) -> [String: Any] = { address, method, body, headersJSON, timeout, follow in
+            do {
+                let headers = LegadoJSCtx.headers.merging(SourceHTTP.headers(headersJSON)) { _, value in value }
+                return try SourceJSBridge.request(address, base: baseUrl, headers: headers,
+                                                   method: method, body: body,
+                                                   timeout: timeout > 0 ? timeout / 1000 : 20, followRedirects: follow)
+            } catch {
+                return ["error": sourceErrorMessage(error)]
+            }
+        }
+        java.setObject(request, forKeyedSubscript: "_request" as NSString)
+        let web: @convention(block) (String, String, String) -> String = { html, address, script in
+            do {
+                let request = try SourceHTTP.request(address.isEmpty ? baseUrl : address, base: baseUrl, headers: LegadoJSCtx.headers)
+                return try SourceJSBridge.web(request, html: html, script: script).text
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return ""
+            }
+        }
+        java.setObject(web, forKeyedSubscript: "_webView" as NSString)
+        let select: @convention(block) (String, String) -> [String] = { text, selector in LegadoDOM.css(text, selector).map(\.full) }
+        let attribute: @convention(block) (String, String) -> String = { text, name in
+            LegadoDOM.css(text, "body > *").first.map { htmlAttrs($0.open)[name.lowercased()] ?? "" } ?? ""
+        }
+        let textOnly: @convention(block) (String) -> String = { stripText($0, preserveNewlines: false) }
+        java.setObject(select, forKeyedSubscript: "_select" as NSString)
+        java.setObject(attribute, forKeyedSubscript: "_attr" as NSString)
+        java.setObject(textOnly, forKeyedSubscript: "_textOnly" as NSString)
+        let cookieRead: @convention(block) (String) -> String = { address in
+            guard let url = URL(string: resolveUrl(address, base: baseUrl)) else { return "" }
+            return (HTTPCookieStorage.shared.cookies(for: url) ?? []).map { $0.name + "=" + $0.value }.joined(separator: "; ")
+        }
+        let cookieWrite: @convention(block) (String, String) -> Void = { address, value in
+            guard let url = URL(string: resolveUrl(address, base: baseUrl)) else { return }
+            // Legado accepts a Cookie request header containing several pairs.
+            let attributes: Set<String> = ["path", "domain", "expires", "max-age", "samesite", "secure", "httponly"]
+            for pair in value.components(separatedBy: ";") {
+                let parts = pair.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                guard parts.count == 2, !attributes.contains(parts[0].lowercased()) else { continue }
+                let cookies = HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": parts.joined(separator: "=") + "; Path=/"], for: url)
+                for cookie in cookies { HTTPCookieStorage.shared.setCookie(cookie) }
+            }
+        }
+        let cookieRemove: @convention(block) (String) -> Void = { address in
+            guard let url = URL(string: resolveUrl(address, base: baseUrl)) else { return }
+            for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] { HTTPCookieStorage.shared.deleteCookie(cookie) }
+        }
+        let cookies = JSValue(newObjectIn: ctx)!
+        cookies.setObject(cookieRead, forKeyedSubscript: "getCookie" as NSString)
+        cookies.setObject(cookieWrite, forKeyedSubscript: "setCookie" as NSString)
+        cookies.setObject(cookieRemove, forKeyedSubscript: "removeCookie" as NSString)
+        ctx.setObject(cookies, forKeyedSubscript: "cookie" as NSString)
 
         // ---- source 对象 ----
         let source = JSValue(newObjectIn: ctx)!
@@ -107,6 +180,14 @@ final class LegadoJS {
         source.setObject(getHeader, forKeyedSubscript: "headerMap" as NSString)
         source.setObject(getConcurrent, forKeyedSubscript: "getConcurrent" as NSString)
         source.setObject(putConcurrent, forKeyedSubscript: "putConcurrent" as NSString)
+        source.setObject(jget, forKeyedSubscript: "get" as NSString)
+        source.setObject(jput, forKeyedSubscript: "put" as NSString)
+        let variableKey = "ReaderPro.sourceVariable." + sourceUrl
+        let getVariable: @convention(block) () -> String = { UserDefaults.standard.string(forKey: variableKey) ?? "" }
+        let setVariable: @convention(block) (String) -> Void = { UserDefaults.standard.set($0, forKey: variableKey) }
+        source.setObject(getVariable, forKeyedSubscript: "getVariable" as NSString)
+        source.setObject(setVariable, forKeyedSubscript: "setVariable" as NSString)
+        source.setObject(setVariable, forKeyedSubscript: "putVariable" as NSString)
         ctx.setObject(source, forKeyedSubscript: "source" as NSString)
 
         // ---- book 对象 ----
@@ -120,16 +201,21 @@ final class LegadoJS {
         bookObj.setObject(b.coverUrl, forKeyedSubscript: "coverUrl" as NSString)
         ctx.setObject(bookObj, forKeyedSubscript: "book" as NSString)
 
+        ctx.evaluateScript(Self.compatibilityScript)
+
         // ---- 执行 ----
         // 关键修复：JS 规则大量用「最后一行是表达式」的方式返回结果，
         // 例如 exploreUrl 的 @js:...;JSON.stringify(s)，正文规则的 @js:...;result。
         // 之前把 evaluateScript 的返回值丢弃了、只读 result 变量，导致
         // JSON.stringify(...) 这种「靠返回值」的规则全部拿不到结果（发现/搜索/正文全空）。
-        let library = LegadoJSCtx.library
+        var library = LegadoJSCtx.library
         if !library.isEmpty {
             if library.hasPrefix("http://") || library.hasPrefix("https://") {
-                LegadoJSCtx.failures?.add("jsLib 是远程脚本地址，当前需要在书源中内嵌脚本内容")
-                return ""
+                do {
+                    library = try SourceJSBridge.request(library, base: sourceUrl, headers: header)["text"] as? String ?? ""
+                } catch {
+                    LegadoJSCtx.failures?.add("远程 jsLib：" + sourceErrorMessage(error)); return ""
+                }
             }
             ctx.evaluateScript(library)
         }
@@ -150,6 +236,90 @@ final class LegadoJS {
     }
 
     // MARK: 工具 block（静态，避免每次 run 重复创建）
+
+    private static let compatibilityScript = #"""
+    function _text(value) {
+        if (value == null) return java._content();
+        if (typeof value.outerHtml === 'function') return value.outerHtml();
+        return typeof value === 'object' ? JSON.stringify(value) : String(value);
+    }
+    function _array(items) {
+        items.toArray = function() { return this; };
+        items.size = function() { return this.length; };
+        items.get = function(i) { return this[i]; };
+        return items;
+    }
+    java.getString = function(rule, content, isUrl) { return java._getString(String(rule), _text(content), !!isUrl); };
+    java.getStringList = function(rule, content) { return _array(java._getElements(String(rule), _text(content))); };
+    java.getElements = java.getStringList;
+    java.getElement = function(rule, content) { return java.getElements(rule, content)[0] || ''; };
+    function _response(data) {
+        if (data.error) throw new Error(data.error);
+        return {
+            body: function() { return data.text; },
+            code: function() { return data.status; }, statusCode: function() { return data.status; },
+            header: function(name) { return data.headers[String(name).toLowerCase()] || ''; },
+            headers: function() { return data.headers; }, url: function() { return data.url; },
+            raw: function() { return {request:function() {return {url:function(){return data.url;}};}}; },
+            toString: function() { return data.text; }
+        };
+    }
+    java.connect = function(url, headers, timeout) {
+        return _response(java._request(String(url), '', '', typeof headers === 'string' ? headers : JSON.stringify(headers || {}), timeout || 20000, true));
+    };
+    java.ajax = function(url, timeout) { return java.connect(Array.isArray(url) ? url[0] : url, {}, timeout).body(); };
+    java.ajaxAll = function(urls) { return _array(urls.map(function(url) { return java.connect(url); })); };
+    ['get','head','post'].forEach(function(method) {
+        java[method] = function(url, body, headers, timeout) {
+            if (method !== 'post') { timeout = headers; headers = body; body = ''; }
+            return _response(java._request(String(url), method.toUpperCase(), String(body || ''), JSON.stringify(headers || {}), timeout || 20000, false));
+        };
+    });
+    java.timeFormat = function(time) {
+        var date = new Date(Number(time)), pad = function(n) { return ('0'+n).slice(-2); };
+        if (isNaN(date.getTime())) return '';
+        return date.getFullYear()+'/'+pad(date.getMonth()+1)+'/'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes());
+    };
+    java.log = function(value) { return value; };
+    java.toast = java.longToast = java.refreshExplore = function() {};
+    java.ruleUrl = baseUrl;
+    java.getSource = function() { return source; };
+    java.getBook = function() { return book; };
+    java.webView = function(html, url, script) { return java._webView(html == null ? '' : String(html), url == null ? baseUrl : String(url), script == null ? '' : String(script)); };
+    function _element(html) {
+        return {
+            outerHtml:function(){return html;}, toString:function(){return html;},
+            text:function(){return java._textOnly(html);},
+            html:function(){return html.replace(/^<[^>]+>/,'').replace(/<\/[^>]+>$/,'');},
+            attr:function(name){return java._attr(html, String(name));},
+            select:function(selector){return _elements(java._select(html, String(selector)));},
+            selectFirst:function(selector){return this.select(selector).first();},
+            getElementsByTag:function(tag){return this.select(tag);},
+            getElementsByClass:function(name){return this.select('.'+name);},
+            hasClass:function(name){return (' '+this.attr('class')+' ').indexOf(' '+name+' ')>=0;}
+        };
+    }
+    function _elements(htmls) {
+        var items=_array(htmls.map(_element));
+        items.first=function(){return this[0] || null;}; items.last=function(){return this[this.length-1] || null;};
+        items.text=function(){return this.map(function(e){return e.text();}).join(' ');};
+        items.attr=function(name){return this.length ? this[0].attr(name) : '';};
+        items.outerHtml=function(){return this.map(String).join('\n');};
+        items.select=function(selector){return _elements([].concat.apply([],this.map(function(e){return java._select(String(e),selector); })));};
+        return items;
+    }
+    var org={jsoup:{Jsoup:{parse:function(html){return _element(String(html));}}}};
+    cookie.getKey = function(url, key) {
+        var pairs = cookie.getCookie(String(url)).split(';');
+        for (var i=0;i<pairs.length;i++) { var p=pairs[i].trim(), at=p.indexOf('='); if(p.slice(0,at)===key)return p.slice(at+1); }
+        return '';
+    };
+    var cache = {
+        put: function(key, value, seconds) { return source.put('cache:'+key, JSON.stringify({value:String(value),until:seconds ? Date.now()+seconds*1000 : 0})); },
+        get: function(key) { try { var item=JSON.parse(source.get('cache:'+key)); return item.until && item.until<Date.now() ? '' : item.value; } catch(e) { return ''; } },
+        delete: function(key) { source.put('cache:'+key,''); }
+    };
+    """#
 
     static let hexEncodeBlock: @convention(block) (String) -> String = { s in
         Data(s.utf8).map { String(format: "%02x", $0) }.joined()

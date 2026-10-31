@@ -4,11 +4,13 @@ import Foundation
 // 书源引擎执行 @js:/<js> 规则时需要知道当前书源的 sourceUrl、搜索词 key、书信息 book。
 // 这些是"环境变量"，用 @TaskLocal 传递，避免在并发多源搜索时互相串值。
 enum LegadoJSCtx {
+    @TaskLocal static var deadline: Date?
     @TaskLocal static var sourceUrl: String = ""
     @TaskLocal static var key: String = ""
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
     @TaskLocal static var library = ""
     @TaskLocal static var failures: RuleFailures? = nil
+    @TaskLocal static var headers: [String: String] = [:]
 }
 
 // MARK: - Legado rule engine (subset, CSS/XPath/JSON/regex + JS via JavaScriptCore)
@@ -558,6 +560,7 @@ func jsonPathTokens(_ path: String) -> [String] {
     var p = path.trimmingCharacters(in: .whitespaces)
     if p.hasPrefix("@json:") { p = String(p.dropFirst(6)) }
     else if p.hasPrefix("@Json:") { p = String(p.dropFirst(6)) }
+    p = p.replacingOccurrences(of: "..", with: ".**.")
     if p.hasPrefix("$.") { p = String(p.dropFirst(2)) }
     else if p == "$" { return [] }
     else if p.hasPrefix("$") { p = String(p.dropFirst()) }
@@ -580,6 +583,15 @@ func jsonWalk(_ root: Any, _ path: String) -> [Any] {
     if tokens.isEmpty { return [root] }
     var current: [Any] = [root]
     for tok in tokens {
+        if tok == "**" {
+            func descendants(_ value: Any) -> [Any] {
+                if let dictionary = value as? [String: Any] { return [value] + dictionary.values.flatMap(descendants) }
+                if let array = value as? [Any] { return [value] + array.flatMap(descendants) }
+                return [value]
+            }
+            current = current.flatMap(descendants).filter { !($0 is [Any]) }
+            continue
+        }
         var next: [Any] = []
         // tok may be "key", "key[*]", "key[0]", "key[-1]", "[*]", "[0]"
         var key: String? = nil; var bracket: String? = nil
@@ -594,7 +606,8 @@ func jsonWalk(_ root: Any, _ path: String) -> [Any] {
         for c in current {
             var values: [Any] = []
             if let k = key, !k.isEmpty {
-                if let d = c as? [String: Any], let v = d[k] { values.append(v) }
+                if k == "*", let d = c as? [String: Any] { values.append(contentsOf: d.values) }
+                else if let d = c as? [String: Any], let v = d[k] { values.append(v) }
                 else if let arr = c as? [Any] {
                     for e in arr { if let d = e as? [String: Any], let v = d[k] { values.append(v) } }
                 }
@@ -699,8 +712,28 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
 // MARK: - Dispatcher
 
 func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [String] {
-    if rule.hasPrefix("http://") || rule.hasPrefix("https://") { return [rule] }
     if rule.isEmpty { return [] }
+    // Templates may contain JavaScript operators; expand them before splitting
+    // the surrounding rule at || or &&.
+    if rule.contains("{{") {
+        var out = rule
+        var count = 0
+        while let start = out.range(of: "{{"), let end = out[start.upperBound...].range(of: "}}"), count < 100 {
+            count += 1
+            var expression = String(out[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let value: String
+            if expression.hasPrefix("@@") { expression = String(expression.dropFirst(2)) }
+            if expression.hasPrefix("$") || expression.hasPrefix("@") || expression.contains("@text") || expression.contains("@href") || expression.hasPrefix("class.") || expression.hasPrefix("id.") || expression.hasPrefix("tag.") {
+                value = applyRuleFirst(input, expression, base: base)
+            } else {
+                value = LegadoJS.run(expression, input: input, baseUrl: base, sourceKey: LegadoJSCtx.key,
+                                     sourceUrl: LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book)
+            }
+            out.replaceSubrange(start.lowerBound..<end.upperBound, with: value)
+        }
+        return [out]
+    }
+    if rule.hasPrefix("http://") || rule.hasPrefix("https://") || rule.hasPrefix("/") && !rule.hasPrefix("//") { return [rule] }
     if rule.contains("&&") {
         var out: [String] = []
         for part in rule.components(separatedBy: "&&") {
@@ -715,25 +748,11 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
         }
         return []
     }
-    // Template string: "{{@@rule}} ... {{@@rule2}}" or plain text with templates
-    if rule.contains("{{") {
-        var out = rule
-        var changed = false
-        while let s = out.range(of: "{{@@"), let e = out[s.upperBound...].range(of: "}}") {
-            let inner = String(out[s.upperBound..<e.lowerBound])
-            let val = applyRuleFirst(input, inner, base: base)
-            out.replaceSubrange(s.lowerBound..<e.upperBound, with: val); changed = true
-        }
-        while let s = out.range(of: "{{"), let e = out[s.upperBound...].range(of: "}}") {
-            out.replaceSubrange(s.lowerBound..<e.upperBound, with: ""); changed = true
-        }
-        if changed { return [out] }
-    }
     if rule.lowercased().hasPrefix("@xpath:") { return LegadoDOM.xpath(input, String(rule.dropFirst(7))) }
     if rule.hasPrefix("//") || rule.hasPrefix("./") { return LegadoDOM.xpath(input, rule) }
     if rule.hasPrefix("@css:") { return evalCss(input, String(rule.dropFirst(5))) }
     if rule.hasPrefix("@json:") || rule.hasPrefix("@Json:") { return jsonExtract(input, rule) }
-    if rule.hasPrefix("$.") || rule == "$" { return jsonExtract(input, rule) }
+    if rule.hasPrefix("$") { return jsonExtract(input, rule) }
     if rule.hasPrefix(":") { return regexExtract(input, String(rule.dropFirst())) }
     if rule.hasPrefix("@@") { return evalDefaultChain(input, String(rule.dropFirst(2))) }
     let trimmedInput = input.trimmingCharacters(in: .whitespaces)
@@ -779,9 +798,22 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
 func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     var r = rule.trimmingCharacters(in: .whitespacesAndNewlines)
     if r.isEmpty { return [] }
+    if !r.lowercased().hasPrefix("@js"), !r.contains("<js>") {
+        if let start = r.range(of: "@put:{"), let end = r[start.upperBound...].firstIndex(of: "}") {
+            let json = "{" + r[start.upperBound..<end] + "}"
+            if let data = json.data(using: .utf8), let fields = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+                for (key, valueRule) in fields { LegadoJS.putVariable(key, applyRuleFirst(htmlOrJson, valueRule, base: base)) }
+            }
+            r.removeSubrange(start.lowerBound...end)
+            if r.isEmpty { return [htmlOrJson] }
+        }
+        while let start = r.range(of: "@get:{"), let end = r[start.upperBound...].firstIndex(of: "}") {
+            r.replaceSubrange(start.lowerBound...end, with: LegadoJS.variable(String(r[start.upperBound..<end])))
+        }
+    }
     // 1) 整段 JS 规则：@js:code
-    if r.hasPrefix("@js:") || r.hasPrefix("@JS:") {
-        let js = String(r.dropFirst(4))
+    if r.lowercased().hasPrefix("@js") {
+        var js = String(r.dropFirst(3)); if js.hasPrefix(":") { js.removeFirst() }
         let out = LegadoJS.run(js, input: htmlOrJson, baseUrl: base,
                                sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
                                book: LegadoJSCtx.book)
@@ -854,21 +886,23 @@ struct ExploreCategory: Identifiable, Equatable {
 
 extension LegadoSource {
     func exploreCategories() -> [ExploreCategory] {
+        LegadoJSCtx.$library.withValue(jsLib) { exploreCategoriesImpl() }
+    }
+
+    private func exploreCategoriesImpl() -> [ExploreCategory] {
         let raw = effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return [] }
         // JS exploreUrl：@js:...;JSON.stringify(s) —— 执行 JS 拿到分类 JSON 数组。
         // 之前这里直接 return []，导致 133 个 JS 分类源在发现页完全消失。
         var t = raw
-        if t.hasPrefix("@js:") || t.hasPrefix("@JS:") {
-            let js = String(t.dropFirst(4))
+        if t.lowercased().hasPrefix("@js") {
+            var js = String(t.dropFirst(3)); if js.hasPrefix(":") { js.removeFirst() }
             let out = LegadoJS.run(js, input: "", baseUrl: bookSourceUrl,
                                    sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
                                    book: nil, page: 1)
             t = out.trimmingCharacters(in: .whitespacesAndNewlines)
         } else if t.contains("<js>") {
-            let out = LegadoJS.run(t, input: "", baseUrl: bookSourceUrl,
-                                   sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
-                                   book: nil, page: 1)
+            let out = Self.fillSearchTemplate(t, key: "", page: 1, sourceUrl: bookSourceUrl)
             t = out.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         if t.isEmpty { return [] }
@@ -934,7 +968,19 @@ extension LegadoSource {
     // 这类 JS 表达式（用 JavaScriptCore 求值，key/page 作为变量注入）。
     // 之前只替换 {{key}}/{{page}}，导致 100+ 个用 JS 构造搜索地址的源 URL 拼错、搜不到。
     static func fillSearchTemplate(_ template: String, key: String, page: Int, sourceUrl: String) -> String {
-        var out = template
+        var out = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        if out.lowercased().hasPrefix("@js") {
+            var code = String(out.dropFirst(3)); if code.hasPrefix(":") { code.removeFirst() }
+            out = LegadoJS.run(code, input: "", baseUrl: sourceUrl, sourceKey: key, sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page)
+        } else {
+            while let start = out.range(of: "<js>"), let end = out[start.upperBound...].range(of: "</js>") {
+                let prefix = String(out[..<start.lowerBound])
+                let code = String(out[start.upperBound..<end.lowerBound])
+                let value = LegadoJS.run(code, input: prefix, baseUrl: sourceUrl, sourceKey: key,
+                                         sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page)
+                out = value + String(out[end.upperBound...])
+            }
+        }
         let encKey = key.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? key
         out = out.replacingOccurrences(of: "{{key}}", with: encKey)
         out = out.replacingOccurrences(of: "{{page}}", with: "\(page)")
@@ -946,8 +992,8 @@ extension LegadoSource {
             let expr = String(out[s.upperBound..<e.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
             if expr.isEmpty { out.replaceSubrange(s.lowerBound..<e.upperBound, with: ""); continue }
             let val = LegadoJS.run(expr, input: "", baseUrl: sourceUrl,
-                                   sourceKey: key, sourceUrl: sourceUrl,
-                                   book: nil, page: page)
+                                   sourceKey: key, sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl,
+                                   book: LegadoJSCtx.book, page: page)
             out.replaceSubrange(s.lowerBound..<e.upperBound, with: val)
         }
         return out
@@ -963,9 +1009,18 @@ extension LegadoSource {
                 try await LegadoJSCtx.$book.withValue(context) {
                     try await LegadoJSCtx.$library.withValue(jsLib) {
                         try await LegadoJSCtx.$failures.withValue(failures) {
-                            let result = try await operation()
-                            try failures.check()
-                            return result
+                            return try await LegadoJSCtx.$headers.withValue(requestHeaders) {
+                              do {
+                                let result = try await operation()
+                                try failures.check()
+                                return result
+                            } catch {
+                                // A script error can otherwise be hidden by a later
+                                // generic "no books"/"empty chapters" parse error.
+                                try failures.check()
+                                throw error
+                              }
+                            }
                         }
                     }
                 }
@@ -1068,13 +1123,18 @@ extension LegadoSource {
             throw SourceFailure(stage: "目录", message: "缺少章节列表、章节名或章节地址规则")
         }
         let detailed = book.tocUrl == nil ? try await fetchBookInfoImpl(book: book) : book
-        var next = detailed.tocUrl ?? detailed.url
+        let initial = detailed.tocUrl ?? detailed.url
+        var pending = [initial]; var queued: Set<String> = [initial]; var cursor = 0
         var visited = Set<String>(); var seen = Set<String>(); var chapters: [BookChapter] = []
-        while !next.isEmpty {
+        var pageCount = 0
+        while cursor < pending.count {
             try Task.checkCancellation()
-            guard visited.count < 1000 else { throw SourceFailure(stage: "目录分页", message: "超过 1000 页保护限制，未保存不完整目录", url: next) }
-            guard visited.insert(next).inserted else { break }
-            let response = try await loadPage(next, stage: "目录第 \(visited.count) 页")
+            let next = pending[cursor]; cursor += 1
+            guard !next.isEmpty, visited.insert(next).inserted else { continue }
+            guard pageCount < 1000 else { throw SourceFailure(stage: "目录分页", message: "超过 1000 页保护限制，未保存不完整目录", url: next) }
+            pageCount += 1
+            let response = try await loadPage(next, stage: "目录第 \(pageCount) 页")
+            visited.insert(response.url)
             let items = ruleItems(response.text, rule: ruleToc.chapterList, base: response.url)
             var matched = 0
             for item in items {
@@ -1088,13 +1148,15 @@ extension LegadoSource {
             }
             try LegadoJSCtx.failures?.check()
             guard matched > 0 else { throw SourceFailure(stage: "目录解析", message: "章节规则没有匹配到有效章节，未使用导航链接冒充目录", url: response.url) }
-            next = resolveUrl(applyRuleFirst(response.text, ruleToc.nextTocUrl, base: response.url), base: response.url)
-            if next == response.url { break }
+            for value in applyRule(response.text, ruleToc.nextTocUrl, base: response.url) {
+                let address = resolveUrl(value, base: response.url)
+                if isSourceURL(address), !visited.contains(address), queued.insert(address).inserted { pending.append(address) }
+            }
         }
         return chapters
     }
 
-    func fetchChapterContent(_ chapter: BookChapter) async throws -> String {
+    func fetchChapterContent(_ chapter: BookChapter, nextChapterUrl: String? = nil) async throws -> String {
         guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.text }
         return try await withRules {
             guard !ruleContent.content.isEmpty else { throw SourceFailure(stage: "正文", message: "书源缺少正文规则") }
@@ -1111,6 +1173,8 @@ extension LegadoSource {
                 guard !part.isEmpty else { throw SourceFailure(stage: "正文解析", message: "正文规则未匹配到内容，请检查规则、登录状态或验证码", url: response.url) }
                 parts.append(part)
                 next = resolveUrl(applyRuleFirst(response.text, ruleContent.nextContentUrl, base: response.url), base: response.url)
+                if let boundary = nextChapterUrl,
+                   SourceHTTP.options(next).url == SourceHTTP.options(resolveUrl(boundary, base: response.url)).url { break }
                 if next == response.url { break }
             }
             var content = parts.joined(separator: "\n")

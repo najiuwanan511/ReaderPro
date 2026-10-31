@@ -42,7 +42,9 @@ enum SourceValidation {
         var source = source
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        return SHA256.hash(data: (try? encoder.encode(source)) ?? Data()).map { String(format: "%02x", $0) }.joined()
+        var data = Data("source-engine-20261031-v2".utf8)
+        data.append((try? encoder.encode(source)) ?? Data())
+        return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     static func run(_ source: LegadoSource, keyword: String) async -> SourceValidationReport {
@@ -95,7 +97,8 @@ enum SourceValidation {
                     }
                     ok(stage, "首章 \(images.count) 张图片，首张响应正常")
                 } else {
-                    let text = try await withTimeout(45) { try await source.fetchChapterContent(first) }
+                    let nextURL = chapters.dropFirst().first?.url ?? first.url
+                    let text = try await withTimeout(45) { try await source.fetchChapterContent(first, nextChapterUrl: nextURL) }
                     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SourceFailure(stage: stage, message: "首章正文为空") }
                     ok(stage, "首章「\(first.title)」读取 \(text.count) 字")
                 }
@@ -112,13 +115,18 @@ enum SourceValidation {
 @MainActor final class SourceValidationStore: ObservableObject {
     @Published private(set) var reports: [String: SourceValidationReport] = [:]
     private let url: URL
+    private var fingerprints: [String: (LegadoSource, String)] = [:]
     @Published private(set) var persistenceError = ""
     init(url: URL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("source-validation.json")) {
         self.url = url
         if let data = try? Data(contentsOf: url), let saved = try? JSONDecoder().decode([String: SourceValidationReport].self, from: data) { reports = saved }
     }
     func report(for source: LegadoSource) -> SourceValidationReport? {
-        guard let report = reports[source.id], report.fingerprint == SourceValidation.fingerprint(source) else { return nil }
+        guard let report = reports[source.id] else { return nil }
+        let fingerprint: String
+        if let cached = fingerprints[source.id], cached.0 == source { fingerprint = cached.1 }
+        else { fingerprint = SourceValidation.fingerprint(source); fingerprints[source.id] = (source, fingerprint) }
+        guard report.fingerprint == fingerprint else { return nil }
         return report
     }
     func set(_ report: SourceValidationReport) { reports[report.id] = report }

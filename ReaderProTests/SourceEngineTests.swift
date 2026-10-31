@@ -38,6 +38,24 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(SourceHTTP.options(base + "/a,b?q=1,2").url, base + "/a,b?q=1,2")
     }
 
+    func testContentPaginationStopsAtNextChapterBoundary() async throws {
+        var source = SourceTestFixtures.html()
+        source.ruleContent.nextContentUrl = "@css:a.next@href||@css:a.next-chapter@href"
+        let chapter = BookChapter(id: "first", title: "第一章", text: "__URL__" + base + "/book/1/chapter/1", url: base + "/book/1/chapter/1")
+        let text = try await source.fetchChapterContent(chapter, nextChapterUrl: base + "/book/1/chapter/2")
+        XCTAssertTrue(text.contains("第1章第7段"))
+        XCTAssertFalse(text.contains("第2章"))
+        XCTAssertEqual(text.components(separatedBy: "这是完整正文").count - 1, 7)
+    }
+
+    func testDirectoryOptionListLoadsEveryPageEvenWhenFirstIsCurrent() async throws {
+        var source = SourceTestFixtures.html()
+        source.ruleToc.nextTocUrl = "@css:option@value"
+        let books = try await source.discover()
+        let chapters = try await source.fetchChapters(book: XCTUnwrap(books.first))
+        XCTAssertEqual(chapters.map(\.title), (1...6).map { "第\($0)章" })
+    }
+
     func testJSONEndToEnd() async throws {
         let source = SourceTestFixtures.json()
         let results = try await source.search(key: "测试")
@@ -70,10 +88,95 @@ final class SourceEngineTests: XCTestCase {
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("正文规则")) }
     }
 
-    func testWebViewDependencyIsAnExplicitCompatibilityFailure() throws {
-        XCTAssertThrowsError(try SourceHTTP.request(#"/x,{"webView":true}"#, base: base)) {
-            XCTAssertTrue(sourceErrorMessage($0).contains("WebView"))
+    func testWebViewRunsPageScriptsAndSharesCookies() async throws {
+        let request = try SourceHTTP.request("/web-script", base: base)
+        let page = try await SourceWebLoader.load(request, script: "document.getElementById('dynamic').textContent")
+        XCTAssertEqual(page.text, "网页脚本正文")
+        XCTAssertTrue((HTTPCookieStorage.shared.cookies(for: URL(string: base)!) ?? []).contains { $0.name == "wv" && $0.value == "ready" })
+        var source = SourceTestFixtures.html()
+        source.exploreUrl = #"脚本分类::/web-script,{"webView":true,"webJs":"document.documentElement.outerHTML"}"#
+        source.ruleExplore = .init()
+        source.ruleExplore.bookList = "#dynamic"
+        source.ruleExplore.name = "@js:'网页脚本正文'"
+        source.ruleExplore.bookUrl = "@js:'/book/1/'"
+        let books = try await source.discover()
+        XCTAssertEqual(books.first?.title, "网页脚本正文")
+    }
+
+    func testUserProvidedPackImportsEverySourceWithoutLosingRules() async throws {
+        let page = try await SourceHTTP.load(SourceHTTP.request("/packs/user", base: base), stage: "实际合集导入")
+        let originals = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(page.text.utf8)) as? [[String: Any]])
+        let imported = importSourcesDetailed(page.text)
+        XCTAssertEqual(imported.sources.count, 1466)
+        XCTAssertEqual(imported.skipped, 0)
+        XCTAssertEqual(Set(imported.sources.map(\.bookSourceUrl)).count, 1466)
+        for source in imported.sources {
+            let original = try XCTUnwrap(originals.first { $0["bookSourceUrl"] as? String == source.bookSourceUrl })
+            XCTAssertEqual(source.bookSourceName, original["bookSourceName"] as? String)
+            XCTAssertEqual(source.searchUrl, original["searchUrl"] as? String ?? "")
+            XCTAssertEqual(source.ruleToc.chapterList, (original["ruleToc"] as? [String: Any])?["chapterList"] as? String ?? "")
+            XCTAssertEqual(source.ruleContent.content, (original["ruleContent"] as? [String: Any])?["content"] as? String ?? "")
         }
+        let first = try XCTUnwrap(imported.sources.first)
+        XCTAssertGreaterThan(first.exploreCategories().count, 5)
+    }
+
+    func testCommonAndroidJSNetworkCookieVariableAndDOMInterfaces() async throws {
+        let result = await Task.detached { [base] in
+            LegadoJS.run(#"""
+            cookie.setCookie(source.getKey(), 'readerpro=ready');
+            if(java.ajax(baseUrl+'/bridge-cookie').indexOf('readerpro=ready')<0) throw Error('cookie not sent');
+            var post=java.post(baseUrl+'/bridge-post','key=测试',{}).body();
+            if(post!=='key=测试') throw Error('post');
+            if(java.get(baseUrl+'/bridge-redirect',{}).header('Location')!=='/json/search') throw Error('redirect');
+            var connected=java.connect(baseUrl+'/json/search');
+            if(connected.code()!==200 || !connected.raw().request().url().endsWith('/json/search')) throw Error('connect');
+            java.setContent(connected.body());
+            source.setVariable('stored');
+            java.put('saved', java.getString('$.data[0].name'));
+            if(source.getVariable()!=='stored' || java.get('saved')!=='JSON测试') throw Error('variables');
+            var element=org.jsoup.Jsoup.parse('<div><a href="/chapter">章节</a></div>').select('a').first();
+            if(element.attr('href')!=='/chapter' || element.text()!=='章节') throw Error('DOM');
+            cookie.removeCookie(source.key);
+            if(cookie.getCookie(source.key).indexOf('readerpro=ready')>=0) throw Error('cookie clear');
+            'bridge passed';
+            """#, input: "", baseUrl: base, sourceKey: "测试", sourceUrl: base)
+        }.value
+        XCTAssertEqual(result, "bridge passed")
+        let remote = await Task.detached { [base] in
+            LegadoJSCtx.$library.withValue(base + "/bridge-library") {
+                LegadoJS.run("remoteCategory()", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            }
+        }.value
+        XCTAssertEqual(remote, "远程分类")
+    }
+
+    func testRuleTemplatesRecursiveJSONAndStoredValues() {
+        let json = #"{"data":[{"name":"甲","time":0},{"name":"乙"}]}"#
+        XCTAssertEqual(applyRule(json, "$..name", base: base), ["甲", "乙"])
+        XCTAssertEqual(applyRuleFirst(json, "书名：{{$.data[0].name}}，{{java.getString('$.data[1].name')}}", base: base), "书名：甲，乙")
+        _ = applyRule(json, #"@put:{"bookID":"$.data[0].name"}"#, base: base)
+        XCTAssertEqual(applyRuleFirst(json, "https://example.org/@get:{bookID}", base: base), "https://example.org/甲")
+        XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>cookie.removeCookie(source.key); '/search?key={{key}}'</js>", key: "测试", page: 1, sourceUrl: base), "/search?key=%E6%B5%8B%E8%AF%95")
+    }
+
+    @MainActor func testSearchPublishesBeforeSlowSourceAndCancelsWithoutStaleResults() async throws {
+        var slow = SourceTestFixtures.json(); slow.id = "slow"; slow.searchUrl = "/slow-search"
+        let fast = SourceTestFixtures.json()
+        let controller = SourceSearchController()
+        controller.start([slow, fast], key: "测试")
+        let deadline = Date().addingTimeInterval(3)
+        while controller.results.isEmpty && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertFalse(controller.results.isEmpty, "Fast results must appear before the slow source finishes")
+        XCTAssertTrue(controller.searching)
+        XCTAssertEqual(controller.completed, 1)
+        controller.cancel()
+        XCTAssertFalse(controller.searching)
+        controller.start([fast], key: "新搜索")
+        while controller.searching { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertEqual(controller.completed, 1)
+        XCTAssertEqual(controller.total, 1)
+        XCTAssertEqual(controller.keyword, "新搜索")
     }
 
     func testRealDOMCSSXPathAndLegadoSelectors() {

@@ -676,7 +676,8 @@ class BookStore: ObservableObject {
             await withTaskGroup(of: (Int, String).self) { group in
                 for (i, ch) in batch {
                     group.addTask {
-                        if let c = try? await src.fetchChapterContent(ch) {
+                        let nextURL = book.chapters.indices.contains(i + 1) ? book.chapters[i + 1].url : book.chapters.first?.url
+                        if let c = try? await src.fetchChapterContent(ch, nextChapterUrl: nextURL) {
                             return (i, c.isEmpty ? "（本章没有正文）" : c)
                         }
                         return (i, "")
