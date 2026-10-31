@@ -205,3 +205,69 @@ struct GridBookCover: View {
         .frame(height: height)
     }
 }
+
+// MARK: - 书架满铺书封（legado-E 风格：封面铺满单元格、无固定高度，书名由外部叠渐变）
+struct ShelfCoverView: View {
+    let title: String
+    var body: some View {
+        let grad = BookCover.gradient(for: title)
+        ZStack {
+            LinearGradient(colors: grad, startPoint: .topLeading, endPoint: .bottomTrailing)
+            LinearGradient(colors: [.white.opacity(0.18), .clear, .clear], startPoint: .leading, endPoint: .trailing)
+            VStack(spacing: 5) {
+                ForEach(Array(title.prefix(3).enumerated()), id: \.offset) { _, ch in
+                    Text(String(ch)).font(.system(size: 24, weight: .bold)).foregroundStyle(.white)
+                }
+            }
+        }
+    }
+}
+
+/// 书架网格单元格（legado-E：满铺封面 + 底部渐变书名 + 右上角未读角标 / 多选勾）
+struct ShelfGridCell: View {
+    let title: String
+    let coverUrl: String
+    let unreadCount: Int
+    let selecting: Bool
+    let selected: Bool
+
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            Color.clear
+                .aspectRatio(0.72, contentMode: .fit)
+                .overlay {
+                    if !coverUrl.isEmpty, let url = URL(string: coverUrl) {
+                        AsyncImage(url: url) { img in
+                            img.resizable().scaledToFill()
+                        } placeholder: {
+                            ShelfCoverView(title: title)
+                        }
+                    } else {
+                        ShelfCoverView(title: title)
+                    }
+                }
+                .clipped()
+            LinearGradient(colors: [.clear, .clear, Color.black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
+            Text(title)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.white)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .padding(.horizontal, 6)
+                .padding(.bottom, 6)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(alignment: .topTrailing) {
+            if selecting {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(selected ? AppTheme.accent : .white)
+                    .padding(5)
+                    .background(Circle().fill(Color.black.opacity(0.35)))
+                    .padding(3)
+            } else {
+                UnreadBadge(count: unreadCount).padding(3)
+            }
+        }
+    }
+}

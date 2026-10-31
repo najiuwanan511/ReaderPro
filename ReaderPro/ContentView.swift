@@ -38,7 +38,7 @@ struct BookshelfView: View {
     @State private var sourceSearchedKey = ""
     @State private var addingSourceTitle = ""
     @State private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
-    @State private var viewMode = 1 // 0 网格, 1 列表（Legado-E 书架默认是列表行，不是网格）
+    @State private var viewMode = 0 // 0 网格, 1 列表（legado-E 书架默认满铺网格）
     @State private var showFavoritesOnly = false
     @State private var selecting = false
     @State private var selectedIds: Set<String> = []
@@ -81,65 +81,19 @@ struct BookshelfView: View {
                 Picker("排序", selection: $sortMode) {
                     Text("最近阅读").tag(0); Text("书名").tag(1); Text("进度").tag(2)
                 }.pickerStyle(.segmented).padding(.horizontal)
-                // Legado-E 书架没有“继续阅读”大卡，列表模式下直接就是书行；网格模式保留大卡。
-                if viewMode == 0, let current = store.books.max(by: { $0.lastRead < $1.lastRead }) {
-                    Button {
-                        openBook(current)
-                    } label: {
-                        HStack(spacing: 14) {
-                            if !current.coverUrl.isEmpty, let url = URL(string: current.coverUrl) {
-                                AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: current.title, width: 70) }
-                                    .frame(width: 70, height: 99).clipped().cornerRadius(10)
-                            } else {
-                                BookCover(title: current.title, width: 70)
-                            }
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("继续阅读").font(.caption).foregroundStyle(.secondary)
-                                Text(current.title).font(.headline).lineLimit(2)
-                                if !current.author.isEmpty { Text(current.author).font(.caption).foregroundStyle(.secondary) }
-                                if current.chapterIndex < current.chapters.count { Text(current.chapters[current.chapterIndex].title).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-                                ProgressView(value: current.progress)
-                                Text("已读 \(Int(current.progress * 100))% · \(current.chapters.count) 章").font(.caption2).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").foregroundStyle(.secondary)
-                        }
-                        .padding().background(.ultraThinMaterial).cornerRadius(16)
-                    }.buttonStyle(.plain).padding(.horizontal)
-                }
                 if viewMode == 1 {
                     bookListView
                 } else {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10), GridItem(.flexible())], spacing: 14) {
                     ForEach(filteredBooks) { book in
                         Button {
                             if selecting {
                                 if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
                             } else { openBook(book) }
                         } label: {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ZStack(alignment: .topTrailing) {
-                                    if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                                        AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { gridCover(book.title) }
-                                            .frame(height: 150).clipped().cornerRadius(10)
-                                    } else {
-                                        gridCover(book.title)
-                                    }
-                                    if selecting {
-                                        Image(systemName: selectedIds.contains(book.id) ? "checkmark.circle.fill" : "circle")
-                                            .foregroundStyle(selectedIds.contains(book.id) ? AppTheme.accent : .white).padding(4)
-                                            .background(Circle().fill(Color.black.opacity(0.3)))
-                                    } else {
-                                        UnreadBadge(count: book.unreadCount).padding(4)
-                                    }
-                                }
-                                Text(book.title).font(.caption).lineLimit(2).multilineTextAlignment(.leading)
-                                if !book.author.isEmpty { Text(book.author).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                                if book.chapterIndex < book.chapters.count { Text(book.chapters[book.chapterIndex].title).font(.caption2).foregroundStyle(.secondary).lineLimit(1) }
-                                Text(book.sourceName.isEmpty ? "\(book.kind.uppercased()) · \(Int(book.progress * 100))%" : "\(book.sourceName) · \(Int(book.progress * 100))%").font(.caption2).foregroundStyle(.secondary)
-                                ProgressView(value: book.progress)
-                            }
+                            ShelfGridCell(title: book.title, coverUrl: book.coverUrl, unreadCount: book.unreadCount, selecting: selecting, selected: selectedIds.contains(book.id))
                         }
+                        .buttonStyle(.plain)
                         .contextMenu {
                             Button(book.favorite ? "取消收藏" : "收藏") {
                                 if let i = store.books.firstIndex(where: { $0.id == book.id }) { store.books[i].favorite.toggle(); store.save() }
@@ -149,7 +103,7 @@ struct BookshelfView: View {
                             Button(role: .destructive) { store.deleteBook(book) } label: { Text("删除") }
                         }
                     }
-                }.padding()
+                }.padding(.horizontal)
                 }
                 if filteredBooks.isEmpty && !store.books.isEmpty {
                     Text("没有匹配的书，换个关键词试试。").font(.footnote).foregroundStyle(.secondary).padding()
@@ -318,11 +272,6 @@ struct BookshelfView: View {
             }
         }
         .padding(.horizontal)
-    }
-
-    @ViewBuilder
-    func gridCover(_ title: String) -> some View {
-        GridBookCover(title: title)
     }
 
     func importFile(_ url: URL) {
