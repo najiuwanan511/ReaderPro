@@ -4,7 +4,7 @@ import UIKit
 // MARK: - 全局主题（开源阅读原版风）
 // 主色 + 卡片色，深浅色模式自动适配。所有页面统一从这里取色，视觉才不会散。
 enum AppTheme {
-    // 主色（accent）：legado 原版红色（复选框/开关/按钮/选中 tab 都是红），深浅色自动适配
+    // ReaderPro 默认强调色；原项目主题可配置，布局独立于配色。
     static let accent = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.94, green: 0.33, blue: 0.33, alpha: 1)  // #EF5353
@@ -34,7 +34,24 @@ enum AppTheme {
             ? UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1)
             : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
     })
-    // Legado-E 顶栏棕色（书架/发现截图里的深棕顶栏，约 #6D4C41）
+    // Neutral surfaces used by the rebuilt pages. Keeping these separate from
+    // the reader theme lets the library UI stay consistent in light/dark mode.
+    static let surface = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.11, green: 0.13, blue: 0.17, alpha: 1)
+            : UIColor.white
+    })
+    static let surfaceMuted = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1)
+            : UIColor(red: 0.94, green: 0.94, blue: 0.96, alpha: 1)
+    })
+    static let divider = Color(uiColor: UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.10)
+            : UIColor.black.withAlphaComponent(0.08)
+    })
+    // 供自定义主题使用的棕色。
     static let headerBrown = Color(red: 0.43, green: 0.30, blue: 0.26)
     // 未读角标蓝（阅读Sigma书架右上角数字徽章，深浅色都用醒目的蓝）
     static let unreadBadge = Color(uiColor: UIColor { trait in
@@ -134,7 +151,7 @@ struct BookCover: View {
 
 // MARK: - legado 设置项组件（对标开源阅读「我的/设置」页）
 
-/// 设置项统一组件：左侧彩色圆角图标 + 标题/灰色摘要 + 右侧箭头/开关/当前值。
+/// 设置项：左侧独立图标、标题与摘要；NavigationLink 提供系统跳转指示。
 /// 开源阅读设置页的灵魂就是这种 Material 列表行。点击交给外部 NavigationLink / Button 处理。
 struct SettingRow: View {
     let icon: String
@@ -147,14 +164,13 @@ struct SettingRow: View {
     var body: some View {
         HStack(spacing: 14) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.white)
-                .frame(width: 30, height: 30)
-                .background(RoundedRectangle(cornerRadius: 7, style: .continuous).fill(iconTint))
+                .font(.system(size: 22, weight: .regular))
+                .foregroundStyle(iconTint)
+                .frame(width: 28, height: 28)
             VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.body).foregroundStyle(.primary)
+                Text(title).font(.system(size: 16)).foregroundStyle(.primary)
                 if let s = summary, !s.isEmpty {
-                    Text(s).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    Text(s).font(.system(size: 13)).foregroundStyle(.secondary).lineLimit(2)
                 }
             }
             Spacer()
@@ -162,13 +178,10 @@ struct SettingRow: View {
                 Toggle("", isOn: isOn).labelsHidden()
             } else if !value.isEmpty {
                 Text(value).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
-            } else {
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.secondary.opacity(0.4))
             }
         }
-        .padding(.vertical, 7)
+        .padding(.vertical, 8)
+        .frame(minHeight: 52)
         .contentShape(Rectangle())
     }
 }
@@ -230,8 +243,20 @@ struct ShelfGridCell: View {
     let unreadCount: Int
     let selecting: Bool
     let selected: Bool
+    var titleBelow = false
 
     var body: some View {
+        VStack(spacing: 6) {
+            cover
+            if titleBelow {
+                Text(title).font(.system(size: 12)).foregroundStyle(.primary)
+                    .lineLimit(2).multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, minHeight: 30, alignment: .top)
+            }
+        }
+    }
+
+    private var cover: some View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
                 .aspectRatio(0.72, contentMode: .fit)
@@ -247,16 +272,18 @@ struct ShelfGridCell: View {
                     }
                 }
                 .clipped()
-            LinearGradient(colors: [.clear, .clear, Color.black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
-            Text(title)
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(.white)
-                .lineLimit(2)
-                .multilineTextAlignment(.leading)
-                .padding(.horizontal, 6)
-                .padding(.bottom, 6)
+            if !titleBelow {
+                LinearGradient(colors: [.clear, .clear, Color.black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
+                Text(title)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.white)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .padding(.horizontal, 6)
+                    .padding(.bottom, 6)
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if selecting {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")

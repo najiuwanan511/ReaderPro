@@ -17,6 +17,8 @@ struct ContentView: View {
                 .tabItem { Label("我的", systemImage: "person.fill") }
         }
         .tint(AppTheme.accent)
+        .toolbarBackground(AppTheme.surface, for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
     }
 
@@ -59,17 +61,18 @@ struct BookshelfView: View {
     @State private var sourceResults: [SourceBook] = []
     @State private var sourceSearching = false
     @State private var sourceSearchedKey = ""
-    @State private var addingSourceTitle = ""
-    @State private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
-    @State private var viewMode = 0 // 0 网格, 1 列表（legado-E 书架默认满铺网格）
-    @State private var showFavoritesOnly = false
+    @AppStorage("shelfSortMode") private var sortMode = 0 // 0 最近阅读, 1 书名, 2 进度
+    @AppStorage("shelfViewMode") private var viewMode = 2 // 0 封面叠字, 1 列表, 2 封面下方书名
+    @State private var selectedGroup = 0
+    @State private var shelfResult: SourceBook?
     @State private var selecting = false
     @State private var selectedIds: Set<String> = []
 
     var filteredBooks: [LocalBook] {
         var list = store.books
-        if showFavoritesOnly {
-            list = list.filter { $0.favorite }
+        if selectedGroup == 1 { list = list.filter { $0.favorite } }
+        else if selectedGroup >= 2, groups.indices.contains(selectedGroup) {
+            list = list.filter { $0.group == groups[selectedGroup] }
         }
         if !searchText.isEmpty {
             list = list.filter { $0.title.localizedCaseInsensitiveContains(searchText) || $0.author.localizedCaseInsensitiveContains(searchText) || $0.sourceName.localizedCaseInsensitiveContains(searchText) }
@@ -82,14 +85,15 @@ struct BookshelfView: View {
         return list
     }
 
+    private var groups: [String] {
+        ["全部", "收藏"] + Set(store.books.map(\.group).filter { !$0.isEmpty }).sorted()
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 if store.books.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("书架是空的。点右上角 + 导入 TXT / EPUB / MOBI / AZW3 / PDF / CBZ，或者在上面搜索框里直接搜书源。")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    }.padding()
+                    emptyShelf
                 }
                 if selecting && !selectedIds.isEmpty {
                     HStack {
@@ -99,11 +103,8 @@ struct BookshelfView: View {
                             for id in selectedIds { if let b = store.books.first(where: { $0.id == id }) { store.deleteBook(b) } }
                             selectedIds.removeAll(); selecting = false
                         }
-                    }.padding(.horizontal)
+                    }.padding(.horizontal, 12).padding(.top, 12)
                 }
-                Picker("排序", selection: $sortMode) {
-                    Text("最近阅读").tag(0); Text("书名").tag(1); Text("进度").tag(2)
-                }.pickerStyle(.segmented).padding(.horizontal)
                 if viewMode == 1 {
                     bookListView
                 } else {
@@ -114,7 +115,7 @@ struct BookshelfView: View {
                                 if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
                             } else { openBook(book) }
                         } label: {
-                            ShelfGridCell(title: book.title, coverUrl: book.coverUrl, unreadCount: book.unreadCount, selecting: selecting, selected: selectedIds.contains(book.id))
+                            ShelfGridCell(title: book.title, coverUrl: book.coverUrl, unreadCount: book.unreadCount, selecting: selecting, selected: selectedIds.contains(book.id), titleBelow: viewMode == 2)
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
@@ -131,8 +132,7 @@ struct BookshelfView: View {
                 if filteredBooks.isEmpty && !store.books.isEmpty {
                     Text("没有匹配的书，换个关键词试试。").font(.footnote).foregroundStyle(.secondary).padding()
                 }
-                // 书架搜索框直接搜源：以前只能搜本地书架，现在输完点下面按钮就多源并发搜，
-                // 结果点“加入书架”直接拉目录上架，不用再切到书源页。
+                // Search results share the directory and direct reading flow with discovery.
                 if !searchText.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Button {
@@ -153,33 +153,8 @@ struct BookshelfView: View {
                         if sourceSearching { ProgressView("正在多源搜索…") }
                         else if !sourceSearchedKey.isEmpty {
                             Text("源搜索结果 \(sourceResults.count) 本（只留标题/作者含关键词的）").font(.caption).foregroundStyle(.secondary)
-                            ForEach(sourceResults) { r in
-                                HStack(alignment: .top, spacing: 10) {
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(r.title).font(.subheadline).bold().lineLimit(1)
-                                        HStack {
-                                            if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                            if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption2).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
-                                        }
-                                        if !r.intro.isEmpty { Text(r.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
-                                    }
-                                    Spacer()
-                                    Button(addingSourceTitle == r.title ? "拉取中…" : "加入书架") {
-                                        addingSourceTitle = r.title
-                                        Task {
-                                            guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName }) else { await MainActor.run { addingSourceTitle = "" }; return }
-                                            do {
-                                                let chs = try await src.fetchChapters(book: r)
-                                                await MainActor.run {
-                                                    var book = LocalBook(title: r.title, author: r.author, coverUrl: r.cover, sourceName: r.sourceName, sourceUrl: r.sourceUrl, fileName: r.title + ".web", kind: "web")
-                                                    book.chapters = chs; store.updateBook(book); addingSourceTitle = ""
-                                                }
-                                            } catch {
-                                                await MainActor.run { addingSourceTitle = "" }
-                                            }
-                                        }
-                                    }.buttonStyle(.bordered).disabled(addingSourceTitle == r.title || r.url.isEmpty)
-                                }.padding(.vertical, 4)
+                            ForEach(sourceResults) { result in
+                                Button { shelfResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
                                 Divider()
                             }
                             if sourceResults.isEmpty {
@@ -191,22 +166,27 @@ struct BookshelfView: View {
             }
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
-            .toolbarBackground(AppTheme.headerBrown, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-            .searchable(text: $searchText, prompt: "搜书架 / 点下面按钮直接搜书源")
+            .readerNavigationStyle()
+            .background(AppTheme.background.ignoresSafeArea())
+            .searchable(text: $searchText, prompt: "搜索书架")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                ReaderTabStrip(titles: groups, selection: $selectedGroup)
+            }
+            .sheet(item: $shelfResult) { SourceBookDetailView(store: store, result: $0) }
             .toolbar {
-                if selecting {
-                    Button("取消") { selecting = false; selectedIds.removeAll() }
-                } else {
-                    Button("多选") { selecting = true }
-                    Button { showFavoritesOnly.toggle() } label: {
-                        Image(systemName: showFavoritesOnly ? "star.fill" : "star")
-                    }
-                    Button { viewMode = viewMode == 0 ? 1 : 0 } label: {
-                        Image(systemName: viewMode == 0 ? "list.bullet" : "square.grid.2x2")
-                    }
+                ToolbarItem(placement: .topBarTrailing) {
+                    NavigationLink { SourceView(store: store) } label: { Image(systemName: "magnifyingglass") }
+                        .accessibilityLabel("搜索书籍")
                 }
-                Button { importing = true } label: { Image(systemName: "plus") }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("导入本地书籍", systemImage: "square.and.arrow.down") { importing = true }
+                        Button(selecting ? "结束多选" : "多选管理", systemImage: "checkmark.circle") { selecting.toggle(); selectedIds.removeAll() }
+                        Picker("书架布局", selection: $viewMode) { Text("封面下方书名").tag(2); Text("封面叠字").tag(0); Text("列表").tag(1) }
+                        Picker("排序", selection: $sortMode) { Text("最近阅读").tag(0); Text("书名").tag(1); Text("阅读进度").tag(2) }
+                    } label: { Image(systemName: "ellipsis") }
+                    .accessibilityLabel("书架菜单")
+                }
             }
             .fileImporter(isPresented: $importing, allowedContentTypes: [.plainText, .data, .audio, .movie, .audiovisualContent]) { result in
                 switch result {
@@ -222,6 +202,25 @@ struct BookshelfView: View {
         }
     }
 
+    private var emptyShelf: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "books.vertical")
+                .font(.system(size: 42, weight: .light))
+                .foregroundStyle(AppTheme.accent)
+            Text("书架还空着").font(.title3.weight(.semibold))
+            Text("从本地导入书籍，或使用书源搜索添加第一本书。")
+                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            Button { importing = true } label: {
+                Label("导入本地书籍", systemImage: "square.and.arrow.down")
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.accent)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 54)
+        .padding(.horizontal, 24)
+    }
+
     func openBook(_ book: LocalBook) {
         if book.isAudio { selectedAudio = book }
         else if book.isVideo { selectedVideo = book }
@@ -233,13 +232,6 @@ struct BookshelfView: View {
     var bookListView: some View {
         // Legado-E 书架行（对标截图）：左封面，右标题/作者/当前章/最新章，右上角灰色数字角标 = 总章数。
         VStack(spacing: 0) {
-            // 顶栏“全部”标签（Legado-E 书架顶部就是这个，不再是 iOS 默认大标题）
-            HStack {
-                Text("全部").font(.headline).foregroundStyle(AppTheme.headerBrown)
-                    .overlay(Rectangle().fill(Color.red).frame(height: 2).offset(y: 14), alignment: .bottom)
-                Spacer()
-                Button { searchText = "" } label: { Image(systemName: "magnifyingglass").foregroundStyle(.secondary) }
-            }.padding(.horizontal).padding(.bottom, 4)
             ForEach(filteredBooks) { book in
                 Button {
                     if selecting {
@@ -395,133 +387,76 @@ struct SourceView: View {
     @State private var importError = ""
     @State private var importStatus = ""
     @State private var selectedResult: SourceBook?
-    @State private var detailChapters: [BookChapter] = []
-    @State private var loadingDetail = false
-    @State private var detailError = ""
-    @State private var detailAlternatives: [SourceBook] = []
-    @State private var detailAltIndex = 0
-    @State private var detailIsComic = false
-    @State private var readingBook: LocalBook?
-
     var body: some View {
-        NavigationStack {
-            VStack {
-                HStack {
-                    TextField("搜书名 / 作者（多源并发）", text: $key).textFieldStyle(.roundedBorder)
-                    Button("搜索") { search() }.disabled(key.isEmpty || searching)
-                }.padding(.horizontal)
-                Text("书源库：\(store.sources.count) 个，启用 \(store.enabledSources.count) 个。导入后先看这个数：1000 个的包导入完这里就该是 1000 左右，不是 18。").font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
-                if searching {
-                    ProgressView("正在多源搜索… 已搜 \(store.enabledSources.count) 个启用源")
-                } else if searchedCount > 0 {
-                    Text("共 \(searchedCount) 个启用源，\(results.count) 本（只留标题/作者含关键词的，点开可换源）").font(.caption).foregroundStyle(.secondary)
+        VStack {
+            HStack {
+                TextField("书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
+                    .submitLabel(.search).onSubmit { if !searching { search() } }
+                Button { search() } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(AppTheme.accent, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
-                List(results) { r in
-                    Button {
-                        selectedResult = r; loadDetail(r)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(r.title).font(.headline)
-                            HStack {
-                                if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
-                            }
-                            if !r.intro.isEmpty { Text(r.intro).font(.caption).lineLimit(2).foregroundStyle(.secondary) }
-                        }
-                    }
-                }
-                if results.isEmpty && !searching {
-                    Text("没有自带书源。点右上角导入你自己的 Legado JSON 书源（单个、数组或订阅链接都行，导入即启用），然后在这里一次搜全部启用源；删掉的书源不会再自动回来。")
-                        .font(.footnote).foregroundStyle(.secondary).padding()
+                .disabled(key.isEmpty || searching)
+            }.padding(.horizontal)
+            HStack(spacing: 8) {
+                Label("\(store.enabledSources.count) 个启用源", systemImage: "checkmark.seal.fill")
+                Text("·")
+                Text("\(store.sources.count) 个已导入")
+                Spacer()
+            }
+            .font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
+            if searching {
+                ProgressView("正在搜索 \(store.enabledSources.count) 个书源…")
+            } else if searchedCount > 0 {
+                Text("找到 \(results.count) 本书 · 点击查看详情与目录").font(.caption).foregroundStyle(.secondary)
+            }
+            List(results) { r in
+                Button {
+                    selectedResult = r
+                } label: {
+                    SourceBookRow(book: r)
                 }
             }
-            .navigationTitle("书源")
-            .toolbar {
-                Button("导入书源") { showImport = true }
+            .listStyle(.plain)
+            if results.isEmpty && !searching {
+                Text(store.enabledSources.isEmpty ? "还没有启用的书源，请先导入书源。" : (searchedCount > 0 ? "没有找到相关书籍，试试其他书名或作者。" : "输入书名或作者，搜索已启用的书源。"))
+                    .font(.footnote).foregroundStyle(.secondary).padding()
             }
-            .sheet(isPresented: $showImport) {
-                NavigationStack {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。导入的书源默认全部启用。").font(.footnote).foregroundStyle(.secondary)
-                        TextEditor(text: $importText).border(Color.gray.opacity(0.3))
-                        if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
-                        if !importStatus.isEmpty { Text(importStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
-                        Button("导入") { importSource() }
-                        Spacer()
-                    }.padding()
-                    .navigationTitle("导入书源")
-                    .toolbar { Button("关闭") { showImport = false } }
-                }
+        }
+        .navigationTitle("搜索")
+        .readerNavigationStyle()
+        .background(AppTheme.background.ignoresSafeArea())
+        .scrollContentBackground(.hidden)
+        .toolbar {
+            Button { showImport = true } label: {
+                Image(systemName: "square.and.arrow.down")
             }
-            .sheet(item: $selectedResult) { r in
-                NavigationStack {
-                    List {
-                        Section {
-                            HStack(alignment: .top, spacing: 12) {
-                                if !r.cover.isEmpty, let url = URL(string: r.cover) {
-                                    AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { Color.gray.opacity(0.2) }
-                                        .frame(width: 90, height: 124).cornerRadius(8).clipped()
-                                }
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(r.title).font(.title3).bold()
-                                    if !r.author.isEmpty { Text(r.author).foregroundStyle(.secondary) }
-                                    if !r.sourceName.isEmpty { Text("书源：\(r.sourceName)").font(.caption).foregroundStyle(.secondary) }
-                                    if !r.intro.isEmpty { Text(r.intro).font(.footnote).lineLimit(5) }
-                                }
-                            }
-                            if detailAlternatives.count > 1 {
-                                Picker("换源", selection: $detailAltIndex) {
-                                    ForEach(detailAlternatives.indices, id: \.self) { i in
-                                        Text(detailAlternatives[i].sourceName.isEmpty ? "源 \(i + 1)" : detailAlternatives[i].sourceName).tag(i)
-                                    }
-                                }.pickerStyle(.menu)
-                                .onChange(of: detailAltIndex) { _, v in
-                                    if v < detailAlternatives.count { selectedResult = detailAlternatives[v]; loadDetail(detailAlternatives[v]) }
-                                }
-                            }
-                            Button("加入书架") {
-                                var book = makeBook(from: r)
-                                book.chapters = detailChapters
-                                store.updateBook(book)
-                                selectedResult = nil
-                            }.buttonStyle(.borderedProminent).disabled(detailChapters.isEmpty)
-                        }
-                        Section {
-                            if loadingDetail {
-                                ProgressView("正在拉取目录…")
-                            } else if detailChapters.isEmpty {
-                                if !detailError.isEmpty { Text(detailError).font(.footnote).foregroundStyle(.red) }
-                                Text("目录为空：请换一个源，或检查这个源的目录规则。")
-                                    .font(.footnote).foregroundStyle(.secondary)
-                            } else {
-                                ForEach(Array(detailChapters.prefix(300).enumerated()), id: \.offset) { index, chapter in
-                                    Button {
-                                        openChapter(index, result: r)
-                                    } label: {
-                                        HStack(spacing: 10) {
-                                            Text(chapter.title).lineLimit(1)
-                                            Spacer()
-                                            Image(systemName: "chevron.right")
-                                                .font(.caption)
-                                                .foregroundStyle(.tertiary)
-                                        }
-                                    }
-                                }
-                            }
-                        } header: {
-                            Text(loadingDetail ? "目录" : "目录（\(detailChapters.count) 章，点击即可阅读）")
-                        }
-                    }
-                    .navigationTitle("书籍详情")
-                    .toolbar { Button("关闭") { selectedResult = nil } }
-                    .navigationDestination(item: $readingBook) { book in
-                        ReaderView(store: store, bookId: book.id)
-                    }
-                }
+            .accessibilityLabel("导入书源")
+        }
+        .sheet(isPresented: $showImport) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。导入的书源默认全部启用。").font(.footnote).foregroundStyle(.secondary)
+                    TextEditor(text: $importText).border(Color.gray.opacity(0.3))
+                    if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
+                    if !importStatus.isEmpty { Text(importStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
+                    Button("导入") { importSource() }
+                    Spacer()
+                }.padding()
+                .navigationTitle("导入书源")
+                .toolbar { Button("关闭") { showImport = false } }
             }
+        }
+        .sheet(item: $selectedResult) { result in
+            SourceBookDetailView(store: store, result: result,
+                alternatives: allResults.filter { dedupeKey($0) == dedupeKey(result) })
         }
     }
     func search() {
+        guard !searching, !key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let enabled = store.enabledSources
         guard !enabled.isEmpty else { results = []; allResults = []; return }
         searching = true; searchedCount = 0
@@ -537,46 +472,6 @@ struct SourceView: View {
             await MainActor.run { allResults = raw; results = deduped; searchedCount = enabled.count; searching = false }
         }
     }
-    func loadDetail(_ r: SourceBook) {
-        loadingDetail = true; detailChapters = []; detailError = ""
-        detailAlternatives = allResults.filter { dedupeKey($0) == dedupeKey(r) }
-        if detailAlternatives.isEmpty { detailAlternatives = [r] }
-        detailAltIndex = detailAlternatives.firstIndex(where: { $0.url == r.url && $0.sourceName == r.sourceName }) ?? 0
-        guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
-            loadingDetail = false; detailError = "找不到这个书源（可能已被删除），请重新搜索。"; return
-        }
-        detailIsComic = src.isComic
-        Task {
-            do {
-                var info = r
-                // BookInfo: fetch richer detail when the source provides it, but never lose the search result
-                if let fetched = try? await src.fetchBookInfo(book: r) { info = fetched }
-                let chs = try await src.fetchChapters(book: info)
-                await MainActor.run {
-                    detailChapters = chs; loadingDetail = false
-                    if chs.isEmpty { detailError = "该源返回了 0 章：目录规则不匹配或该站拒绝访问，点“换源”换一个同名结果再试。" }
-                }
-            } catch {
-                await MainActor.run { loadingDetail = false; detailError = "拉取目录失败：\(error.localizedDescription)，换源或换个网络再试。" }
-            }
-        }
-    }
-
-    func makeBook(from result: SourceBook) -> LocalBook {
-        LocalBook(title: result.title, author: result.author, coverUrl: result.cover,
-                  sourceName: result.sourceName, sourceUrl: result.sourceUrl,
-                  fileName: result.title + ".web", kind: detailIsComic ? "comic" : "web")
-    }
-
-    func openChapter(_ index: Int, result: SourceBook) {
-        guard detailChapters.indices.contains(index) else { return }
-        var book = makeBook(from: result)
-        book.chapters = detailChapters
-        book.chapterIndex = index
-        store.updateBook(book)
-        readingBook = book
-    }
-
     func importSource() {
         let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
         importError = ""

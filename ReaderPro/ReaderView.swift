@@ -27,6 +27,7 @@ struct ReaderView: View {
     // 菜单 / 弹层
     @State private var showMenu = false
     @State private var showSettings = false
+    @State private var showStyle = false
     @State private var showCatalog = false
     @State private var showSearch = false
     @State private var showBookmarks = false
@@ -106,6 +107,7 @@ struct ReaderView: View {
         }
         .background(Color(uiColor: theme.background).ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .preferredColorScheme(themeBrightness())
         .onDisappear {
             saveProgress()
@@ -121,6 +123,7 @@ struct ReaderView: View {
         .sheet(isPresented: $showCatalog) { catalogSheet }
         .sheet(isPresented: $showSearch) { searchSheet }
         .sheet(isPresented: $showSettings) { settingsSheet }
+        .sheet(isPresented: $showStyle) { styleSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showSourceChange) { sourceChangeSheet }
         .sheet(isPresented: $showDownloadAll) { downloadSheet }
@@ -612,13 +615,14 @@ struct ReaderView: View {
             Button { addBookmark() } label: {
                 Image(systemName: "bookmark").font(.system(size: 18))
             }
-            Button { toggleSpeech() } label: {
-                Image(systemName: speech.isSpeaking ? "stop.circle.fill" : "headphones")
-                    .font(.system(size: 18))
-            }
-            Button { showSettings = true } label: {
-                Image(systemName: "gearshape").font(.system(size: 18))
-            }
+            Menu {
+                Button("搜索正文", systemImage: "magnifyingglass") { showSearch = true }
+                Button("查看书签", systemImage: "bookmark") { showBookmarks = true }
+                Button("切换书源", systemImage: "arrow.triangle.2.circlepath") { openSourceChange() }
+                Button("缓存全书", systemImage: "arrow.down.circle") { startDownloadAll() }
+                Button(autoPageEnabled ? "关闭自动翻页" : "自动翻页", systemImage: "play.circle") { toggleAutoPage(!autoPageEnabled) }
+            } label: { Image(systemName: "ellipsis").font(.system(size: 20)) }
+
         }
         .foregroundColor(Color(uiColor: theme.text))
         .padding(.horizontal, 16)
@@ -627,56 +631,119 @@ struct ReaderView: View {
     }
 
     var bottomBar: some View {
-        VStack(spacing: 6) {
-            HStack(spacing: 10) {
-                Button { showCatalog = true } label: {
-                    Image(systemName: "list.bullet").font(.system(size: 17))
-                }
-                if store.pageTurn != 2 {
-                    Slider(
-                        value: Binding(
-                            get: { Double(pageIndex) },
-                            set: { pageIndex = Int($0); saveProgress(page: pageIndex) }
-                        ),
-                        in: 0...Double(max(pages.count - 1, 1)),
-                        step: 1,
-                        onEditingChanged: { editing in
-                            if !editing && store.pageTurn == 4 { jumpToken += 1 }
-                        }
-                    )
-                    Text("\(pageIndex + 1)/\(pages.count)")
-                        .font(.caption2).monospacedDigit()
-                }
-                Button { showSearch = true } label: {
-                    Image(systemName: "magnifyingglass").font(.system(size: 17))
-                }
-                Button { showSettings = true } label: {
-                    Image(systemName: "textformat.size").font(.system(size: 17))
-                }
+        VStack(spacing: 0) {
+            HStack(spacing: 24) {
+                Spacer()
+                Button { showSearch = true } label: { Image(systemName: "magnifyingglass") }.accessibilityLabel("搜索正文")
+                Button { toggleAutoPage(!autoPageEnabled) } label: {
+                    Image(systemName: autoPageEnabled ? "pause.circle" : "play.circle")
+                }.accessibilityLabel("自动翻页")
+                Button { cycleTheme() } label: { Image(systemName: "moon") }.accessibilityLabel("切换阅读背景")
             }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 22) {
-                    barButton("A-") { store.fontSize = max(12, store.fontSize - 1); store.save() }
-                    barButton("A+") { store.fontSize = min(32, store.fontSize + 1); store.save() }
-                    barButton(speech.isSpeaking ? "停止" : "朗读") { toggleSpeech() }
-                    barButton("夜间") { cycleTheme() }
-                    barButton("目录") { showCatalog = true }
-                    barButton("书签") { showBookmarks = true }
-                    barButton("换源") { openSourceChange() }
-                    barButton("缓存") { startDownloadAll() }
-                }
-                .padding(.horizontal, 4)
-            }
+            .font(.system(size: 20)).padding(.bottom, 16)
+            HStack(spacing: 14) {
+                Button("上一章") { openChapter(chapterIndex - 1) }.disabled(chapterIndex == 0)
+                Slider(value: Binding(
+                    get: { Double(pageIndex) },
+                    set: { pageIndex = Int($0); saveProgress(page: pageIndex) }
+                ), in: 0...Double(max(pages.count - 1, 1)), step: 1, onEditingChanged: { editing in
+                    if !editing && store.pageTurn == 4 { jumpToken += 1 }
+                }).disabled(store.pageTurn == 2 || pages.count < 2)
+                    .accessibilityLabel("本章阅读进度")
+                Button("下一章") { openChapter(chapterIndex + 1) }
+                    .disabled(chapterIndex >= (book?.chapters.count ?? 0) - 1)
+            }.font(.system(size: 13))
+            HStack {
+                Spacer()
+                Text("\(chapterIndex + 1)/\(book?.chapters.count ?? 0) 章 · \(pageIndex + 1)/\(max(pages.count, 1)) 页")
+                    .font(.system(size: 11)).monospacedDigit().foregroundStyle(Color(uiColor: theme.secondary))
+                Spacer()
+            }.padding(.top, 2).padding(.bottom, 12)
+            Divider()
+            HStack(spacing: 0) {
+                readerMenuButton("目录", icon: "list.bullet") { showCatalog = true }
+                readerMenuButton(speech.isSpeaking ? "停止" : "朗读", icon: "headphones") { toggleSpeech() }
+                readerMenuButton("界面", icon: "textformat.size") { showStyle = true }
+                readerMenuButton("设置", icon: "gearshape") { showSettings = true }
+            }.padding(.top, 14).padding(.bottom, 8)
         }
-        .foregroundColor(Color(uiColor: theme.text))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(Color(uiColor: theme.background).opacity(0.97))
+        .foregroundStyle(Color(uiColor: theme.text))
+        .padding(.horizontal, 16).padding(.top, 12)
+        .background(Color(uiColor: theme.background).opacity(0.98))
     }
 
-    func barButton(_ label: String, _ action: @escaping () -> Void) -> some View {
+    func readerMenuButton(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label).font(.system(size: 14))
+            VStack(spacing: 8) {
+                Image(systemName: icon).font(.system(size: 22, weight: .regular))
+                Text(title).font(.system(size: 12))
+            }.frame(maxWidth: .infinity).contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    // Compact typography panel, matching the separate “界面” entry in the reference.
+    var styleSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 18) {
+                    HStack {
+                        Text("字体").font(.system(size: 14))
+                        Spacer()
+                        Picker("字体", selection: $store.fontName) {
+                            ForEach(allFonts) { font in Text(font.display).tag(font.name) }
+                        }.labelsHidden().onChange(of: store.fontName) { _, _ in store.save() }
+                    }
+                    styleSlider("字号", value: $store.fontSize, range: 12...32)
+                    styleSlider("行距", value: $store.lineSpacing, range: 0...24)
+                    styleSlider("段距", value: $store.paragraphSpacing, range: 0...40)
+                    HStack(spacing: 6) {
+                        ForEach([0, 1, 4, 2, 3], id: \.self) { mode in
+                            Button {
+                                store.pageTurn = mode; store.save()
+                            } label: {
+                                Text(["覆盖", "平移", "滚动", "无", "仿真"][mode])
+                                    .font(.system(size: 13)).frame(maxWidth: .infinity).padding(.vertical, 9)
+                                    .background(store.pageTurn == mode ? AppTheme.accentSoft : AppTheme.surfaceMuted,
+                                                in: RoundedRectangle(cornerRadius: 4))
+                                    .foregroundStyle(store.pageTurn == mode ? AppTheme.accent : .primary)
+                            }.buttonStyle(.plain)
+                        }
+                    }
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 12) {
+                            ForEach(readerThemes) { readerTheme in
+                                Button { store.theme = readerTheme.id; store.save() } label: {
+                                    VStack(spacing: 6) {
+                                        Text("阅").font(.system(size: 21, design: .serif))
+                                            .frame(width: 50, height: 66)
+                                            .background(Color(uiColor: readerTheme.background))
+                                            .foregroundStyle(Color(uiColor: readerTheme.text))
+                                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                                            .overlay(RoundedRectangle(cornerRadius: 3).stroke(store.theme == readerTheme.id ? AppTheme.accent : AppTheme.divider, lineWidth: 2))
+                                        Text(readerTheme.name).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    }
+                                }.buttonStyle(.plain)
+                            }
+                        }.padding(2)
+                    }
+                }.padding(16)
+            }
+            .navigationTitle("界面").readerNavigationStyle()
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { showStyle = false } } }
+        }.presentationDetents([.height(440), .large]).presentationDragIndicator(.visible)
+    }
+
+    func styleSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
+        HStack(spacing: 12) {
+            Text(title).font(.system(size: 14)).frame(width: 32)
+            Button { value.wrappedValue = max(range.lowerBound, value.wrappedValue - 1); store.save() } label: {
+                Image(systemName: "minus").frame(width: 30, height: 30)
+            }.accessibilityLabel("减少" + title)
+            Slider(value: value, in: range, step: 1).onChange(of: value.wrappedValue) { _, _ in store.save() }
+            Button { value.wrappedValue = min(range.upperBound, value.wrappedValue + 1); store.save() } label: {
+                Image(systemName: "plus").frame(width: 30, height: 30)
+            }.accessibilityLabel("增加" + title)
+            Text("\(Int(value.wrappedValue))").font(.caption).monospacedDigit().frame(width: 24)
         }
     }
 

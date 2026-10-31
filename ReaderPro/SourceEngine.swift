@@ -370,12 +370,15 @@ func importSourcesDetailed(_ rawText: String) -> ImportResult {
             }
             if ch == "\"" { inString = true }
             else if ch == "{" { if depth == 0 { start = idx }; depth += 1 }
-            else if ch == "}" { depth -= 1; if depth == 0, let s = start {
-                let chunk = String(text[s...idx])
-                if let data = chunk.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
-                    collectSourceDictionaries(root, sources: &sources, skipped: &skipped)
-                } else { skipped += 1 }
-                start = nil
+            else if ch == "}" {
+                depth -= 1
+                if depth == 0, let s = start {
+                    let chunk = String(text[s...idx])
+                    if let data = chunk.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+                        collectSourceDictionaries(root, sources: &sources, skipped: &skipped)
+                    } else { skipped += 1 }
+                    start = nil
+                }
             }
         }
     }

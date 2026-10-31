@@ -74,6 +74,10 @@ struct SettingsView: View {
                 } header: { SettingSectionHeader(title: "其他") }
             }
             .navigationTitle("我的")
+            .readerNavigationStyle()
+            .listStyle(.grouped)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.background.ignoresSafeArea())
             .confirmationDialog("主题模式", isPresented: $showThemeMode, titleVisibility: .visible) {
                 Button("跟随系统") { themeMode = "system" }
                 Button("浅色") { themeMode = "light" }

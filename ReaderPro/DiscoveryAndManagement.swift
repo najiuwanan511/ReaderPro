@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UniformTypeIdentifiers
 
 // MARK: - Discovery (Legado explore: category list from exploreUrl)
 
@@ -10,6 +11,10 @@ enum SourceCheckState: Equatable { case checking, ok, fail }
 
 struct SourceManagementView: View {
     @ObservedObject var store: BookStore
+    @State private var showFileImport = false
+    @State private var showFileResult = false
+    @State private var fileImportMessage = ""
+    @State private var importingFile = false
     @State private var showPaste = false
     @State private var pasteText = ""
     @State private var pasteError = ""
@@ -38,7 +43,6 @@ struct SourceManagementView: View {
     var body: some View {
         List {
             Section {
-                TextField("按名字/分组过滤", text: $filterText).textFieldStyle(.roundedBorder)
                 // 批量操作工具栏
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -94,15 +98,11 @@ struct SourceManagementView: View {
                     store.save()
                 }
             } header: { Text("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") }
-            Section("导入") {
-                Button("粘贴 JSON 导入") { showPaste = true }
-                Button("网络链接导入（订阅源）") { showNetwork = true }
-                Button("扫二维码导入") { showQR = true }
-                Text("网络导入：粘贴一个返回 Legado 书源 JSON 的链接（单个对象或数组，或含 sources 字段的对象），会自动批量导入。订阅源就是这种链接，换了新源重新拉一次即可。二维码里如果是链接就按网络导入，如果是 JSON 就直接导入。")
-                    .font(.footnote).foregroundStyle(.secondary)
-            }
         }
         .navigationTitle("书源管理")
+        .readerNavigationStyle()
+        .listStyle(.plain)
+        .searchable(text: $filterText, prompt: "筛选书源 / 分组")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button(editing ? "完成" : "编辑") {
@@ -110,7 +110,27 @@ struct SourceManagementView: View {
                     if !editing { selected.removeAll() }
                 }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("本地文件", systemImage: "doc") { showFileImport = true }
+                    Button("粘贴书源", systemImage: "doc.on.clipboard") { showPaste = true }
+                    Button("网络链接", systemImage: "link") { showNetwork = true }
+                    Button("扫描二维码", systemImage: "qrcode.viewfinder") { showQR = true }
+                } label: {
+                    if importingFile { ProgressView() }
+                    else { Image(systemName: "square.and.arrow.down") }
+                }.disabled(importingFile).accessibilityLabel("导入书源")
+            }
         }
+        .fileImporter(isPresented: $showFileImport, allowedContentTypes: [.json, .plainText, .data]) { result in
+            switch result {
+            case .success(let url): importSourceFile(url)
+            case .failure(let error): fileImportMessage = error.localizedDescription; showFileResult = true
+            }
+        }
+        .alert("书源导入", isPresented: $showFileResult) {
+            Button("好", role: .cancel) {}
+        } message: { Text(fileImportMessage) }
         .sheet(item: $selectedSource) { src in
             NavigationStack { SourceDetailView(source: src) }
         }
@@ -181,6 +201,28 @@ struct SourceManagementView: View {
             }
         }
     }
+    private func importSourceFile(_ url: URL) {
+        importingFile = true
+        Task {
+            let message = await Task.detached(priority: .userInitiated) { () -> ImportResult? in
+                let access = url.startAccessingSecurityScopedResource()
+                defer { if access { url.stopAccessingSecurityScopedResource() } }
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return importSourcesDetailed(decodeTextData(data))
+            }.value
+            await MainActor.run {
+                importingFile = false
+                if let result = message, !result.sources.isEmpty {
+                    let merge = store.mergeSources(result.sources)
+                    fileImportMessage = "解析到 \(result.sources.count) 个书源：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)，跳过 \(result.skipped)。"
+                } else {
+                    fileImportMessage = "未能读取书源，请选择包含 Legado 书源 JSON 的文件。"
+                }
+                showFileResult = true
+            }
+        }
+    }
+
     // 当前选中（编辑模式）对应的书源
     var selectedSources: [LegadoSource] { filtered.filter { selected.contains($0.id) } }
 

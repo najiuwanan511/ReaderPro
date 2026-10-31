@@ -116,6 +116,10 @@ struct RssSubscribeView: View {
                 }
             }
             .navigationTitle("订阅")
+            .readerNavigationStyle()
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(AppTheme.surface)
             .toolbar {
                 Button { showAdd = true } label: { Image(systemName: "plus") }
                 Button { showManage = true } label: { Image(systemName: "slider.horizontal.3") }
