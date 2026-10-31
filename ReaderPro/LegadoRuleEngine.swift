@@ -11,12 +11,33 @@ enum LegadoJSCtx {
     @TaskLocal static var chapter: BookChapter?
     @TaskLocal static var library = ""
     @TaskLocal static var comment = ""
+    @TaskLocal static var loginURL = ""
     @TaskLocal static var failures: RuleFailures? = nil
     @TaskLocal static var headers: [String: String] = [:]
 }
 
 func isJavaScriptRule(_ rule: String) -> Bool {
     rule.range(of: #"^@js(?::|\s|$)"#, options: [.regularExpression, .caseInsensitive]) != nil
+}
+
+func expandScriptRuleTemplates(_ script: String, input: String, base: String, key: String, page: Int,
+                               sourceURL: String, book: LegadoJS.BookCtx?) -> String {
+    var expanded = script, count = 0
+    while let start = expanded.range(of: "{{"), let end = expanded[start.upperBound...].range(of: "}}"), count < 100 {
+        count += 1
+        var expression = String(expanded[start.upperBound..<end.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        let value: String
+        if expression.hasPrefix("@@") { expression = String(expression.dropFirst(2)) }
+        if expression.hasPrefix("$") || expression.hasPrefix("@") || expression.hasPrefix("//") || expression.hasPrefix("class.") || expression.hasPrefix("id.") || expression.hasPrefix("tag.") {
+            value = applyRuleFirst(input, expression, base: base)
+        } else if expression == "key" { value = key }
+        else if expression == "page" { value = String(page) }
+        else {
+            value = LegadoJS.run(expression, input: input, baseUrl: base, sourceKey: key, sourceUrl: sourceURL, book: book, page: page)
+        }
+        expanded.replaceSubrange(start.lowerBound..<end.upperBound, with: value)
+    }
+    return expanded
 }
 
 // Android's Gson also accepts bare extraction rules in @put:{bid:$.id}.
@@ -475,7 +496,7 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
             extractor = last; selectorTokens = Array(tokens.dropLast())
         } else if last.hasPrefix("attr(") && last.hasSuffix(")") {
             extractor = String(last.dropFirst(5).dropLast()); selectorTokens = Array(tokens.dropLast())
-        } else if ["href", "src", "content", "data-src", "data-original", "data-url", "title", "alt", "value"].contains(last) {
+        } else if ["href", "src", "content", "id", "class", "name", "onclick", "style", "target", "srcset", "title", "alt", "value"].contains(last) || last.hasPrefix("data-") {
             extractor = last; selectorTokens = Array(tokens.dropLast())
         }
     }
@@ -523,7 +544,7 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
         if (token.contains(" ") || token.contains(">") || token.contains("+") || token.contains("~")) && !token.hasPrefix("class.") {
             for el in els {
                 let searchIn = el.open.isEmpty ? el.full : el.inner
-                found.append(contentsOf: cssElements(searchIn, token))
+                found.append(contentsOf: findElementsSel(searchIn, parsed, token: token))
                 if !el.open.isEmpty && matchesSelf(el, parsed: parsed) {
                     // A segment that matches the element itself (rare) is kept too.
                 }
@@ -751,6 +772,7 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
 
 func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [String] {
     if rule.isEmpty { return [] }
+    if rule == "@baseUrl" { return [base] }
     // Templates may contain JavaScript operators; expand them before splitting
     // the surrounding rule at || or &&.
     if rule.contains("{{") {
@@ -818,10 +840,12 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
             for ci in current { vals.append(contentsOf: applyRule(ci, prefix, base: base)) }
         }
         var jsOut: [String] = []
-        for v in vals {
+        let elements = !vals.isEmpty && vals.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<") }
+        let structured: Any? = !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && elements ? vals : nil
+        for v in structured == nil ? vals : [input] {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
                                   sourceKey: LegadoJSCtx.key, sourceUrl: LegadoJSCtx.sourceUrl,
-                                  book: LegadoJSCtx.book, originalContent: input)
+                                  book: LegadoJSCtx.book, originalContent: input, structuredResult: structured)
             if !jr.isEmpty { jsOut.append(jr) }
         }
         current = jsOut
@@ -831,6 +855,23 @@ func evalJsEmbedded(_ input: String, _ rule: String, base: String) -> [String] {
         for ci in current { out.append(contentsOf: applyRule(ci, rest, base: base)) }
     }
     return out
+}
+
+// A replacement marker inside {{...}} belongs to that nested extraction rule.
+// Splitting at it would truncate the template (e.g. 潇湘书院's kind rule).
+func ruleReplacementStart(_ rule: String) -> Range<String.Index>? {
+    var index = rule.startIndex, templateDepth = 0
+    while index < rule.endIndex {
+        let next = rule.index(after: index)
+        guard next < rule.endIndex else { break }
+        let end = rule.index(after: next)
+        let pair = rule[index..<end]
+        if pair == "{{" { templateDepth += 1; index = end }
+        else if pair == "}}", templateDepth > 0 { templateDepth -= 1; index = end }
+        else if pair == "##", templateDepth == 0 { return index..<end }
+        else { index = next }
+    }
+    return nil
 }
 
 func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
@@ -863,7 +904,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     if let jsRange = r.range(of: "@js:") {
         let prefix = String(r[..<jsRange.lowerBound])
         let jsCode = String(r[jsRange.upperBound...])
-        let vals = applyRuleNoReplace(htmlOrJson, prefix, base: base)
+        let vals = applyRule(htmlOrJson, prefix, base: base)
         var out: [String] = []
         for v in vals {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
@@ -876,7 +917,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     if let jsRange2 = r.range(of: "@JS:") {
         let prefix = String(r[..<jsRange2.lowerBound])
         let jsCode = String(r[jsRange2.upperBound...])
-        let vals = applyRuleNoReplace(htmlOrJson, prefix, base: base)
+        let vals = applyRule(htmlOrJson, prefix, base: base)
         var out: [String] = []
         for v in vals {
             let jr = LegadoJS.run(jsCode, input: v, baseUrl: base,
@@ -887,7 +928,7 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         return out
     }
     var main = r; var replacePattern: String? = nil; var replaceWith = ""
-    if let range = r.range(of: "##") {
+    if let range = ruleReplacementStart(r) {
         main = String(r[..<range.lowerBound])
         let after = String(r[range.upperBound...])
         let fields = after.components(separatedBy: "##")
@@ -1022,14 +1063,21 @@ extension LegadoSource {
         var out = template.trimmingCharacters(in: .whitespacesAndNewlines)
         if isJavaScriptRule(out) {
             var code = String(out.dropFirst(3)); if code.hasPrefix(":") { code.removeFirst() }
-            out = LegadoJS.run(code, input: "", baseUrl: sourceUrl, sourceKey: key, sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page)
+            out = LegadoJS.run(code, input: "", baseUrl: sourceUrl, sourceKey: key, sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page, expandTemplates: false)
         } else {
-            while let start = out.range(of: "<js>"), let end = out[start.upperBound...].range(of: "</js>") {
-                let prefix = String(out[..<start.lowerBound])
-                let code = String(out[start.upperBound..<end.lowerBound])
-                let value = LegadoJS.run(code, input: prefix, baseUrl: sourceUrl, sourceKey: key,
-                                         sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page)
-                out = value + String(out[end.upperBound...])
+            var rest = out, result = out, hasScript = false
+            while let start = rest.range(of: "<js>"), let end = rest[start.upperBound...].range(of: "</js>") {
+                hasScript = true
+                let prefix = String(rest[..<start.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !prefix.isEmpty { result = prefix.replacingOccurrences(of: "@result", with: result) }
+                let code = String(rest[start.upperBound..<end.lowerBound])
+                result = LegadoJS.run(code, input: result, baseUrl: sourceUrl, sourceKey: key,
+                                         sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? sourceUrl : LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book, page: page, expandTemplates: false)
+                rest = String(rest[end.upperBound...])
+            }
+            if hasScript {
+                let tail = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+                out = tail.isEmpty ? result : tail.replacingOccurrences(of: "@result", with: result)
             }
         }
         let encKey = key.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? key
@@ -1064,6 +1112,7 @@ extension LegadoSource {
                 try await LegadoJSCtx.$book.withValue(context) {
                     try await LegadoJSCtx.$library.withValue(jsLib) {
                       try await LegadoJSCtx.$comment.withValue(bookSourceComment) {
+                        try await LegadoJSCtx.$loginURL.withValue(loginUrl) {
                         try await LegadoJSCtx.$failures.withValue(failures) {
                             return try await LegadoJSCtx.$headers.withValue(requestHeaders) {
                               do {
@@ -1077,6 +1126,7 @@ extension LegadoSource {
                                 throw error
                               }
                             }
+                        }
                         }
                       }
                     }

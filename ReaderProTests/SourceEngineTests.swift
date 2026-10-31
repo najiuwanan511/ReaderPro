@@ -253,6 +253,104 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>cookie.removeCookie(source.key); '/search?key={{key}}'</js>", key: "测试", page: 1, sourceUrl: base), "/search?key=%E6%B5%8B%E8%AF%95")
     }
 
+    func testRealPackJavaScriptRuleTemplatesExpandBeforeEvaluation() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let json = #"{"id":12345,"book_id":67890}"#
+            XCTAssertEqual(applyRuleFirst(json, "@js:var params={id:{{$.id}},book_id:{{$.book_id}}}; params.id+'|'+params.book_id", base: base), "12345|67890")
+            XCTAssertEqual(applyRuleFirst(json, "<js>var id={{$.id}}; '/book/'+id</js>", base: base), "/book/12345")
+            XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>cookie.removeCookie(source.key); '/search?key={{key}}'</js>", key: "测试", page: 1, sourceUrl: base), "/search?key=%E6%B5%8B%E8%AF%95")
+            let html = #"<p class="subtitle"><a>作者甲</a> / 玄幻</p>"#
+            XCTAssertEqual(applyRuleFirst(html, "{{@@class.subtitle@text}}##{{@@class.subtitle@a.0@text}}", base: base), " / 玄幻")
+            XCTAssertEqual(applyRuleFirst(json, "{{$.id##^1##9}}号##号##本", base: base), "92345本")
+            try failures.check()
+        }
+    }
+
+    func testRealPackCompoundCSSExclusionsAndTableRows() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let html = "<ul class='txt-list'><li>广告</li><li>甲</li><li>乙</li></ul>"
+            XCTAssertEqual(applyRule(html, ".txt-list li!0@text", base: base), ["甲", "乙"])
+            XCTAssertEqual(applyRule(html, ".txt-list li!-1@text", base: base), ["广告", "甲"])
+            XCTAssertEqual(applyRule(html, ".txt-list li.0!0@text", base: base), ["甲"])
+            let table = "<table id='bookcon'><tr><td>标题</td></tr><tr><td><a href='/a'>甲</a></td></tr><tr><td><a href='/b'>乙</a></td></tr></table>"
+            XCTAssertEqual(applyRule(table, "#bookcon tr!0@td@a@href", base: base), ["/a", "/b"])
+            let search = "<div class='search-list'><dl class='textlist'>标题</dl><dl class='textlist'>甲</dl></div>"
+            XCTAssertEqual(applyRule(search, ".search-list .textlist!0@text", base: base), ["甲"])
+            try failures.check()
+        }
+    }
+
+    func testEmbeddedJavaScriptReceivesASelectableDOMList() throws {
+        let html = "<ul><li>广告</li><li><a href='/a'>甲</a></li><li><a href='/b'>乙</a></li></ul>"
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let output = applyRuleFirst(html, #"ul li!0<js>result.toArray().map(o=>({name:o.text(),url:o.select('a').attr('href')}))</js>"#, base: base)
+            let objects = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(output.utf8)) as? [[String: String]])
+            XCTAssertEqual(objects, [["name":"甲", "url":"/a"], ["name":"乙", "url":"/b"]])
+            XCTAssertEqual(applyRuleFirst(html, "li.1@text<js>result.replace('甲','丙')</js>", base: base), "丙")
+            XCTAssertEqual(applyRuleFirst(html, "ul li!0<js>result.size()+'|'+java.getString('li.0@text')+'|'+src.includes('广告')</js>", base: base), "2|广告|true")
+            try failures.check()
+        }
+    }
+
+    func testAttributeExtractionAndReplacementBeforeTrailingJavaScript() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let html = #"<p id="author">作者： 测试作者 </p><a onclick="read('123')" data-imgsrc="/cover.jpg" style="color:red">阅读</a>"#
+            XCTAssertEqual(applyRuleFirst(html, "id.author@text##作者：##@js:result.trim()", base: base), "测试作者")
+            XCTAssertEqual(applyRuleFirst(html, #"a@onclick##read\('|'\)##"#, base: base), "123")
+            XCTAssertEqual(applyRuleFirst(html, "a@data-imgsrc", base: base), "/cover.jpg")
+            XCTAssertEqual(applyRuleFirst(html, "a@style", base: base), "color:red")
+            XCTAssertEqual(applyRuleFirst(html, "@baseUrl", base: base), base)
+            try failures.check()
+        }
+    }
+
+    func testScriptAndroidIdentifierIsStableAndAnonymous() {
+        let first = LegadoJS.run("java.androidId()", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+        let second = LegadoJS.run("java.androidId()", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+        XCTAssertEqual(first, second)
+        XCTAssertNotNil(first.range(of: "^[0-9a-f]{16}$", options: .regularExpression))
+    }
+
+    func testURLScriptsCanSetVariablesBeforeALiteralURL() throws {
+        let raw = "<js>java.put('test17k','value')</js>\nhttps://h5.17k.com/ck/search/list?keyword={{key}}"
+        XCTAssertEqual(LegadoSource.fillSearchTemplate(raw, key: "测试", page: 1, sourceUrl: base), "https://h5.17k.com/ck/search/list?keyword=%E6%B5%8B%E8%AF%95")
+        XCTAssertEqual(LegadoJS.variable("test17k"), "value")
+        XCTAssertEqual(LegadoSource.fillSearchTemplate("/book/1<js>result+'/toc'</js>", key: "", page: 1, sourceUrl: base), "/book/1/toc")
+        XCTAssertEqual(LegadoSource.fillSearchTemplate("<js>'/book/2'</js>https://example.org@result/toc", key: "", page: 1, sourceUrl: base), "https://example.org/book/2/toc")
+        let request = try SourceHTTP.request("/search", base: " \nhttps://example.org/books/   ")
+        XCTAssertEqual(request.url?.absoluteString, "https://example.org/search")
+        XCTAssertEqual(resolveUrl("//cdn.example.org/cover", base: " http://example.org "), "http://cdn.example.org/cover")
+        var source = LegadoSource(); source.bookSourceUrl = " https://example.org "
+        XCTAssertEqual(sourceIdentityKey(source), " https://example.org ")
+    }
+
+    func testTypedDataRequestsMatchAndroidHexInput() async throws {
+        let bytes = Data("测试".utf8)
+        let raw = "data:;base64," + bytes.base64EncodedString()
+        let source = SourceTestFixtures.html()
+        let plain = try await source.loadPage(raw, stage: "搜索")
+        XCTAssertEqual(plain.text, "测试")
+        let typed = try await source.loadPage(raw + #",{"type":"maoyankanshu"}"#, stage: "搜索")
+        XCTAssertEqual(typed.text, "e6b58be8af95")
+        let binary = try await source.loadPage(base + #"/bridge-library,{"type":"binary"}"#, stage: "搜索")
+        XCTAssertTrue(binary.text.hasPrefix("66756e6374696f6e")) // function
+    }
+
+    func testLoginScriptSurvivesImportAndIsAvailableToRules() async throws {
+        let raw = #"[{"bookSourceName":"测试登录","bookSourceUrl":"https://example.org","loginUrl":"function login(){return 'ready'}"}]"#
+        let source = try XCTUnwrap(importSourcesDetailed(raw).sources.first)
+        let restored = try JSONDecoder().decode(LegadoSource.self, from: JSONEncoder().encode(source))
+        XCTAssertEqual(restored.loginUrl, source.loginUrl)
+        let output = try await restored.withRules {
+            LegadoJS.run("eval(source.loginUrl); login()", input: "", baseUrl: self.base, sourceKey: "", sourceUrl: restored.bookSourceUrl)
+        }
+        XCTAssertEqual(output, "ready")
+    }
+
     func testAndroidCryptoUsesKnownAESAndDigestVectors() {
         let value = LegadoJS.run(#"""
         var key=java.hexDecodeToByteArray('2b7e151628aed2a6abf7158809cf4f3c');

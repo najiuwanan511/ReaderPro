@@ -14,6 +14,9 @@ enum SourceJSBridge {
                         method: String = "", body: String = "", timeout: Double = 20,
                         followRedirects: Bool = true) throws -> [String: Any] {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "脚本兼容性", message: "网络脚本必须在后台书源任务中执行") }
+        if let inline = try SourceHTTP.inlinePage(address) {
+            return ["text": inline.text, "url": inline.url, "status": 200, "headers": [String: String]()]
+        }
         var request = try SourceHTTP.request(address, base: base, headers: headers,
                                              key: LegadoJSCtx.key)
         let options = SourceHTTP.options(address).options
@@ -46,7 +49,8 @@ enum SourceJSBridge {
         let (data, response) = try box.get()!.get()
         let http = response as? HTTPURLResponse
         let fields = (http?.allHeaderFields ?? [:]).reduce(into: [String: String]()) { $0[String(describing: $1.key).lowercased()] = String(describing: $1.value) }
-        return ["text": SourceHTTP.decode(data, response: response), "url": response.url?.absoluteString ?? address,
+        let text = (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()
+        return ["text": text, "url": response.url?.absoluteString ?? address,
                 "status": http?.statusCode ?? 0, "headers": fields]
     }
 }

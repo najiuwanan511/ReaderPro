@@ -19,6 +19,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var exploreUrl: String = ""
     var header: String = ""
     var jsLib: String = ""
+    var loginUrl: String = ""
     var bookSourceComment: String = ""
     var enabledExplore: Bool = true
     var ruleSearch: RuleSet = RuleSet()
@@ -76,7 +77,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, enabledExplore, bookSourceComment
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -89,6 +90,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         if header.isEmpty, let map = try? c.decode([String: String].self, forKey: .header),
            let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
         jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
+        loginUrl = c.tolerantString(.loginUrl)
         bookSourceComment = c.tolerantString(.bookSourceComment)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
         ruleBookInfo = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleBookInfo)) ?? RuleSet()
@@ -104,6 +106,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(bookSourceGroup, forKey: .bookSourceGroup); try c.encode(enabled, forKey: .enabled); try c.encode(searchUrl, forKey: .searchUrl)
         try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
         try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
+        try c.encode(loginUrl, forKey: .loginUrl)
         try c.encode(bookSourceComment, forKey: .bookSourceComment)
         try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
         try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
@@ -176,8 +179,10 @@ func resolveUrl(_ raw: String, base: String) -> String {
     let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         .replacingOccurrences(of: "&amp;", with: "&")
     guard !value.isEmpty, !value.hasPrefix("javascript:"), value != "#" else { return "" }
-    if value.hasPrefix("//") { return (URL(string: base)?.scheme ?? "https") + ":" + value }
-    guard let baseURL = URL(string: base), let url = URL(string: value, relativeTo: baseURL)?.absoluteURL else { return value }
+    // Trim only the transport address; the original source identity is preserved.
+    let transportBase = SourceHTTP.options(base).url.trimmingCharacters(in: .whitespacesAndNewlines)
+    if value.hasPrefix("//") { return (URL(string: transportBase)?.scheme ?? "https") + ":" + value }
+    guard let baseURL = URL(string: transportBase), let url = URL(string: value, relativeTo: baseURL)?.absoluteURL else { return value }
     return url.absoluteString
 }
 

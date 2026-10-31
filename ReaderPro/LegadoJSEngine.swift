@@ -28,6 +28,13 @@ final class LegadoJS {
     // java 键值存储：按 sourceUrl 分键，跨章节/跨请求共享（对标 Legado 的 java.put/get）
     private static var store: [String: [String: String]] = [:]
     private static let storeLock = NSLock()
+    private static let androidIdentifier: String = {
+        let key = "ReaderPro.sourceAndroidIdentifier"
+        if let saved = UserDefaults.standard.string(forKey: key) { return saved }
+        let generated = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(16))
+        UserDefaults.standard.set(generated, forKey: key)
+        return generated
+    }()
 
     static func variable(_ key: String) -> String {
         storeLock.lock(); defer { storeLock.unlock() }
@@ -42,8 +49,10 @@ final class LegadoJS {
     static func run(_ js: String, input: String, baseUrl: String,
                     sourceKey: String, sourceUrl: String,
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
-                    book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil) -> String {
-        let script = js.trimmingCharacters(in: .whitespacesAndNewlines)
+                    book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil,
+                    structuredResult: Any? = nil, expandTemplates: Bool = true) -> String {
+        let script = (expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
+                                              page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
         guard let budget = SourceJSBudget.install(ctx) else {
@@ -57,7 +66,7 @@ final class LegadoJS {
         let storeKey = sourceUrl.isEmpty ? "global" : sourceUrl
 
         // ---- 全局变量 ----
-        ctx.setObject(input, forKeyedSubscript: "result" as NSString)
+        ctx.setObject(structuredResult ?? input, forKeyedSubscript: "result" as NSString)
         ctx.setObject(originalContent ?? input, forKeyedSubscript: "src" as NSString)
         ctx.setObject(baseUrl, forKeyedSubscript: "baseUrl" as NSString)
         ctx.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
@@ -180,6 +189,7 @@ final class LegadoJS {
         source.setObject(sourceUrl, forKeyedSubscript: "key" as NSString)
         source.setObject(sourceUrl, forKeyedSubscript: "bookSourceUrl" as NSString)
         source.setObject(LegadoJSCtx.comment, forKeyedSubscript: "bookSourceComment" as NSString)
+        source.setObject(LegadoJSCtx.loginURL, forKeyedSubscript: "loginUrl" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
         source.setObject(getLoginMap, forKeyedSubscript: "getLoginInfoMap" as NSString)
@@ -215,6 +225,9 @@ final class LegadoJS {
         ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
         ctx.evaluateScript(Self.compatibilityScript)
+        if structuredResult is [String] {
+            ctx.evaluateScript("result = _elements(result)")
+        }
         SourceCrypto.install(java, context: ctx)
         let digest: @convention(block) (String, String) -> String = { text, algorithm in
             let data = Data(text.utf8)
@@ -231,6 +244,8 @@ final class LegadoJS {
             return bytes.map { String(format: "%02x", $0) }.joined()
         }
         let randomUUID: @convention(block) () -> String = { UUID().uuidString.lowercased() }
+        let androidID: @convention(block) () -> String = { androidIdentifier }
+        java.setObject(androidID, forKeyedSubscript: "androidId" as NSString)
         let chapterNumber: @convention(block) (String) -> String = { text in
             guard let regex = try? NSRegularExpression(pattern: "第([零〇一二两三四五六七八九十百千万亿]+)([章回节集卷部])") else { return text }
             var result = text

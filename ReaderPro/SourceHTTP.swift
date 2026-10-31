@@ -130,7 +130,20 @@ enum SourceHTTP {
         return req
     }
 
-    static func load(_ request: URLRequest, stage: String) async throws -> SourcePage {
+    static func inlinePage(_ address: String) throws -> SourcePage? {
+        let parsed = options(address)
+        guard parsed.url.hasPrefix("data:") else { return nil }
+        guard let comma = parsed.url.firstIndex(of: ","), parsed.url[..<comma].hasSuffix(";base64"),
+              let data = Data(base64Encoded: String(parsed.url[parsed.url.index(after: comma)...]), options: .ignoreUnknownCharacters) else {
+            throw SourceFailure(stage: "请求地址", message: "data 规则没有生成有效的 Base64 数据")
+        }
+        // Legado's request type option passes binary responses to rules as hex.
+        let text = (parsed.options["type"] as? String ?? "").isEmpty
+            ? decodeTextData(data) : data.map { String(format: "%02x", $0) }.joined()
+        return SourcePage(text: text, url: parsed.url)
+    }
+
+    static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false) async throws -> SourcePage {
         try Task.checkCancellation()
         do {
             let (data, response) = try await SourceTLS.session().data(for: request)
@@ -147,7 +160,7 @@ enum SourceHTTP {
                 throw SourceFailure(stage: stage, message: "HTTP \(http.statusCode)：\(hint)", url: address)
             }
             guard !data.isEmpty else { throw SourceFailure(stage: stage, message: "服务器返回空内容", url: address) }
-            return SourcePage(text: decode(data, response: response), url: address)
+            return SourcePage(text: hexEncoded ? data.map { String(format: "%02x", $0) }.joined() : decode(data, response: response), url: address)
         } catch let failure as SourceFailure { throw failure }
         catch {
             if Task.isCancelled { throw CancellationError() }
@@ -173,11 +186,12 @@ extension LegadoSource {
 
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {
         let expanded = SourceHTTP.expand(address, base: base ?? bookSourceUrl, key: key, page: page)
+        if let inline = try SourceHTTP.inlinePage(expanded) { return inline }
         let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page)
         let options = SourceHTTP.options(expanded).options
         if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {
             return try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20))
         }
-        return try await SourceHTTP.load(req, stage: stage)
+        return try await SourceHTTP.load(req, stage: stage, hexEncoded: !(options["type"] as? String ?? "").isEmpty)
     }
 }
