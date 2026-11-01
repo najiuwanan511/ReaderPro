@@ -43,8 +43,17 @@ final class SourceURLCompatibilityTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, "https://example.test/search?q=%E6%96%97%E7%BD%97&from=js")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "is_human=ok")
         XCTAssertNil(request.value(forHTTPHeaderField: "X-Original"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), sourceUA)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(String(data: try XCTUnwrap(request.httpBody), encoding: .utf8), "page=2")
+    }
+
+    func testURLScriptReplacesHeadersIgnoringCase() throws {
+        let raw = #"/search,{"headers":{"X-Original":"old"},"js":"java.headerMap.put('x-original','new');java.url"}"#
+        let request = try SourceHTTP.request(raw, base: "https://example.test")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Original"), "new")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), sourceUA)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://example.test")
     }
 
     func testURLScriptWithoutReturnPreservesOriginalURL() throws {

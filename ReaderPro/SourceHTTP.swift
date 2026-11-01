@@ -146,7 +146,11 @@ enum SourceHTTP {
                 throw SourceFailure(stage: "请求地址", message: "地址脚本没有返回有效的 HTTP/HTTPS 地址", url: address)
             }
             req.url = updated
-            req.allHTTPHeaderFields = context.headers
+            // Replacing allHTTPHeaderFields can retain removed fields on
+            // Foundation's URLRequest implementation. Remove each original
+            // field explicitly before applying the script's final map.
+            for name in (req.allHTTPHeaderFields ?? [:]).keys { req.setValue(nil, forHTTPHeaderField: name) }
+            for (name, value) in context.headers { req.setValue(value, forHTTPHeaderField: name) }
         }
         req.httpMethod = (parsed.options["method"] as? String ?? "GET").uppercased()
         if let body = parsed.options["body"] as? String {
