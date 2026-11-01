@@ -145,7 +145,7 @@ final class SourceFlowUITests: XCTestCase {
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 40), .completed)
         let search = app.textFields["bookSearch"]
-        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("test")
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("斗罗大陆")
         app.buttons["submitBookSearch"].tap()
         let cancel = app.buttons["cancelBookSearch"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 15))
