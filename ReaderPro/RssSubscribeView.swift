@@ -11,17 +11,18 @@ struct RssArticle: Identifiable {
     var pubDate: String
     var summary: String
     var content: String
+    var image: String = ""
 }
 
 final class RssParser: NSObject, XMLParserDelegate {
     var articles: [RssArticle] = []
     private var inItem = false
     private var inTitle = false, inLink = false, inPubDate = false, inDesc = false, inContent = false
-    private var curTitle = "", curLink = "", curPubDate = "", curDesc = "", curContent = ""
+    private var curTitle = "", curLink = "", curPubDate = "", curDesc = "", curContent = "", curImage = ""
     private var linkHref = ""
 
     private func reset() {
-        curTitle = ""; curLink = ""; curPubDate = ""; curDesc = ""; curContent = ""; linkHref = ""
+        curTitle = ""; curLink = ""; curPubDate = ""; curDesc = ""; curContent = ""; curImage = ""; linkHref = ""
     }
 
     func parser(_ parser: XMLParser, didStartElement elementName: String, namespaceURI: String?, qualifiedName qName: String?, attributes attributeDict: [String: String] = [:]) {
@@ -32,6 +33,14 @@ final class RssParser: NSObject, XMLParserDelegate {
             if inItem { inTitle = true }
         case "link":
             if inItem { inLink = true; if let h = attributeDict["href"] { linkHref = h } }
+        case "enclosure", "media:content", "media:thumbnail":
+            // Ignore audio/video enclosures. Media thumbnails are images even
+            // when their optional MIME type is omitted.
+            let type = attributeDict["type"]?.lowercased() ?? ""
+            let medium = attributeDict["medium"]?.lowercased() ?? ""
+            if inItem && curImage.isEmpty && (elementName == "media:thumbnail" || type.hasPrefix("image/") || medium == "image") {
+                curImage = attributeDict["url"] ?? ""
+            }
         case "pubDate", "published", "updated":
             if inItem { inPubDate = true }
         case "description", "summary":
@@ -61,7 +70,7 @@ final class RssParser: NSObject, XMLParserDelegate {
             inItem = false
             let link = (curLink.isEmpty ? linkHref : curLink).trimmingCharacters(in: .whitespacesAndNewlines)
             if !curTitle.isEmpty || !curDesc.isEmpty {
-                articles.append(RssArticle(title: curTitle.isEmpty ? "（无标题）" : curTitle, link: link, pubDate: curPubDate, summary: curDesc, content: curContent.isEmpty ? curDesc : curContent))
+                articles.append(RssArticle(title: curTitle.isEmpty ? "（无标题）" : curTitle, link: link, pubDate: curPubDate, summary: curDesc, content: curContent.isEmpty ? curDesc : curContent, image: curImage))
             }
         case "title": inTitle = false
         case "link": inLink = false
@@ -254,10 +263,21 @@ struct FeedArticlesView: View {
                 List {
                     ForEach(articles) { article in
                         Button { selected = article } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(article.title).font(.headline).lineLimit(2)
-                                if !article.pubDate.isEmpty { Text(article.pubDate).font(.caption2).foregroundStyle(.secondary) }
-                                if !article.summary.isEmpty { Text(stripHTML(article.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                            HStack(alignment: .top, spacing: 12) {
+                                if let imageURL = URL(string: article.image), ["http", "https"].contains(imageURL.scheme?.lowercased() ?? ""), imageURL.host != nil {
+                                    AsyncImage(url: imageURL) { image in
+                                        image.resizable().scaledToFill()
+                                    } placeholder: {
+                                        RoundedRectangle(cornerRadius: 4).fill(AppTheme.surfaceMuted)
+                                    }
+                                    .frame(width: 76, height: 64).clipped().cornerRadius(4)
+                                    .accessibilityLabel("文章封面")
+                                }
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(article.title).font(.headline).lineLimit(2)
+                                    if !article.pubDate.isEmpty { Text(article.pubDate).font(.caption2).foregroundStyle(.secondary) }
+                                    if !article.summary.isEmpty { Text(stripHTML(article.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                                }
                             }
                         }
                     }

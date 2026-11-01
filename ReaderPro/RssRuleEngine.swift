@@ -37,6 +37,7 @@ extension RssSource {
                     let articles = parseRssXML(Data(response.text.utf8)).map { item -> RssArticle in
                         var item = item
                         if !item.link.isEmpty { item.link = resolveUrl(item.link, base: response.url) }
+                        if !item.image.isEmpty { item.image = resolveUrl(item.image, base: response.url) }
                         return item
                     }
                     return RssArticlePage(articles: articles, nextURL: nil)
@@ -56,7 +57,14 @@ extension RssSource {
                     try LegadoJSCtx.failures?.check()
                     guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
                     let link = address.isEmpty ? "" : resolveUrl(address, base: response.url)
-                    items.append(RssArticle(title: title, link: link, pubDate: field(block, self.rulePubDate), summary: field(block, self.ruleDescription), content: ""))
+                    // A broken optional image rule should not hide readable
+                    // articles. Legado handles the image field independently.
+                    let imageFailures = RuleFailures()
+                    var image = LegadoJSCtx.$failures.withValue(imageFailures) { field(block, self.ruleImage) }
+                    do { try imageFailures.check() } catch { image = "" }
+                    try Task.checkCancellation()
+                    if !image.isEmpty { image = resolveUrl(image, base: response.url) }
+                    items.append(RssArticle(title: title, link: link, pubDate: field(block, self.rulePubDate), summary: field(block, self.ruleDescription), content: "", image: image))
                     try LegadoJSCtx.failures?.check()
                 }
                 if reverse { items.reverse() }

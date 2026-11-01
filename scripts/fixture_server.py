@@ -39,13 +39,13 @@ class Handler(BaseHTTPRequestHandler):
             if self.headers.get('X-Fixture') != 'RSS':
                 status, body = 403, 'missing RSS header'
             else:
-                body = '<article><a class="title" href="/rss/article">样本文章</a><span class="date">今天</span></article><a class="next" href="/rss/list2">下一页</a>'
+                body = '<article><a class="title" href="/rss/article">样本文章</a><img data-cover="/rss/cover.jpg"><span class="date">今天</span></article><a class="next" href="/rss/list2">下一页</a>'
         elif path == '/rss/list2':
             body = '<article><a class="title" href="/rss/article">第二页文章</a></article>'
         elif path == '/rss/article':
             body = '<main><div class="content"><p>订阅测试正文</p></div></main>'
         elif path == '/rss/atom':
-            mime, body = 'application/atom+xml; charset=utf-8', '<?xml version="1.0"?><feed><entry><title>Atom 样本</title><link href="/rss/article"/><content><![CDATA[<p>内容</p>]]></content></entry></feed>'
+            mime, body = 'application/atom+xml; charset=utf-8', '<?xml version="1.0"?><feed xmlns:media="http://search.yahoo.com/mrss/"><entry><title>Atom 样本</title><link href="/rss/article"/><media:thumbnail url="/rss/cover.jpg"/><content><![CDATA[<p>内容</p>]]></content></entry></feed>'
         elif path == '/packs/chuangshi':
             mime = 'application/json; charset=utf-8'
             entries = json.loads(Path('build/source-pack-1325.json').read_text(encoding='utf-8'))
