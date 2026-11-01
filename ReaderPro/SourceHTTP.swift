@@ -266,7 +266,7 @@ extension LegadoSource {
                              sourceKey: LegadoJSCtx.key, sourceUrl: bookSourceUrl)
             }
         }
-        return SourceHTTP.headers(text)
+        return SourceLoginHeaders.merge(SourceHTTP.headers(text), source: bookSourceUrl)
     }
 
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {

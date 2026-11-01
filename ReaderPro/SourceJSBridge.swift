@@ -3,6 +3,56 @@ import Foundation
 // JavaScriptCore callbacks are synchronous, as are Legado's Java interfaces.
 // Only rule workers call this bridge; URLSession callbacks use their own queue.
 enum SourceJSBridge {
+    private static let importedScripts: NSCache<NSString, NSString> = {
+        let cache = NSCache<NSString, NSString>()
+        cache.countLimit = 128
+        cache.totalCostLimit = 8 * 1024 * 1024
+        return cache
+    }()
+
+    // Android's importScript returns source text, rather than evaluating it.
+    // Cache downloaded libraries for this process and resolve local relative
+    // paths against the app's Documents directory.
+    static func importScript(_ path: String, base: String, headers: [String: String], source: String = "") throws -> String {
+        let value = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { throw SourceFailure(stage: "导入脚本", message: "脚本地址为空") }
+        if value.lowercased().hasPrefix("http://") || value.lowercased().hasPrefix("https://") {
+            let url = URL(string: value)
+            // An imported script may depend on an account, cookie, proxy or
+            // source-specific headers. Do not reuse those responses; shared
+            // cookie storage can change between consecutive evaluations.
+            func cacheable() -> Bool {
+                guard headers.isEmpty, let url, url.query == nil, url.user == nil, url.password == nil else { return false }
+                return (HTTPCookieStorage.shared.cookies(for: url) ?? []).isEmpty
+            }
+            let key = ((source.isEmpty ? base : source) + "\n" + value) as NSString
+            if cacheable(), let cached = importedScripts.object(forKey: key) { return cached as String }
+            let response = try request(value, base: base, headers: headers)
+            let status = response["status"] as? Int ?? 0
+            guard (200..<300).contains(status) else {
+                throw SourceFailure(stage: "导入脚本", message: "HTTP \(status)", url: value)
+            }
+            let script = response["text"] as? String ?? ""
+            guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw SourceFailure(stage: "导入脚本", message: "脚本内容为空", url: value)
+            }
+            if cacheable() { importedScripts.setObject(script as NSString, forKey: key, cost: script.utf8.count) }
+            return script
+        }
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
+        let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let file = (value.hasPrefix("/") ? URL(fileURLWithPath: value) : documents.appendingPathComponent(value))
+            .resolvingSymlinksInPath().standardizedFileURL
+        guard file.path.hasPrefix(home.path + "/") else {
+            throw SourceFailure(stage: "导入脚本", message: "本地脚本不在应用数据目录中")
+        }
+        let script = decodeTextData(try Data(contentsOf: file))
+        guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw SourceFailure(stage: "导入脚本", message: "脚本内容为空")
+        }
+        return script
+    }
+
     final class ResponseBox: @unchecked Sendable {
         let lock = NSLock()
         var result: Result<(Data, URLResponse), Error>?

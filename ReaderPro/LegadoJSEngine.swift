@@ -186,7 +186,8 @@ final class LegadoJS {
         let request: @convention(block) (String, String, String, String, Double, Bool) -> String = { address, method, body, headersJSON, timeout, follow in
             let result: [String: Any]
             do {
-                let headers = (urlContext?.headers ?? LegadoJSCtx.headers).merging(SourceHTTP.headers(headersJSON)) { _, value in value }
+                let defaults = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
+                let headers = SourceLoginHeaders.overlay(SourceHTTP.headers(headersJSON), onto: defaults)
                 result = try SourceJSBridge.request(address, base: baseUrl, headers: headers,
                                                     method: method, body: body,
                                                     timeout: timeout > 0 ? timeout / 1000 : 20, followRedirects: follow)
@@ -200,6 +201,16 @@ final class LegadoJS {
             return json
         }
         java.setObject(request, forKeyedSubscript: "_request" as NSString)
+        let importScript: @convention(block) (String) -> String = { path in
+            do {
+                let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
+                return try SourceJSBridge.importScript(path, base: baseUrl, headers: headers, source: sourceUrl)
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return ""
+            }
+        }
+        java.setObject(importScript, forKeyedSubscript: "importScript" as NSString)
         let web: @convention(block) (String, String, String) -> String = { html, address, script in
             do {
                 let request = try SourceHTTP.request(address.isEmpty ? baseUrl : address, base: baseUrl, headers: LegadoJSCtx.headers)
@@ -215,9 +226,13 @@ final class LegadoJS {
             LegadoDOM.css(text, "body > *").first.map { htmlAttrs($0.open)[name.lowercased()] ?? "" } ?? ""
         }
         let textOnly: @convention(block) (String) -> String = { stripText($0, preserveNewlines: false) }
+        let unescapeEntities: @convention(block) (String, Bool) -> String = { text, inAttribute in
+            LegadoDOM.unescapeEntities(text, inAttribute: inAttribute)
+        }
         java.setObject(select, forKeyedSubscript: "_select" as NSString)
         java.setObject(attribute, forKeyedSubscript: "_attr" as NSString)
         java.setObject(textOnly, forKeyedSubscript: "_textOnly" as NSString)
+        java.setObject(unescapeEntities, forKeyedSubscript: "_unescapeEntities" as NSString)
         let cookieRead: @convention(block) (String) -> String = { address in
             guard let url = URL(string: resolveUrl(address, base: baseUrl)) else { return "" }
             return (HTTPCookieStorage.shared.cookies(for: url) ?? []).map { $0.name + "=" + $0.value }.joined(separator: "; ")
@@ -266,6 +281,41 @@ final class LegadoJS {
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
         source.setObject(getLoginMap, forKeyedSubscript: "getLoginInfoMap" as NSString)
         source.setObject(getLoginStr, forKeyedSubscript: "getLoginInfo" as NSString)
+        let getLoginHeader: @convention(block) () -> JSValue? = {
+            guard let context = JSContext.current() else { return nil }
+            guard let value = SourceLoginHeaders.get(sourceUrl) else { return JSValue(nullIn: context) }
+            return JSValue(object: value, in: context)
+        }
+        let getLoginHeaderMap: @convention(block) () -> JSValue? = {
+            guard let context = JSContext.current() else { return nil }
+            guard let values = SourceLoginHeaders.map(sourceUrl) else { return JSValue(nullIn: context) }
+            guard let map = JSValue(newObjectIn: context) else { return nil }
+            for (key, value) in values { map.setObject(value, forKeyedSubscript: key as NSString) }
+            let get: @convention(block) (String) -> JSValue? = { key in
+                guard let current = JSContext.current() else { return nil }
+                guard let value = values[key] else { return JSValue(nullIn: current) }
+                return JSValue(object: value, in: current)
+            }
+            map.setObject(get, forKeyedSubscript: "get" as NSString)
+            return map
+        }
+        let putLoginHeader: @convention(block) (String) -> Void = { value in
+            do {
+                try SourceLoginHeaders.put(value, source: sourceUrl)
+                let parsed = SourceHTTP.headers(value)
+                if let cookie = parsed["Cookie"] ?? parsed["cookie"] { cookieWrite(sourceUrl, cookie) }
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+            }
+        }
+        let removeLoginHeader: @convention(block) () -> Void = {
+            do { try SourceLoginHeaders.remove(sourceUrl); cookieRemove(sourceUrl) }
+            catch { JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current()) }
+        }
+        source.setObject(getLoginHeader, forKeyedSubscript: "getLoginHeader" as NSString)
+        source.setObject(getLoginHeaderMap, forKeyedSubscript: "getLoginHeaderMap" as NSString)
+        source.setObject(putLoginHeader, forKeyedSubscript: "putLoginHeader" as NSString)
+        source.setObject(removeLoginHeader, forKeyedSubscript: "removeLoginHeader" as NSString)
         source.setObject(getHeader, forKeyedSubscript: "headerMap" as NSString)
         source.setObject(getConcurrent, forKeyedSubscript: "getConcurrent" as NSString)
         source.setObject(putConcurrent, forKeyedSubscript: "putConcurrent" as NSString)
@@ -500,7 +550,13 @@ final class LegadoJS {
                 return _array(value == null ? [] : Array.isArray(value) ? value : [String(value)]);
             },
             url: function() { return data.url; },
-            raw: function() { return {request:function() {return {url:function(){return data.url;}};}}; },
+            raw: function() { return {
+                request:function() {return {url:function(){return data.url;}};},
+                headers:function(name) {
+                    var value = data.headers[String(name).toLowerCase()];
+                    return _array(value == null ? [] : Array.isArray(value) ? value : [String(value)]);
+                }
+            }; },
             toString: function() { return data.text; }
         };
     }
@@ -552,7 +608,8 @@ final class LegadoJS {
             select:function(selector){return _elements([].concat.apply([],this.map(function(e){return JSON.parse(java._select(String(e),selector)); })));}
         });
     }
-    var org={jsoup:{Jsoup:{parse:function(html){return _element(String(html));}}}};
+    var org={jsoup:{Jsoup:{parse:function(html){return _element(String(html));}},
+        parser:{Parser:{unescapeEntities:function(text,inAttribute){return java._unescapeEntities(String(text),!!inAttribute);}}}}};
     cookie.getKey = function(url, key) {
         var pairs = cookie.getCookie(String(url)).split(';');
         for (var i=0;i<pairs.length;i++) { var p=pairs[i].trim(), at=p.indexOf('='); if(p.slice(0,at)===key)return p.slice(at+1); }

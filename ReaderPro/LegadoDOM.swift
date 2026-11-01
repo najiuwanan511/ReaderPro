@@ -6,6 +6,10 @@ import SwiftSoup
 // language. In particular, nested lists, sibling CSS combinators and XPath
 // attributes must keep their real parent/child relationships.
 enum LegadoDOM {
+    static func unescapeEntities(_ text: String, inAttribute: Bool) -> String {
+        (try? SwiftSoup.Parser.unescapeEntities(text, inAttribute)) ?? text
+    }
+
     private static func cssDocument(_ html: String) throws -> SwiftSoup.Document {
         // Serialized rule results are fragments, including standalone table
         // rows/cells. Parsing those as full HTML drops their tags. Restore the

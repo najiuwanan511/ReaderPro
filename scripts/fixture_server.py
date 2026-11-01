@@ -227,6 +227,11 @@ class Handler(BaseHTTPRequestHandler):
             body = '<html><body><div id="dynamic"></div><script>setTimeout(function(){document.getElementById("dynamic").innerHTML="网页脚本正文";document.cookie="wv=ready; path=/";},100);</script></body></html>'
         elif path == '/bridge-cookie':
             body = self.headers.get('Cookie', '')
+        elif path == '/bridge-login-check':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'authorization': self.headers.get('Authorization', ''),
+                               'cookie': self.headers.get('Cookie', ''),
+                               'custom': self.headers.get('X-Login', '')}, ensure_ascii=False)
         elif path == '/bridge-library':
             body = "function remoteCategory() { return '远程分类'; }"
         elif path == '/bridge-special':

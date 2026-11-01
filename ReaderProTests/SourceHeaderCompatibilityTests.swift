@@ -100,6 +100,62 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         XCTAssertEqual(values["all"] as? String, target)
     }
 
+    func testSourceLoginHeaderPersistenceIsolationAndImmediateAjax() async throws {
+        let base = "http://127.0.0.1:8765"
+        let identity = base + "/login-" + UUID().uuidString
+        let otherIdentity = base + "/other-" + UUID().uuidString
+        defer {
+            try? SourceLoginHeaders.remove(identity)
+            try? SourceLoginHeaders.remove(otherIdentity)
+            if let url = URL(string: identity) {
+                for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] where cookie.name == "fixturelogin" {
+                    HTTPCookieStorage.shared.deleteCookie(cookie)
+                }
+            }
+        }
+        let result = await Task.detached {
+            let failures = RuleFailures()
+            let script = #"""
+            if(source.getLoginHeader()!==null || source.getLoginHeaderMap()!==null) throw Error('initial state');
+            source.putLoginHeader(JSON.stringify({Authorization:'Bearer fixture-token',Cookie:'fixturelogin=ready','X-Login':'stored'}));
+            var stored=JSON.parse(source.getLoginHeader()), map=source.getLoginHeaderMap();
+            if(stored.Authorization!=='Bearer fixture-token' || map.get('X-Login')!=='stored' || map.Cookie!=='fixturelogin=ready') throw Error('login header read');
+            var immediate=JSON.parse(java.ajax(baseUrl+'/bridge-login-check'));
+            if(immediate.authorization!=='Bearer fixture-token' || immediate.cookie.indexOf('fixturelogin=ready')<0 || immediate.custom!=='stored') throw Error('immediate ajax');
+            var explicit=JSON.parse(java.connect(baseUrl+'/bridge-login-check', {authorization:'explicit'}).body());
+            if(explicit.authorization!=='explicit') throw Error('explicit request headers must win');
+            'ok';
+            """#
+            let value = LegadoJSCtx.$failures.withValue(failures) {
+                LegadoJS.run(script, input: "", baseUrl: base, sourceKey: "", sourceUrl: identity,
+                             header: ["authorization": "base"])
+            }
+            do { try failures.check(); return value } catch { return sourceErrorMessage(error) }
+        }.value
+        XCTAssertEqual(result, "ok")
+        XCTAssertNotNil(SourceLoginHeaders.get(identity), "Login header must persist between script contexts")
+        XCTAssertNil(SourceLoginHeaders.get(otherIdentity), "Another source must not inherit credentials")
+        var source = LegadoSource()
+        source.bookSourceUrl = identity
+        source.header = #"{"authorization":"base","X-Base":"kept"}"#
+        XCTAssertEqual(source.requestHeaders.first { $0.key.lowercased() == "authorization" }?.value, "Bearer fixture-token")
+        XCTAssertEqual(source.requestHeaders["X-Base"], "kept")
+        let removed = await Task.detached {
+            LegadoJS.run("source.removeLoginHeader(); source.getLoginHeader()===null && source.getLoginHeaderMap()===null ? 'ok' : 'failed'",
+                         input: "", baseUrl: base, sourceKey: "", sourceUrl: identity)
+        }.value
+        XCTAssertEqual(removed, "ok")
+        XCTAssertNil(SourceLoginHeaders.get(identity))
+        XCTAssertFalse((HTTPCookieStorage.shared.cookies(for: URL(string: identity)!) ?? []).contains { $0.name == "fixturelogin" })
+        XCTAssertEqual(source.requestHeaders["authorization"], "base")
+        try SourceLoginHeaders.put("{malformed", source: identity)
+        XCTAssertEqual(SourceLoginHeaders.get(identity), "{malformed", "Android preserves the original header even if it cannot be parsed")
+        XCTAssertNil(SourceLoginHeaders.map(identity))
+        XCTAssertEqual(source.requestHeaders["authorization"], "base")
+        try SourceLoginHeaders.put(#"{"Authorization":"replacement"}"#, source: identity)
+        XCTAssertEqual(source.requestHeaders.first { $0.key.lowercased() == "authorization" }?.value, "replacement")
+    }
+
     func testSourceProxyConfigurationAndUnsupportedModes() throws {
         let http = try XCTUnwrap(SourceProxy.parse("http://127.0.0.1:8765"))
         XCTAssertEqual(http.kind, .http)
