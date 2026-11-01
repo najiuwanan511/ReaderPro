@@ -12,6 +12,9 @@ on:
       concurrency:
         default: '8'
         description: Concurrent searches
+      sanitizer:
+        default: 'NO'
+        description: Enable Address Sanitizer (YES or NO)
 
 jobs:
   diagnose:
@@ -35,14 +38,14 @@ jobs:
             sleep 1
           done
           exit 1
-      - name: Audit source window with Address Sanitizer
+      - name: Audit source window and capture native crashes
         run: |
           set -o pipefail
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
-            -enableAddressSanitizer YES -enableCodeCoverage NO \
+            -enableAddressSanitizer ${{ inputs.sanitizer }} -enableCodeCoverage NO \
             -only-testing:ReaderProTests/SourcePackAuditTests \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 1800 \
             -maximum-test-execution-time-allowance 1800 \
@@ -56,6 +59,14 @@ jobs:
           if [ -n "$CONTAINER" ] && [ -f "$CONTAINER/Documents/source-pack-search-audit-progress.json" ]; then
             cp "$CONTAINER/Documents/source-pack-search-audit-progress.json" build/
           fi
+          # CrashReporter writes asynchronously after xcodebuild observes death.
+          sleep 15
+          mkdir -p build/native-crashes
+          find "$HOME/Library/Logs/DiagnosticReports" "$HOME/Library/Developer/CoreSimulator/Devices/$READER_SIMULATOR_ID/data/Library/Logs" \
+            -type f \( -name '*ReaderPro*.ips' -o -name '*ReaderPro*.crash' \) \
+            -exec cp {} build/native-crashes/ \; 2>/dev/null || true
+          find "$HOME/Library/Developer/CoreSimulator/Devices/$READER_SIMULATOR_ID/data/Containers/Data/Application" \
+            -name 'source-pack-search-audit-progress.json' -exec cp {} build/ \; 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
