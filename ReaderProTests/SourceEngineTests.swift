@@ -799,6 +799,37 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(BookChapter.self, from: data).url, "https://example.test/1")
     }
 
+    func testRestoringLegacyReadingPositionsStaysWithinChapterAndPageBounds() throws {
+        let raw = #"{"title":"旧书","fileName":"old.txt","kind":"txt","chapterIndex":-2,"paragraphIndex":-7,"charOffset":42,"chapters":[{"id":"a","title":"第一章","text":"正文一"},{"id":"b","title":"第二章","text":"正文二"}]}"#
+        var book = try JSONDecoder().decode(LocalBook.self, from: Data(raw.utf8))
+        var restored = restoredReadingPosition(book)
+        XCTAssertEqual(book.chapters[restored.chapter].title, "第一章")
+        XCTAssertEqual(restored.offset, 0) // A stale offset belongs to the invalid chapter.
+        XCTAssertEqual(boundedReadingIndex(book.paragraphIndex, count: 3), 0)
+
+        book.chapterIndex = 1; book.charOffset = 9
+        restored = restoredReadingPosition(book)
+        XCTAssertEqual(book.chapters[restored.chapter].title, "第二章")
+        XCTAssertEqual(restored.offset, 9) // Valid saved progress is preserved.
+        book.charOffset = -9
+        XCTAssertEqual(restoredReadingPosition(book).offset, 0)
+        book.chapterIndex = Int.max; book.charOffset = 50
+        restored = restoredReadingPosition(book)
+        XCTAssertEqual(restored.chapter, 1)
+        XCTAssertEqual(restored.offset, 0)
+        XCTAssertEqual(boundedReadingIndex(Int.min, count: 3), 0)
+        XCTAssertEqual(boundedReadingIndex(Int.max, count: 3), 2)
+        book.chapterIndex = Int.min
+        XCTAssertEqual(book.unreadCount, 1)
+        book.chapterIndex = Int.max
+        XCTAssertEqual(book.unreadCount, 0)
+        book.chapters = []
+        restored = restoredReadingPosition(book)
+        XCTAssertEqual(restored.chapter, 0)
+        XCTAssertEqual(restored.offset, 0)
+        XCTAssertEqual(boundedReadingIndex(Int.max, count: 0), 0)
+    }
+
     @MainActor func testPaginationFitsStandalonePagesWithoutLosingUnicode() throws {
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineSpacing = 8; paragraph.paragraphSpacing = 10; paragraph.firstLineHeadIndent = 38

@@ -11,6 +11,19 @@ struct FullSearchResult: Identifiable {
     let lineIndex: Int
 }
 
+// Old backups may contain a negative or out-of-range position. Empty books
+// keep the conventional zero position without attempting an array access.
+func boundedReadingIndex(_ index: Int, count: Int) -> Int {
+    guard count > 0 else { return 0 }
+    return min(max(index, 0), count - 1)
+}
+
+func restoredReadingPosition(_ book: LocalBook) -> (chapter: Int, offset: Int) {
+    guard !book.chapters.isEmpty else { return (0, 0) }
+    let chapter = boundedReadingIndex(book.chapterIndex, count: book.chapters.count)
+    return (chapter, chapter == book.chapterIndex ? max(0, book.charOffset) : 0)
+}
+
 struct ReaderView: View {
     @ObservedObject var store: BookStore
     let bookId: String
@@ -70,7 +83,7 @@ struct ReaderView: View {
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
     var chapter: BookChapter? {
-        guard let b = book, chapterIndex < b.chapters.count else { return nil }
+        guard let b = book, b.chapters.indices.contains(chapterIndex) else { return nil }
         return b.chapters[chapterIndex]
     }
     var theme: ReaderTheme { readerTheme(at: store.theme) }
@@ -382,7 +395,7 @@ struct ReaderView: View {
     }
 
     func currentCharOffset() -> Int {
-        guard pageIndex < pages.count else { return 0 }
+        guard pages.indices.contains(pageIndex) else { return 0 }
         return pages[pageIndex].location
     }
 
@@ -394,13 +407,14 @@ struct ReaderView: View {
 
     func onAppear(size: CGSize) {
         guard let b = book else { return }
-        chapterIndex = b.chapterIndex
+        let restored = restoredReadingPosition(b)
+        chapterIndex = restored.chapter
         initialBrightness = UIScreen.main.brightness
         applyBrightness()
         loadChapterIfNeeded()
-        rebuild(size: size, keepOffset: b.charOffset)
+        rebuild(size: size, keepOffset: restored.offset)
         if store.pageTurn != 2 {
-            pageIndex = pageIndex(for: b.charOffset)
+            pageIndex = pageIndex(for: restored.offset)
         }
     }
 
@@ -416,16 +430,16 @@ struct ReaderView: View {
 
     func saveProgress(page: Int? = nil) {
         guard var b = book else { return }
-        let p = page ?? pageIndex
-        b.chapterIndex = chapterIndex
+        let p = boundedReadingIndex(page ?? pageIndex, count: pages.count)
+        b.chapterIndex = boundedReadingIndex(chapterIndex, count: b.chapters.count)
         b.paragraphIndex = p
-        if p < pages.count {
+        if pages.indices.contains(p) {
             b.charOffset = pages[p].location
         }
         if !b.chapters.isEmpty {
             let pageCount = max(pages.count, 1)
             let frac = Double(p) / Double(pageCount)
-            b.progress = (Double(chapterIndex) + min(frac, 1.0)) / Double(b.chapters.count)
+            b.progress = (Double(b.chapterIndex) + min(frac, 1.0)) / Double(b.chapters.count)
         }
         b.lastRead = Date()
         store.updateBook(b)
@@ -442,7 +456,7 @@ struct ReaderView: View {
 
     func loadChapterIfNeeded() {
         cancelChapterLoad()
-        guard let b = book, chapterIndex < b.chapters.count else { return }
+        guard let b = book, b.chapters.indices.contains(chapterIndex) else { return }
         let ch = b.chapters[chapterIndex]
         guard ch.text.hasPrefix("__URL__") else { return }
         guard let src = store.sourceForBook(b) else {
@@ -476,9 +490,9 @@ struct ReaderView: View {
     // MARK: 朗读 / 书签
 
     func addBookmark() {
-        guard let b = book, chapterIndex < b.chapters.count else { return }
+        guard let b = book, b.chapters.indices.contains(chapterIndex) else { return }
         var snippet = ""
-        if pageIndex < pages.count {
+        if pages.indices.contains(pageIndex) {
             snippet = String(attributed.attributedSubstring(from: pages[pageIndex]).string.prefix(40))
         }
         store.addBookmark(Bookmark(bookId: b.id, chapterIndex: chapterIndex, paragraphIndex: pageIndex, snippet: snippet))
@@ -487,7 +501,7 @@ struct ReaderView: View {
     func jumpToBookmark(_ bm: Bookmark) {
         showBookmarks = false
         openChapter(bm.chapterIndex, atStart: true)
-        pageIndex = min(bm.paragraphIndex, max(pages.count - 1, 0))
+        pageIndex = boundedReadingIndex(bm.paragraphIndex, count: pages.count)
         saveProgress(page: pageIndex)
         jumpToken += 1
     }
@@ -497,12 +511,12 @@ struct ReaderView: View {
             speech.stop()
             return
         }
-        guard chapter != nil else { return }
+        guard let currentChapter = chapter else { return }
         var segments: [String] = []
         if store.pageTurn == 2 {
-            segments = paragraphs(chapter!).map { $0 }
+            segments = paragraphs(currentChapter)
         } else {
-            for i in pageIndex..<pages.count {
+            for i in min(max(pageIndex, 0), pages.count)..<pages.count {
                 segments.append(attributed.attributedSubstring(from: pages[i]).string)
             }
         }
@@ -777,16 +791,18 @@ struct ReaderView: View {
     var catalogSheet: some View {
         NavigationStack {
             List {
-                ForEach(book?.chapters.indices ?? 0..<0, id: \.self) { i in
+                ForEach(Array((book?.chapters ?? []).enumerated()), id: \.offset) { entry in
                     Button {
                         showCatalog = false
-                        openChapter(i, atStart: true)
+                        guard let current = book, current.chapters.indices.contains(entry.offset),
+                              current.chapters[entry.offset].id == entry.element.id else { return }
+                        openChapter(entry.offset, atStart: true)
                     } label: {
                         HStack {
-                            Text(book?.chapters[i].title ?? "")
-                                .foregroundColor(i == chapterIndex ? Color.accentColor : .primary)
+                            Text(entry.element.title)
+                                .foregroundColor(entry.offset == chapterIndex ? Color.accentColor : .primary)
                             Spacer()
-                            if i == chapterIndex { Image(systemName: "checkmark") }
+                            if entry.offset == chapterIndex { Image(systemName: "checkmark") }
                         }
                     }
                 }

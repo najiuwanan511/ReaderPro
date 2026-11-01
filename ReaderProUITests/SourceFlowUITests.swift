@@ -122,7 +122,7 @@ final class SourceFlowUITests: XCTestCase {
         app.swipeDown()
         let shelfSearch = app.searchFields.firstMatch
         XCTAssertTrue(shelfSearch.waitForExistence(timeout: 10)); shelfSearch.tap(); shelfSearch.typeText("stress")
-        let submit = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "在书源中搜")).firstMatch
+        let submit = app.buttons["shelfSearchSources"]
         XCTAssertTrue(submit.waitForExistence(timeout: 10)); submit.tap()
         let results = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "源搜索结果")).firstMatch
         let fullResults = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in

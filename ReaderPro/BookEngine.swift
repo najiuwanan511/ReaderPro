@@ -89,7 +89,8 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     /// 未读章节数（书架封面右上角角标，对标阅读Sigma）
     var unreadCount: Int {
         guard chapters.count > 1 else { return 0 }
-        return max(0, chapters.count - chapterIndex - 1)
+        let current = min(max(chapterIndex, 0), chapters.count - 1)
+        return chapters.count - current - 1
     }
 
     enum CodingKeys: String, CodingKey {

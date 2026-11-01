@@ -142,12 +142,13 @@ struct BookshelfView: View {
                                 Spacer()
                                 Image(systemName: "chevron.right").font(.caption)
                             }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).accessibilityIdentifier("shelfSearchSources")
                         if shelfSearch.searching {
                             HStack { ProgressView("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)"); Spacer(); Button("停止") { shelfSearch.cancel() } }
                         }
                         if !shelfSearch.keyword.isEmpty {
-                            Text("源搜索结果 \(shelfSearch.results.count) 本").font(.caption).foregroundStyle(.secondary)
+                            Text("源搜索结果 \(shelfSearch.results.count) 本 · “\(shelfSearch.keyword)” · \(shelfSearch.searching ? "搜索中" : (shelfSearch.cancelled ? "已停止" : "已完成"))")
+                                .font(.caption).foregroundStyle(.secondary)
                             // Searches across a large source pack can return
                             // thousands of books. Create covers only as rows
                             // approach the visible region instead of eagerly
@@ -252,7 +253,7 @@ struct BookshelfView: View {
                             if !book.author.isEmpty {
                                 Label(book.author, systemImage: "person").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            if book.chapterIndex < book.chapters.count {
+                            if book.chapters.indices.contains(book.chapterIndex) {
                                 Label(book.chapters[book.chapterIndex].title, systemImage: "clock").font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             if let last = book.chapters.last {
@@ -380,6 +381,7 @@ struct BookshelfView: View {
 struct SourceView: View {
     @ObservedObject var store: BookStore
     @State private var key = ""
+    @FocusState private var searchFocused: Bool
     @StateObject private var searchState = SourceSearchController()
     @State private var showSearchErrors = false
     @State private var showImport = false
@@ -392,6 +394,7 @@ struct SourceView: View {
             HStack {
                 TextField("书名 / 作者", text: $key).textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("bookSearch")
+                    .focused($searchFocused)
                     .submitLabel(.search).onSubmit { search() }
                 Button { search() } label: {
                     Image(systemName: "magnifyingglass")
@@ -473,7 +476,10 @@ struct SourceView: View {
                 alternatives: searchState.allResults.filter { dedupeKey($0) == dedupeKey(result) })
         }
     }
-    func search() { searchState.start(store.enabledSources, key: key) }
+    func search() {
+        searchFocused = false
+        searchState.start(store.enabledSources, key: key)
+    }
     func importSource() {
         let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
         importError = ""
