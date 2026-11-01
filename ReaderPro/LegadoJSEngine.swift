@@ -499,10 +499,10 @@ final class LegadoJS {
     // dictionary with explicit phrase exclusions, so regional phrase choices
     // are not guaranteed to be identical even when individual characters are.
     static let traditionalToSimplifiedBlock: @convention(block) (String) -> String = { text in
-        text.applyingTransform(.traditionalToSimplified, reverse: false) ?? text
+        text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: false) ?? text
     }
     static let simplifiedToTraditionalBlock: @convention(block) (String) -> String = { text in
-        text.applyingTransform(.traditionalToSimplified, reverse: true) ?? text
+        text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: true) ?? text
     }
 
     private static let compatibilityScript = #"""
