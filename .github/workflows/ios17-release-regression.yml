@@ -57,6 +57,7 @@ jobs:
             -only-testing:ReaderProTests/LegadoIndexRuleTests \
             -only-testing:ReaderProTests/LegadoJSONPathRuleTests \
             -only-testing:ReaderProTests/ReaderTextLayoutTests \
+            -only-testing:ReaderProTests/ReaderPageControllerTests \
             -only-testing:ReaderProTests/JavaCryptoTests \
             -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \

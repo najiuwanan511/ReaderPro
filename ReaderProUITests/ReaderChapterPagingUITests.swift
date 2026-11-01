@@ -61,6 +61,21 @@ final class ReaderChapterPagingUITests: XCTestCase {
     func testNoAnimationSwipeAcrossChapterBoundaries() { exercisePagedMode(3) }
     func testCurlSwipeAcrossChapterBoundaries() { exercisePagedMode(4) }
 
+    func testCurlCanReverseDirectionRepeatedlyAcrossChapters() {
+        let app = launch(mode: 4, startSecond: true)
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        for _ in 0..<4 {
+            app.swipeRight()
+            XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 30))
+            app.swipeLeft()
+            XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+            app.swipeLeft()
+            XCTAssertTrue(page(app, containing: "第三章正文标记").waitForExistence(timeout: 20))
+            app.swipeRight()
+            XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        }
+    }
+
     func testPreviousOnlineChapterLoadsAtItsLastPage() {
         let app = launch(mode: 0, startSecond: true)
         XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))

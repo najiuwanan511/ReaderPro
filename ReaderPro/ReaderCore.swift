@@ -516,7 +516,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         let vc = UIPageViewController(
             transitionStyle: animatedCurl ? .pageCurl : .scroll,
             navigationOrientation: .horizontal,
-            options: animatedCurl ? [UIPageViewController.OptionsKey.spineLocation: 0] : nil
+            options: animatedCurl ? [UIPageViewController.OptionsKey.spineLocation: UIPageViewController.SpineLocation.min.rawValue] : nil
         )
         vc.dataSource = context.coordinator
         vc.delegate = context.coordinator
@@ -538,10 +538,23 @@ struct CurlPageController: UIViewControllerRepresentable {
         context.coordinator.update(vc, parent: self)
     }
 
+    static func dismantleUIViewController(_ vc: UIPageViewController, coordinator: Coordinator) {
+        coordinator.isActive = false
+        vc.delegate = nil
+        vc.dataSource = nil
+    }
+
     final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate, UIGestureRecognizerDelegate {
         var parent: CurlPageController
-        var lastPages: [NSRange] = []
-        init(_ p: CurlPageController) { parent = p }
+        private var displayed: CurlPageController
+        private var transitioning = false
+        private var finishing = false
+        private var needsRefresh = false
+        var isActive = true
+        init(_ p: CurlPageController) {
+            parent = p
+            displayed = p
+        }
 
         @objc func edgeTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
@@ -555,46 +568,87 @@ struct CurlPageController: UIViewControllerRepresentable {
 
         func pageVC(for index: Int) -> PageHostController? {
             let sub: NSAttributedString
-            if parent.pages.indices.contains(index) {
-                let range = parent.pages[index]
-                sub = parent.attributed.attributedSubstring(from: range)
-            } else if index == -1 && parent.hasPreviousChapter {
+            // UIKit may ask for neighbours until its interactive animation
+            // completes. All of them must belong to the same chapter snapshot.
+            if displayed.pages.indices.contains(index) {
+                let range = displayed.pages[index]
+                sub = displayed.attributed.attributedSubstring(from: range)
+            } else if index == -1 && displayed.hasPreviousChapter {
                 sub = NSAttributedString(string: "正在打开上一章…")
-            } else if index == parent.pages.count && parent.hasNextChapter {
+            } else if index == displayed.pages.count && displayed.hasNextChapter {
                 sub = NSAttributedString(string: "正在打开下一章…")
             } else { return nil }
             let host = PageHostController()
-            host.configure(attributed: sub, size: parent.pageSize, background: parent.background, index: index)
+            host.configure(attributed: sub, size: displayed.pageSize, background: displayed.background, index: index)
             return host
         }
 
         func update(_ vc: UIPageViewController, parent: CurlPageController) {
             self.parent = parent
-            let changed = lastPages != parent.pages
-            lastPages = parent.pages
+            needsRefresh = displayed.pages != parent.pages
+                || !displayed.attributed.isEqual(to: parent.attributed)
+                || displayed.pageSize != parent.pageSize
+                || displayed.hasPreviousChapter != parent.hasPreviousChapter
+                || displayed.hasNextChapter != parent.hasNextChapter
             vc.view.backgroundColor = parent.background
-            if changed {
-                if let start = pageVC(for: parent.startIndex) {
-                    vc.setViewControllers([start], direction: .forward, animated: false)
-                }
+            refreshIfNeeded(vc)
+        }
+
+        private func refreshIfNeeded(_ vc: UIPageViewController) {
+            guard isActive, needsRefresh, !transitioning, !finishing else { return }
+            needsRefresh = false
+            displayed = parent
+            if let start = pageVC(for: parent.startIndex) {
+                vc.setViewControllers([start], direction: .forward, animated: false)
             }
+        }
+
+        func pageViewController(_ pvc: UIPageViewController, willTransitionTo pendingViewControllers: [UIViewController]) {
+            transitioning = true
+            trace("begin", index: (pendingViewControllers.first as? PageHostController)?.index)
+        }
+
+        private func trace(_ event: String, index: Int?) {
+            #if DEBUG || READERPRO_TESTING
+            NSLog("ReaderPaging %@ %@ index=%ld count=%ld previous=%d next=%d", String(describing: ObjectIdentifier(self)), event,
+                  index ?? Int.min, displayed.pages.count, displayed.hasPreviousChapter ? 1 : 0, displayed.hasNextChapter ? 1 : 0)
+            #endif
         }
 
         func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
             guard let host = vc as? PageHostController, host.index >= 0 else { return nil }
+            trace("before", index: host.index)
             return pageVC(for: host.index - 1)
         }
 
         func pageViewController(_ pvc: UIPageViewController, viewControllerAfter vc: UIViewController) -> UIViewController? {
-            guard let host = vc as? PageHostController, host.index < parent.pages.count else { return nil }
+            guard let host = vc as? PageHostController, host.index < displayed.pages.count else { return nil }
+            trace("after", index: host.index)
             return pageVC(for: host.index + 1)
         }
 
         func pageViewController(_ pvc: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
-            guard completed, let host = pvc.viewControllers?.first as? PageHostController else { return }
-            if host.index < 0 { parent.onChapterBoundary(false) }
-            else if host.index >= parent.pages.count { parent.onChapterBoundary(true) }
-            else { parent.onPageChange(host.index) }
+            transitioning = false
+            guard isActive, !finishing else { return }
+            finishing = true
+            let index = (pvc.viewControllers?.first as? PageHostController)?.index
+            trace(completed ? "completed" : "cancelled", index: index)
+            // A boundary callback replaces this controller via SwiftUI .id.
+            // Do not tear it down while UIKit is still finishing the curl and
+            // resetting its gesture recognizers (especially on iOS 17).
+            DispatchQueue.main.async { [weak self, weak pvc] in
+                guard let self, let pvc else { return }
+                self.finishing = false
+                guard self.isActive else { return }
+                if self.needsRefresh {
+                    self.refreshIfNeeded(pvc)
+                    return
+                }
+                guard completed, let index else { return }
+                if index < 0 { self.parent.onChapterBoundary(false) }
+                else if index >= self.displayed.pages.count { self.parent.onChapterBoundary(true) }
+                else { self.parent.onPageChange(index) }
+            }
         }
     }
 }
