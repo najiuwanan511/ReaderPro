@@ -162,7 +162,7 @@ struct RssSubscribeView: View {
             .sheet(item: $feedSource) { src in
                 NavigationStack {
                     if src.singleUrl { BrowserView(initialURL: src.sourceUrl) }
-                    else { FeedReaderView(source: src) }
+                    else { FeedReaderView(store: store, source: src) }
                 }
             }
         }
@@ -213,6 +213,7 @@ struct RssSubscribeView: View {
 
 // The source can contain several categories; selecting one runs its own URL and rules.
 struct FeedReaderView: View {
+    @ObservedObject var store: BookStore
     let source: RssSource
     @State private var categories: [ExploreCategory] = []
     @State private var error = ""
@@ -224,10 +225,10 @@ struct FeedReaderView: View {
             else if !error.isEmpty {
                 VStack { Text(error).font(.footnote).multilineTextAlignment(.center); Button("重试") { Task { await load() } } }.padding()
             } else if categories.count == 1, let category = categories.first {
-                FeedArticlesView(source: source, category: category)
+                FeedArticlesView(store: store, source: source, category: category)
             } else {
                 List(Array(categories.enumerated()), id: \.offset) { entry in
-                    NavigationLink(entry.element.title) { FeedArticlesView(source: source, category: entry.element) }
+                    NavigationLink(entry.element.title) { FeedArticlesView(store: store, source: source, category: entry.element) }
                 }
             }
         }
@@ -244,8 +245,10 @@ struct FeedReaderView: View {
 }
 
 struct FeedArticlesView: View {
+    @ObservedObject var store: BookStore
     let source: RssSource
     let category: ExploreCategory
+    @State private var articleStyle: Int
     @State private var articles: [RssArticle] = []
     @State private var nextURL: String?
     @State private var page = 1
@@ -253,43 +256,37 @@ struct FeedArticlesView: View {
     @State private var error = ""
     @State private var selected: RssArticle?
 
+    init(store: BookStore, source: RssSource, category: ExploreCategory) {
+        self.store = store
+        self.source = source
+        self.category = category
+        let savedStyle = store.rssSources.first(where: { $0.id == source.id })?.articleStyle ?? source.articleStyle
+        _articleStyle = State(initialValue: (0...4).contains(savedStyle) ? savedStyle : 0)
+    }
+
     var body: some View {
         Group {
             if loading && articles.isEmpty { ProgressView("正在拉取订阅…") }
             else if !error.isEmpty && articles.isEmpty {
                 VStack { Text(error).font(.footnote).multilineTextAlignment(.center); Button("重试") { Task { await load() } } }.padding()
             } else if articles.isEmpty { Text("没有解析到文章，请检查订阅规则或站点状态。").font(.footnote).padding() }
-            else {
-                List {
-                    ForEach(articles) { article in
-                        Button { selected = article } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                if let imageURL = URL(string: article.image), ["http", "https"].contains(imageURL.scheme?.lowercased() ?? ""), imageURL.host != nil {
-                                    AsyncImage(url: imageURL) { image in
-                                        image.resizable().scaledToFill()
-                                    } placeholder: {
-                                        RoundedRectangle(cornerRadius: 4).fill(AppTheme.surfaceMuted)
-                                    }
-                                    .frame(width: 76, height: 64).clipped().cornerRadius(4)
-                                    .accessibilityLabel("文章封面")
-                                }
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(article.title).font(.headline).lineLimit(2)
-                                    if !article.pubDate.isEmpty { Text(article.pubDate).font(.caption2).foregroundStyle(.secondary) }
-                                    if !article.summary.isEmpty { Text(stripHTML(article.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
-                                }
-                            }
-                        }
-                    }
-                    if nextURL != nil {
-                        Button(loading ? "正在加载…" : "加载更多") { Task { await loadMore() } }.disabled(loading)
-                    }
-                    if !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.secondary) }
-                }
-            }
+            else { articleList }
         }
         .navigationTitle(category.title == "全部" ? source.sourceName : category.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    articleStyle = (articleStyle + 1) % 5
+                    if let index = store.rssSources.firstIndex(where: { $0.id == source.id }) {
+                        store.rssSources[index].articleStyle = articleStyle
+                        store.save()
+                    }
+                } label: { Image(systemName: "square.grid.2x2") }
+                    .accessibilityLabel("订阅列表样式")
+                    .accessibilityValue("样式 \(articleStyle)")
+            }
+        }
         .task { await load() }
         .sheet(item: $selected) { article in
             NavigationStack {
@@ -297,6 +294,101 @@ struct FeedArticlesView: View {
                     BrowserView(initialURL: article.link)
                 } else { FeedArticleView(source: source, article: article) }
             }
+        }
+    }
+
+    @ViewBuilder private var articleList: some View {
+        if articleStyle == 0 || articleStyle == 1 {
+            List {
+                ForEach(articles) { article in articleButton(article) }
+                moreButton
+            }.listStyle(.plain)
+        } else {
+            GeometryReader { geometry in
+                ScrollView {
+                    if articleStyle == 3 {
+                        // Keep each column lazy and preserve image aspect ratios.
+                        // Alternating assignment approximates the Android staggered layout.
+                        let columns = geometry.size.width > geometry.size.height ? 3 : 2
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(0..<columns, id: \.self) { column in
+                                LazyVStack(spacing: 12) {
+                                    ForEach(articles.indices.filter { $0 % columns == column }, id: \.self) { index in
+                                        articleButton(articles[index])
+                                    }
+                                }.frame(maxWidth: .infinity, alignment: .top)
+                            }
+                        }
+                    } else {
+                        let columns = articleStyle == 4 ? 3 : 2
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 12) {
+                            ForEach(articles) { article in articleButton(article) }
+                        }
+                    }
+                    moreButton.padding(.vertical, 10)
+                }.padding(.horizontal, 8)
+            }
+        }
+    }
+
+    @ViewBuilder private var moreButton: some View {
+        if nextURL != nil {
+            Button(loading ? "正在加载…" : "加载更多") { Task { await loadMore() } }.disabled(loading)
+        }
+        if !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.secondary) }
+    }
+
+    private func articleButton(_ article: RssArticle) -> some View {
+        Button { selected = article } label: {
+            Group {
+                if articleStyle == 0 {
+                    HStack(alignment: .top, spacing: 12) {
+                        articleText(article)
+                        cover(article, style: 0)
+                    }.frame(minHeight: 68, alignment: .top)
+                } else {
+                    VStack(alignment: .leading, spacing: 8) {
+                        cover(article, style: articleStyle)
+                        articleText(article)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(articleStyle == 3 ? 6 : 0)
+                    .background(articleStyle == 3 ? AppTheme.surfaceMuted : .clear, in: RoundedRectangle(cornerRadius: 12))
+                }
+            }.contentShape(Rectangle())
+        }.buttonStyle(.plain)
+    }
+
+    private func articleText(_ article: RssArticle) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(article.title).font(articleStyle == 0 ? .headline : .subheadline)
+                .lineLimit(articleStyle == 3 ? 9 : 2)
+            if !article.pubDate.isEmpty {
+                Text(article.pubDate).font(.caption2).foregroundStyle(.secondary)
+                    .lineLimit(articleStyle == 3 ? 39 : 1)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func cover(_ article: RssArticle, style: Int) -> some View {
+        if let imageURL = URL(string: article.image), ["http", "https"].contains(imageURL.scheme?.lowercased() ?? ""), imageURL.host != nil {
+            if style == 3 {
+                AsyncImage(url: imageURL) { phase in
+                    switch phase {
+                    case .success(let image): image.resizable().scaledToFit()
+                    default: RoundedRectangle(cornerRadius: 4).fill(AppTheme.surfaceMuted).frame(height: 150)
+                    }
+                }.frame(maxWidth: .infinity).clipped().accessibilityLabel("文章封面")
+            } else {
+                AsyncImage(url: imageURL) { image in image.resizable().scaledToFill() }
+                placeholder: { RoundedRectangle(cornerRadius: 4).fill(AppTheme.surfaceMuted) }
+                    .frame(width: style == 0 ? 94 : nil, height: style == 0 ? 68 : style == 1 ? 220 : style == 2 ? 272 : 182)
+                    .frame(maxWidth: style == 0 ? nil : .infinity).clipped().cornerRadius(4)
+                    .accessibilityLabel("文章封面")
+            }
+        } else if style == 2 || style == 4 {
+            RoundedRectangle(cornerRadius: 4).fill(AppTheme.surfaceMuted)
+                .frame(height: style == 2 ? 272 : 182).accessibilityLabel("没有封面")
         }
     }
 

@@ -42,6 +42,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = '<article><a class="title" href="/rss/article">样本文章</a><img data-cover="/rss/cover.jpg"><span class="date">今天</span></article><a class="next" href="/rss/list2">下一页</a>'
         elif path == '/rss/list2':
             body = '<article><a class="title" href="/rss/article">第二页文章</a></article>'
+        elif path == '/rss/style-list':
+            if self.headers.get('X-Fixture') != 'RSS':
+                status, body = 403, 'missing RSS header'
+            else:
+                body = ''.join(f'<article><a class="title" href="/rss/article">样本文章{i}</a><img data-cover="/rss/cover{i}.jpg"></article>' for i in range(1, 7))
         elif path == '/rss/article':
             body = '<main><div class="content"><p>订阅测试正文</p></div></main>'
         elif path == '/rss/atom':

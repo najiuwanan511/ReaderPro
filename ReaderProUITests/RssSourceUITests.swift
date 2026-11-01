@@ -1,6 +1,44 @@
 import XCTest
 
 final class RssSourceUITests: XCTestCase {
+    func testSubscriptionStylesCycleAndPersistPerSource() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--rss-ui-fixture", "--rss-style-ui-fixture"]
+        app.launch()
+        app.tabBars.buttons["订阅"].tap()
+        let feed = app.buttons.containing(.staticText, identifier: "订阅样式测试").firstMatch
+        XCTAssertTrue(feed.waitForExistence(timeout: 10)); feed.tap()
+        XCTAssertTrue(app.staticTexts["样本文章1"].waitForExistence(timeout: 20))
+        let style = app.buttons["订阅列表样式"]
+        XCTAssertTrue(style.waitForExistence(timeout: 10))
+        XCTAssertEqual(style.value as? String, "样式 0")
+        for index in 1...4 {
+            style.tap()
+            let value = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "样式 \(index)"), object: style)
+            XCTAssertEqual(XCTWaiter.wait(for: [value], timeout: 5), .completed)
+            XCTAssertTrue(app.staticTexts["样本文章1"].waitForExistence(timeout: 5))
+            if index >= 2 {
+                let second = app.staticTexts["样本文章2"]
+                XCTAssertTrue(second.waitForExistence(timeout: 5))
+                let firstFrame = app.staticTexts["样本文章1"].frame
+                XCTAssertGreaterThan(abs(firstFrame.midX - second.frame.midX), 20, "网格或瀑布流应至少有两列")
+            }
+        }
+        style.tap() // 4 -> 0
+        style.tap() // 0 -> 1
+        style.tap() // 1 -> 2
+        let secondStyle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "样式 2"), object: style)
+        XCTAssertEqual(XCTWaiter.wait(for: [secondStyle], timeout: 5), .completed)
+        app.terminate()
+        app.launchArguments = ["--source-ui-fixture", "--rss-ui-fixture", "--rss-style-ui-fixture"]
+        app.launch()
+        app.tabBars.buttons["订阅"].tap()
+        XCTAssertTrue(feed.waitForExistence(timeout: 10)); feed.tap()
+        XCTAssertTrue(style.waitForExistence(timeout: 20))
+        XCTAssertEqual(style.value as? String, "样式 2")
+    }
+
     func testImportUserCollectionFromSubscriptionPlusButton() {
         continueAfterFailure = false
         let app = XCUIApplication()
