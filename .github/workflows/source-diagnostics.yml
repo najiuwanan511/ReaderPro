@@ -32,11 +32,16 @@ jobs:
           xcodegen generate
           mkdir -p build
           python3 scripts/fetch_user_pack.py
-          python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
+          # The audit only needs the pack and configuration endpoints. Avoid
+          # provisioning the unrelated TLS and proxy servers on this runner.
+          python3 -u scripts/source_audit_server.py > build/fixture-server.log 2>&1 &
+          SERVER_PID=$!
           for i in {1..20}; do
             if curl --fail --silent http://127.0.0.1:8765/health; then exit 0; fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
             sleep 1
           done
+          cat build/fixture-server.log
           exit 1
       - name: Audit source window and capture native crashes
         run: |
