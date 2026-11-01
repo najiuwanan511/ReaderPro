@@ -1,6 +1,14 @@
 import XCTest
 
 final class SourceFlowUITests: XCTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        // A cold simulator can spend over a minute establishing the first
+        // accessibility session. Keep all per-screen waits and assertions;
+        // allow the full discovery/reader flow and XCTest teardown to finish.
+        executionTimeAllowance = 300
+    }
+
     func launch(reset: Bool = true) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()

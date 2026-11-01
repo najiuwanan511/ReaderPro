@@ -35,6 +35,8 @@ jobs:
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
           echo "Testing on simulator $DEVICE"
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE" 2>/dev/null || true
+          xcrun simctl bootstatus "$DEVICE" -b
           xcodebuild test \
             -project ReaderPro.xcodeproj \
             -scheme ReaderPro \
@@ -43,7 +45,7 @@ jobs:
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
-            -maximum-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 300 \
             -skip-testing:ReaderProTests/SourcePackAuditTests \
             -resultBundlePath build/SourceRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO \

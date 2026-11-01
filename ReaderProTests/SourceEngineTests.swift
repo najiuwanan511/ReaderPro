@@ -159,6 +159,20 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(LegadoJS.run("1+1", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "2")
     }
 
+    func testExpiredScriptDoesNotStartNetworkOrMutateSourceVariables() throws {
+        let failures = RuleFailures()
+        let sourceURL = base + "/expired-script/" + UUID().uuidString
+        let output = LegadoJSCtx.$deadline.withValue(Date.distantPast) {
+            LegadoJSCtx.$failures.withValue(failures) {
+                LegadoJS.run("java.put('side-effect','ran'); java.ajax(baseUrl+'/slow-search')",
+                             input: "", baseUrl: base, sourceKey: "", sourceUrl: sourceURL)
+            }
+        }
+        XCTAssertEqual(output, "")
+        XCTAssertThrowsError(try failures.check()) { XCTAssertTrue(sourceErrorMessage($0).contains("超时")) }
+        XCTAssertEqual(LegadoJSCtx.$sourceUrl.withValue(sourceURL) { LegadoJS.variable("side-effect") }, "")
+    }
+
     func testLegacyCertificatesRequireExplicitPermissionForEachSource() async throws {
         let tlsBase = "https://127.0.0.1:8766"
         var source = SourceTestFixtures.json()

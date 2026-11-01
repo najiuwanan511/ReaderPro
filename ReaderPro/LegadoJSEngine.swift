@@ -51,6 +51,26 @@ final class LegadoJS {
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
                     book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil,
                     structuredResult: Any? = nil, expandTemplates: Bool = true) -> String {
+        if Task.isCancelled || (LegadoJSCtx.deadline.map { $0 <= Date() } ?? false) {
+            LegadoJSCtx.failures?.add(Task.isCancelled ? "书源脚本已取消" : "书源脚本执行超时")
+            return ""
+        }
+        // A single search can evaluate hundreds of field scripts without an
+        // async suspension. Drain Objective-C JSValue/context temporaries per
+        // evaluation instead of retaining them until the worker's outer pool.
+        return autoreleasepool {
+            runInPool(js, input: input, baseUrl: baseUrl, sourceKey: sourceKey, sourceUrl: sourceUrl,
+                      loginInfo: loginInfo, header: header, book: book, page: page,
+                      originalContent: originalContent, structuredResult: structuredResult,
+                      expandTemplates: expandTemplates)
+        }
+    }
+
+    private static func runInPool(_ js: String, input: String, baseUrl: String,
+                                  sourceKey: String, sourceUrl: String,
+                                  loginInfo: [String: String], header: [String: String],
+                                  book: BookCtx?, page: Int, originalContent: String?,
+                                  structuredResult: Any?, expandTemplates: Bool) -> String {
         let script = SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
                                               page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
