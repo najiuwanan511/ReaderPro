@@ -59,11 +59,11 @@ final class JSBridgeStressTests: XCTestCase {
         return URLSession(configuration: configuration)
     }
 
-    private static func source(slow: Bool) -> LegadoSource {
+    private static func source(slow: Bool, fixtureToken: String? = nil) -> LegadoSource {
         var source = LegadoSource()
         source.bookSourceName = "同步列表脚本回归"
-        source.bookSourceUrl = "https://bridge-stress.test"
-        source.searchUrl = slow ? "/slow/search" : "/fast/search"
+        source.bookSourceUrl = fixtureToken == nil ? "https://bridge-stress.test" : "http://127.0.0.1:8765"
+        source.searchUrl = fixtureToken.map { "/bridge-stress/\($0)/search" } ?? (slow ? "/slow/search" : "/fast/search")
         source.ruleSearch.bookList = #"""
         class.results@tag.a
         <js>
@@ -86,15 +86,16 @@ final class JSBridgeStressTests: XCTestCase {
 
     func testConcurrentMultiItemAjaxAndSelectorBridges() async throws {
         executionTimeAllowance = 120
-        let session = Self.session()
-        defer { session.invalidateAndCancel() }
-        let failures = await SourceHTTP.$testSession.withValue(session) {
-            await withTaskGroup(of: String.self, returning: [String].self) { group in
+        // Exercise production URLSession with real local HTTP. Concurrent
+        // custom URLProtocol requests behaved differently on the simulator;
+        // a separate test below retains that injection for controlled delays.
+        let token = UUID().uuidString
+        let failures = await withTaskGroup(of: String.self, returning: [String].self) { group in
                 for worker in 0..<8 {
                     group.addTask {
                         for round in 0..<2 {
                             do {
-                                let books = try await withTimeout(30) { try await Self.source(slow: false).search(key: "测试") }
+                                let books = try await withTimeout(30) { try await Self.source(slow: false, fixtureToken: token).search(key: "测试") }
                                 guard books.count == 10, books.first?.author == "测试作者",
                                       books.first?.intro == "测试简介" else {
                                     return "worker \(worker) round \(round): \(books.count) books or wrong extracted fields"
@@ -107,9 +108,12 @@ final class JSBridgeStressTests: XCTestCase {
                 var errors: [String] = []
                 for await error in group where !error.isEmpty { errors.append(error) }
                 return errors
-            }
         }
         XCTAssertTrue(failures.isEmpty, failures.joined(separator: "\n"))
+        let countURL = try XCTUnwrap(URL(string: "http://127.0.0.1:8765/bridge-stress/\(token)/count"))
+        let (data, _) = try await URLSession.shared.data(from: countURL)
+        let counts = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Int])
+        XCTAssertEqual(counts["count"], 160, "All eight workers must fetch ten details in both rounds")
     }
 
     func testBatchAjaxDeadlineCancellationAndSubsequentRecovery() async throws {

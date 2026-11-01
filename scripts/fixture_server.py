@@ -17,6 +17,10 @@ import base64
 import os
 from pathlib import Path
 
+# Count the list-script's synchronous detail requests per test invocation.
+bridge_stress_lock = threading.Lock()
+bridge_stress_counts = {}
+
 class SocksFixture(socketserver.BaseRequestHandler):
     """Minimal SOCKS5 endpoint proving that URLSession uses the proxy."""
     def read_exact(self, count):
@@ -152,6 +156,22 @@ class Handler(BaseHTTPRequestHandler):
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
+        elif path.startswith('/bridge-stress/'):
+            parts = path.split('/')
+            if len(parts) == 4 and parts[3] == 'search':
+                token = parts[2]
+                rows = ''.join(f'<li><a href="/bridge-stress/{token}/item/{i}">书{i}</a></li>' for i in range(10))
+                body = f'<ul class="results">{rows}</ul>'
+            elif len(parts) == 5 and parts[3] == 'item':
+                with bridge_stress_lock:
+                    bridge_stress_counts[parts[2]] = bridge_stress_counts.get(parts[2], 0) + 1
+                body = "<div id='summary'>测试简介</div><span class='author'>测试作者</span>"
+            elif len(parts) == 4 and parts[3] == 'count':
+                with bridge_stress_lock:
+                    count = bridge_stress_counts.get(parts[2], 0)
+                mime, body = 'application/json; charset=utf-8', json.dumps({'count': count})
+            else:
+                status, body = 404, 'unknown bridge stress endpoint'
         elif path == '/source-proxy-test':
             # An HTTP proxy receives absolute-form targets. This deterministic
             # endpoint never forwards or resolves the fictional destination.
