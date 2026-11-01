@@ -108,8 +108,11 @@ final class ReaderChapterPagingUITests: XCTestCase {
         let saved = app.staticTexts["readerSavedScrollOffset"]
         XCTAssertTrue(visible.waitForExistence(timeout: 10)); XCTAssertTrue(saved.exists)
         app.swipeUp(); app.swipeUp()
-        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label != '0'"), object: saved)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed)
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            guard let position = Int(visible.label), let stored = Int(saved.label) else { return false }
+            return position > 100 && abs(position - stored) < 5
+        }, object: saved)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed, "等待当前可见位置保存完成")
         let savedOffset = Int(saved.label) ?? 0
         XCTAssertGreaterThan(savedOffset, 100, "滚动后必须保存章内字符位置")
         app.terminate()

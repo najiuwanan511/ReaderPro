@@ -194,6 +194,9 @@ final class ReaderScrollBoundaryProbe: UIView {
     private weak var observedText: UITextView?
     private var observation: NSKeyValueObservation?
     private var settleWork: DispatchWorkItem?
+    private var restoreRetryWork: DispatchWorkItem?
+    private var retryToken: Int?
+    private var restoreAttempts = 0
     private var restoredToken: Int?
     private var restoring = false
     private var lastPosition: Int?
@@ -237,10 +240,12 @@ final class ReaderScrollBoundaryProbe: UIView {
 
     func detach() {
         settleWork?.cancel(); settleWork = nil
+        restoreRetryWork?.cancel(); restoreRetryWork = nil
         observation?.invalidate(); observation = nil
         observedScroll?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
         observedScroll = nil
         observedText = nil
+        restoredToken = nil; retryToken = nil; restoreAttempts = 0; lastPosition = nil
     }
 
     private func findText(in view: UIView) -> UITextView? {
@@ -259,14 +264,37 @@ final class ReaderScrollBoundaryProbe: UIView {
         guard glyph < text.layoutManager.numberOfGlyphs else { return }
         let line = text.layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
         let target = text.convert(CGPoint(x: 0, y: line.minY + text.textContainerInset.top), to: scroll).y
+        // SwiftUI can lay out the text view before updating the enclosing
+        // scroll view's contentSize. Clamping against that temporary size
+        // would mark an offset as restored even though it was forced to 0.
+        // Short chapters are ready too: they only need to fit within the
+        // scroll view's reported content, not to exceed the viewport.
+        let textBottom = text.convert(CGPoint(x: 0, y: text.bounds.maxY), to: scroll).y
+        guard scroll.bounds.height > 0, scroll.contentSize.height + 1 >= max(0, textBottom) else {
+            scheduleRestoreRetry()
+            return
+        }
         let top = -scroll.adjustedContentInset.top
         let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
         restoring = true
         let targetY = offset <= 0 ? top : min(max(target - scroll.adjustedContentInset.top, top), bottom)
         scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: targetY), animated: false)
         restoredToken = restoreToken
+        restoreRetryWork?.cancel(); restoreRetryWork = nil
         restoring = false
         publishPosition()
+    }
+
+    private func scheduleRestoreRetry() {
+        if retryToken != restoreToken { retryToken = restoreToken; restoreAttempts = 0 }
+        guard restoreRetryWork == nil, restoreAttempts < 40 else { return }
+        restoreAttempts += 1
+        let work = DispatchWorkItem { [weak self] in
+            self?.restoreRetryWork = nil
+            self?.attachIfNeeded()
+        }
+        restoreRetryWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work)
     }
 
     private func publishPosition() {
@@ -290,6 +318,12 @@ final class ReaderScrollBoundaryProbe: UIView {
         guard let scroll = observedScroll else { return }
         switch recognizer.state {
         case .began:
+            // If the layout never became ready, the user's drag takes
+            // precedence over a pending restore and permits saving again.
+            if restoreOffset != nil && restoredToken != restoreToken {
+                restoredToken = restoreToken
+                restoreRetryWork?.cancel(); restoreRetryWork = nil
+            }
             let top = -scroll.adjustedContentInset.top
             let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
             startedAtTop = scroll.contentOffset.y <= top + 4
