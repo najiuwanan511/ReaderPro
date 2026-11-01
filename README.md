@@ -109,6 +109,7 @@ ReaderPro/
 - 搜索按源持续返回结果，显示完成数与失败原因，可随时取消和重新搜索；发现分类、分类列表与目录加载有超时和重试提示。
 - 支持脚本内书籍字段模板、节点列表转换、带排除索引的组合 CSS、嵌套替换模板、原始源身份保留与请求网址空白清理，以及带 type 的 Base64 内嵌/二进制请求。登录脚本字段随书源保存；交互登录界面仍未完整实现。
 - 常用 JavaImporter 加密接口提供 AES/DES Cipher、HMAC Mac、SecretKeySpec、IV、Base64、Arrays、HashMap 与 RSA SHA-1/256/384/512 签名适配；测试使用 NIST/RFC 向量和独立 OpenSSL 生成的 RSA 签名。测试密钥仅用于回归，无任何账户用途。
+- 动态执行的书源备注解密库同样适配 Java 字符串 `length()`，兼容 Rhino 简单数组解构箭头参数；`book.getVariable/putVariable` 按书源与书籍隔离并持久保存，支持缺失值和删除。
 - 网络超时同时约束脚本执行：针对部分合集中的无限 `while/catch` 重试，JSC watchdog 会直接终止脚本，避免搜索永久等待。相关测试包含无限循环、取消和后续脚本恢复。此侧载实现使用 JavaScriptCore 导出的执行中断 SPI；未来如上架 App Store，需要替换这部分实现。系统不提供该接口时会明确拒绝执行脚本。
 
 ## Android 可用但 iOS 报 SSL 错误

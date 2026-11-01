@@ -209,7 +209,10 @@ final class LegadoJS {
         let putConcurrent: @convention(block) (JSValue) -> Void = { v in concurrentBox.value = Int(v.toNumber()?.intValue ?? 0) }
         source.setObject(sourceUrl, forKeyedSubscript: "key" as NSString)
         source.setObject(sourceUrl, forKeyedSubscript: "bookSourceUrl" as NSString)
-        source.setObject(LegadoJSCtx.comment, forKeyedSubscript: "bookSourceComment" as NSString)
+        // Some sources store their decoder library here and eval it from
+        // search/info/category rules. Apply the same token-aware Java string
+        // adaptation as jsLib; the persisted source comment remains original.
+        source.setObject(SourceScript.adaptingJavaCalls(LegadoJSCtx.comment), forKeyedSubscript: "bookSourceComment" as NSString)
         source.setObject(LegadoJSCtx.loginURL, forKeyedSubscript: "loginUrl" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
@@ -237,6 +240,20 @@ final class LegadoJS {
         bookObj.setObject(b.order, forKeyedSubscript: "order" as NSString)
         bookObj.setObject(b.tocUrl, forKeyedSubscript: "tocUrl" as NSString)
         bookObj.setObject(b.coverUrl, forKeyedSubscript: "coverUrl" as NSString)
+        let bookVariableKey = "ReaderPro.bookVariables." + SHA256.hash(data: Data((sourceUrl + "\n" + b.bookUrl).utf8)).map { String(format: "%02x", $0) }.joined()
+        let getBookVariable: @convention(block) (String) -> String = { key in
+            storeLock.lock(); defer { storeLock.unlock() }
+            return (UserDefaults.standard.dictionary(forKey: bookVariableKey) as? [String: String])?[key] ?? ""
+        }
+        let putBookVariable: @convention(block) (String, JSValue) -> Bool = { key, value in
+            storeLock.lock(); defer { storeLock.unlock() }
+            var values = UserDefaults.standard.dictionary(forKey: bookVariableKey) as? [String: String] ?? [:]
+            values[key] = value.isNull || value.isUndefined ? nil : value.toString()
+            UserDefaults.standard.set(values, forKey: bookVariableKey)
+            return true
+        }
+        bookObj.setObject(getBookVariable, forKeyedSubscript: "getVariable" as NSString)
+        bookObj.setObject(putBookVariable, forKeyedSubscript: "putVariable" as NSString)
         ctx.setObject(bookObj, forKeyedSubscript: "book" as NSString)
         let chapter = LegadoJSCtx.chapter
         let chapterObj = JSValue(newObjectIn: ctx)!

@@ -23,10 +23,29 @@ enum SourceScript {
     }
 
     static func adaptingJavaCalls(_ script: String) -> String {
-        guard script.contains(".length()") || script.contains("\u{200b}") else { return script }
+        guard script.contains("length") || script.contains("\u{200b}") || script.contains("=>") else { return script }
         let tokens = tokenize(script)
         var edits: [(Range<String.Index>, String)] = []
         for index in tokens.indices {
+            // Rhino accepts map([title,url]=>...), while JSC requires the
+            // destructured parameter list to be parenthesized. Only repair
+            // simple binding lists, never literals or existing valid arrows.
+            if tokens[index].text == "]", index + 2 < tokens.count,
+               tokens[index + 1].text == "=", tokens[index + 2].text == ">" {
+                var start = index - 1
+                while start >= 0, tokens[start].text != "[",
+                      tokens[start].text == "," || identifier(tokens[start].text) { start -= 1 }
+                if start >= 0, tokens[start].text == "[" {
+                    let bindings = Array(tokens[(start + 1)..<index])
+                    let simple = bindings.enumerated().allSatisfy { offset, token in
+                        offset % 2 == 0 ? identifier(token.text) : token.text == ","
+                    }
+                    if !bindings.isEmpty, bindings.count % 2 == 1, simple {
+                        let range = tokens[start].range.lowerBound..<tokens[index].range.upperBound
+                        edits.append((range, "(" + String(script[range]) + ")"))
+                    }
+                }
+            }
             if tokens[index].text == "\u{200b}", index > 0, index + 1 < tokens.count,
                tokens[index - 1].text == "getSource", tokens[index + 1].text == "(" {
                 edits.append((tokens[index].range, ""))

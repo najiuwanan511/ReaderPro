@@ -456,6 +456,43 @@ final class SourceEngineTests: XCTestCase {
         }
     }
 
+    func testDynamicCommentLibraryAndRhinoDestructuredArrows() throws {
+        let library = "function decodedLength(value) { var digest=java.digestHex(value,'sha-256'); return digest.length ( ); }"
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let result = LegadoJSCtx.$comment.withValue(library) {
+                LegadoJS.run(#"eval(String(source.bookSourceComment)); [["abc",64]].map([text,expected]=>decodedLength(text)===expected).join(',')"#,
+                             input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            }
+            XCTAssertEqual(result, "true")
+            try failures.check()
+        }
+        let valid = #"[[1,2]].map(([a,b])=>a+b); var text='[a,b]=>'; var regex=/[a,b]=>/; /* [a,b]=> */"#
+        XCTAssertEqual(SourceScript.adaptingJavaCalls(valid), valid)
+        let spaced = "[[1,2]].map([a, /* binding */ b] => a+b)"
+        XCTAssertEqual(SourceScript.adaptingJavaCalls(spaced), "[[1,2]].map(([a, /* binding */ b]) => a+b)")
+    }
+
+    func testBookVariablesPersistAcrossContextsAndRemainIsolated() throws {
+        let identity = base + "/variables/" + UUID().uuidString
+        let first = LegadoJS.BookCtx(bookUrl: identity + "/book/1")
+        let second = LegadoJS.BookCtx(bookUrl: identity + "/book/2")
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            func run(_ script: String, book: LegadoJS.BookCtx? = nil, source: String? = nil) -> String {
+                LegadoJS.run(script, input: "", baseUrl: base, sourceKey: "", sourceUrl: source ?? identity, book: book ?? first)
+            }
+            XCTAssertEqual(run("book.getVariable('custom')"), "")
+            XCTAssertEqual(run("book.putVariable('custom', 2)"), "true")
+            XCTAssertEqual(run("book.getVariable('custom')"), "2")
+            XCTAssertEqual(run("book.getVariable('custom')", book: second), "")
+            XCTAssertEqual(run("book.getVariable('custom')", source: identity + "/other-source"), "")
+            XCTAssertEqual(run("book.putVariable('custom', null); book.getVariable('custom')"), "")
+            XCTAssertEqual(run("book.putVariable('custom', '中文'); book.putVariable('custom', undefined); book.getVariable('custom')"), "")
+            try failures.check()
+        }
+    }
+
     func testUTCFormatMatchesReferenceMillisecondOffsetAndDateCoercion() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

@@ -4,6 +4,28 @@ import XCTest
 // The exact user pack is downloaded and hash checked by CI. These calls use
 // the production iOS engine and the real public website, rather than fixtures.
 final class LiveSourceTests: XCTestCase {
+    func testXiaoxiaoRealCommentDecoderCategoriesDirectoryAndFreeChapter() async throws {
+        executionTimeAllowance = 300
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let source = try XCTUnwrap(importSourcesDetailed(raw).sources.first { $0.bookSourceUrl == "https://s.mysignal.cn" })
+        let search = try await withTimeout(40) { try await source.search(key: source.ruleSearch.checkKeyWord) }
+        let sample = try XCTUnwrap(search.first)
+        let categories = try await withTimeout(40) { try await source.withRules { source.exploreCategories() } }
+        XCTAssertGreaterThan(categories.count, 6)
+        let discovered = try await withTimeout(40) { try await source.discover(category: categories.first) }
+        XCTAssertFalse(discovered.isEmpty)
+        let detail = try await withTimeout(40) { try await source.fetchBookInfo(book: sample) }
+        XCTAssertEqual(detail.tocUrl?.contains("catalog.mysignal.cn"), true, detail.tocUrl ?? "No directory URL")
+        let chapters = try await withTimeout(90) { try await source.fetchChapters(book: detail) }
+        XCTAssertGreaterThan(chapters.count, 10)
+        let first = try XCTUnwrap(chapters.first)
+        let text = try await withTimeout(40) { try await source.fetchChapterContent(first, nextChapterUrl: chapters.dropFirst().first?.url) }
+        XCTAssertGreaterThan(text.count, 300)
+        let evidence = "真实备注解密书源：\(source.bookSourceName)；搜索 \(search.count) 本；分类 \(categories.count) 个；发现 \(discovered.count) 本；目录 \(chapters.count) 章；首章解密 \(text.count) 字。"
+        print(evidence)
+        let attachment = XCTAttachment(string: evidence); attachment.lifetime = .keepAlways; add(attachment)
+    }
+
     func testQimaoAndQieziRealSearchDirectoryAndDecryptedFreeChapter() async throws {
         let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
         let sources = importSourcesDetailed(raw).sources
