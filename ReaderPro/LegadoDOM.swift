@@ -53,6 +53,19 @@ enum LegadoDOM {
         }
     }
 
+    // The default Legado selector `children` or bare `[index]` operates on
+    // direct children of the current element, not all descendants.
+    static func children(_ html: String) -> [HtmlEl] {
+        do {
+            guard let body = try cssDocument(html).body() else { return [] }
+            return try body.children().array().map { node in
+                let full = try node.outerHtml()
+                let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""
+                return HtmlEl(open: open, inner: try node.html(), full: full)
+            }
+        } catch { return [] }
+    }
+
     static func xpath(_ html: String, _ expression: String) -> [String] {
         guard let document = try? Kanna.HTML(html: html, encoding: .utf8) else { return [] }
         let result = document.xpath(expression)

@@ -34,8 +34,9 @@ enum SourceJSBridge {
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(max(0.1, timeout)))
         request.timeoutInterval = max(0.1, deadline.timeIntervalSinceNow)
         let box = ResponseBox()
-        let session = SourceTLS.session(followRedirects: followRedirects)
-        let task = session.dataTask(with: request) { data, response, error in
+        let lease = try SourceTLS.lease(for: request, followRedirects: followRedirects)
+        defer { lease.finish() }
+        let task = lease.session.dataTask(with: request) { data, response, error in
             if let error { box.set(.failure(error)) }
             else if let data, let response { box.set(.success((data, response))) }
             else { box.set(.failure(URLError(.badServerResponse))) }

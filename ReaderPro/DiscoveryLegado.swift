@@ -172,6 +172,13 @@ struct ExploreListView: View {
     @State private var selectedResult: SourceBook?
     @State private var grid = false
     @State private var confirmLegacyCertificate = false
+    @State private var page = 1
+    @State private var loadingMore = false
+    @State private var hasMore = true
+    @State private var moreError = ""
+    @State private var showPagePicker = false
+    @State private var requestedPage = "1"
+    @State private var requestID = UUID()
 
     var body: some View {
         Group {
@@ -195,10 +202,14 @@ struct ExploreListView: View {
                             }.buttonStyle(.plain)
                         }
                     }.padding(16)
+                    moreControls
                 }
             } else {
-                List(results) { result in
-                    Button { selectedResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
+                List {
+                    ForEach(results) { result in
+                        Button { selectedResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
+                    }
+                    moreControls
                 }.listStyle(.plain)
             }
         }
@@ -206,10 +217,21 @@ struct ExploreListView: View {
         .navigationTitle(category.title)
         .readerNavigationStyle()
         .toolbar {
+            Button("第 \(page) 页") {
+                requestedPage = String(page)
+                showPagePicker = true
+            }.accessibilityIdentifier("discoveryPagePicker")
             Button { grid.toggle() } label: { Image(systemName: grid ? "list.bullet" : "square.grid.2x2") }
                 .accessibilityLabel(grid ? "列表布局" : "网格布局")
         }
         .task { await load() }
+        .alert("跳转页码", isPresented: $showPagePicker) {
+            TextField("页码", text: $requestedPage).keyboardType(.numberPad)
+            Button("跳转") {
+                if let selected = Int(requestedPage), selected > 0 { Task { await load(page: selected) } }
+            }
+            Button("取消", role: .cancel) { }
+        } message: { Text("请输入大于零的页码。") }
         .alert("信任此书源的旧证书？", isPresented: $confirmLegacyCertificate) {
             Button("开启并重试") {
                 SourceTLS.setAllowed(true, for: source.bookSourceUrl)
@@ -222,15 +244,47 @@ struct ExploreListView: View {
         .sheet(item: $selectedResult) { SourceBookDetailView(store: store, result: $0) }
     }
 
-    @MainActor private func load() async {
-        loading = true; errorText = ""
+    @ViewBuilder private var moreControls: some View {
+        VStack(spacing: 8) {
+            if !moreError.isEmpty { Text(moreError).font(.footnote).foregroundStyle(.secondary) }
+            if hasMore {
+                Button(loadingMore ? "正在加载…" : (moreError.isEmpty ? "加载更多" : "重试加载更多")) {
+                    Task { await loadMore() }
+                }.disabled(loadingMore).accessibilityIdentifier("discoveryLoadMore")
+            } else {
+                Text("没有更多了").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.frame(maxWidth: .infinity).padding(.vertical, 12)
+    }
+
+    @MainActor private func load(page requested: Int = 1) async {
+        let request = UUID(); requestID = request
+        loading = true; errorText = ""; moreError = ""; loadingMore = false
         do {
-            let books = try await withTimeout(45) { try await self.source.discover(category: self.category) }
-            guard !Task.isCancelled else { return }
-            results = books; loading = false
+            let books = try await withTimeout(45) { try await self.source.discover(category: self.category, page: requested) }
+            guard !Task.isCancelled, requestID == request else { return }
+            results = books; page = requested; hasMore = !books.isEmpty; loading = false
         } catch {
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, requestID == request else { return }
             loading = false; errorText = "加载失败：\(sourceErrorMessage(error))"
+        }
+    }
+
+    @MainActor private func loadMore() async {
+        guard !loadingMore, hasMore else { return }
+        loadingMore = true; moreError = ""
+        let request = requestID
+        let nextPage = page + 1
+        do {
+            let books = try await withTimeout(45) { try await self.source.discover(category: self.category, page: nextPage) }
+            guard !Task.isCancelled, requestID == request else { return }
+            var seen = Set(results.map(\.url))
+            let newBooks = books.filter { seen.insert($0.url).inserted }
+            results.append(contentsOf: newBooks)
+            page = nextPage; hasMore = !newBooks.isEmpty; loadingMore = false
+        } catch {
+            guard !Task.isCancelled, requestID == request else { return }
+            moreError = "加载失败：\(sourceErrorMessage(error))"; loadingMore = false
         }
     }
 }

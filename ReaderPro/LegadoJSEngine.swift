@@ -474,7 +474,15 @@ final class LegadoJS {
             },
             code: function() { return data.status; }, statusCode: function() { return data.status; },
             header: function(name) { return data.headers[String(name).toLowerCase()] || ''; },
-            headers: function() { return data.headers; }, url: function() { return data.url; },
+            // Jsoup's Response.headers(name) returns a list; without a name,
+            // headers() returns the map. Real redirect rules use [0] or
+            // .get(0), and HTTP header names are case-insensitive.
+            headers: function(name) {
+                if (name == null) return data.headers;
+                var value = data.headers[String(name).toLowerCase()];
+                return _array(value == null ? [] : Array.isArray(value) ? value : [String(value)]);
+            },
+            url: function() { return data.url; },
             raw: function() { return {request:function() {return {url:function(){return data.url;}};}}; },
             toString: function() { return data.text; }
         };

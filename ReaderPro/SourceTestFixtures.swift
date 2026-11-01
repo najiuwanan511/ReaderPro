@@ -147,6 +147,9 @@ struct SourceFixtureRoot: View {
         }.task {
             guard !loaded else { return }; loaded = true
             var source = SourceTestFixtures.html(); source.id = "fixture-html"
+            if ProcessInfo.processInfo.arguments.contains("--discovery-pages-fixture") {
+                source.exploreUrl = "分页分类::/discovery/pages?page={{page}}"
+            }
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {
                 source.exploreUrl = "重复分类::/library/categories/fiction\n重复分类::/library/categories/fiction\n重复分类::/library/categories/alternate"
             }

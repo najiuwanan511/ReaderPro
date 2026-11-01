@@ -68,6 +68,22 @@ final class ReaderChapterPagingUITests: XCTestCase {
         XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 30), "网络章节完成加载后应停在上一章末页")
     }
 
+    func testChangingOnlineSourceKeepsChapterAndLoadsContent() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=0", "--reader-start-second", "--reader-source-change-fixture"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let more = app.buttons["更多操作"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        app.buttons["切换书源"].tap()
+        XCTAssertTrue(app.navigationBars["换源"].waitForExistence(timeout: 10))
+        app.buttons["搜索"].tap()
+        let result = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 30)); result.tap()
+        XCTAssertTrue(page(app, containing: "第2章第1段").waitForExistence(timeout: 30), "换源后应加载对应章节，而非回到第一章或停在未加载状态")
+    }
+
     func testScrollContinuesBetweenChaptersAtBothEnds() {
         let app = launch(mode: 2, startSecond: true)
         let text = app.textViews["readerFullText"]
@@ -81,5 +97,28 @@ final class ReaderChapterPagingUITests: XCTestCase {
         app.swipeDown()
         let second = app.textViews.matching(identifier: "readerFullText").matching(NSPredicate(format: "label CONTAINS %@", "第二章正文标记")).firstMatch
         XCTAssertTrue(second.waitForExistence(timeout: 20))
+    }
+
+    func testScrollRestoresVisiblePositionAfterRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=2", "--reader-scroll-position-fixture"]
+        app.launch()
+        XCTAssertTrue(app.textViews["readerFullText"].waitForExistence(timeout: 30))
+        let visible = app.staticTexts["readerVisibleScrollOffset"]
+        let saved = app.staticTexts["readerSavedScrollOffset"]
+        XCTAssertTrue(visible.waitForExistence(timeout: 10)); XCTAssertTrue(saved.exists)
+        app.swipeUp(); app.swipeUp()
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label != '0'"), object: saved)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed)
+        let savedOffset = Int(saved.label) ?? 0
+        XCTAssertGreaterThan(savedOffset, 100, "滚动后必须保存章内字符位置")
+        app.terminate()
+        app.launchArguments = ["--reader-boundary-fixture", "--reader-mode=2", "--reader-scroll-position-fixture"]
+        app.launch()
+        XCTAssertTrue(app.textViews["readerFullText"].waitForExistence(timeout: 30))
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label != '0'"), object: visible)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 15), .completed)
+        let restoredOffset = Int(visible.label) ?? 0
+        XCTAssertLessThan(abs(restoredOffset - savedOffset), 100, "重新打开应恢复到同一段正文")
     }
 }

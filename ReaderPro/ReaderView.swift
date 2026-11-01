@@ -60,6 +60,7 @@ struct ReaderView: View {
     @State private var chapterLoadTask: Task<Void, Never>?
     @State private var chapterLoadToken = UUID()
     @State private var chapterLanding: ReaderChapterLanding = .start
+    @State private var scrollCharOffset = 0
     @State private var pageDragStartIndex: Int?
     @State private var initialBrightness: CGFloat = 0.5
     @State private var initialIdleTimerDisabled = false
@@ -321,13 +322,23 @@ struct ReaderView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: CGFloat(store.paragraphSpacing)) {
                 Color.clear.frame(height: 1).id("reader-scroll-top")
-                    .background(ReaderScrollBoundaryObserver { forward in
+                    .background(ReaderScrollBoundaryObserver(onBoundary: { forward in
                         if forward && chapterIndex < (book?.chapters.count ?? 0) - 1 {
                             openChapter(chapterIndex + 1)
                         } else if !forward && chapterIndex > 0 {
                             openChapter(chapterIndex - 1, atEnd: true)
                         }
-                    })
+                    }, restoreOffset: scrollRestoreOffset, restoreToken: jumpToken, onPosition: { offset, settled in
+                        scrollCharOffset = offset
+                        let visiblePage = pageIndex(for: offset)
+                        if pageIndex != visiblePage { pageIndex = visiblePage }
+                        #if DEBUG || READERPRO_TESTING
+                        if ProcessInfo.processInfo.arguments.contains("--reader-boundary-fixture") {
+                            UserDefaults.standard.set(offset, forKey: "ReaderPro.test.visibleScrollOffset")
+                        }
+                        #endif
+                        if settled { saveProgress() }
+                    }))
                 if let c = chapter, store.showHeader {
                     Text(c.title)
                         .font(.system(size: CGFloat(store.fontSize + 3), weight: .bold))
@@ -351,10 +362,12 @@ struct ReaderView: View {
             }
         }
         .onChange(of: jumpToken) { _, _ in
-            reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top)
+            if scrollRestoreOffset == nil {
+                reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top)
+            }
         }
         .onChange(of: loading) { _, active in
-            if !active { reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top) }
+            if !active && scrollRestoreOffset == nil { reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top) }
         }
         }
     }
@@ -414,6 +427,11 @@ struct ReaderView: View {
         return false
     }
 
+    private var scrollRestoreOffset: Int? {
+        if case .offset = chapterLanding { return scrollCharOffset }
+        return nil
+    }
+
     private func boundarySwipe(width: CGFloat, allPages: Bool = false) -> some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { _ in if pageDragStartIndex == nil { pageDragStartIndex = pageIndex } }
@@ -449,6 +467,7 @@ struct ReaderView: View {
         guard let b = book, !b.chapters.isEmpty else { return }
         chapterIndex = max(0, min(i, b.chapters.count - 1))
         chapterLanding = atEnd ? .end : .start
+        scrollCharOffset = 0
         pageIndex = 0
         if b.chapters[chapterIndex].text.hasPrefix("__URL__") {
             // Do not paginate the URL placeholder or save the previous
@@ -461,6 +480,7 @@ struct ReaderView: View {
             cancelChapterLoad()
             rebuild(size: lastSize, keepOffset: nil)
             pageIndex = atEnd ? max(pages.count - 1, 0) : 0
+            if atEnd { scrollCharOffset = pages.last?.location ?? 0 }
             saveProgress(page: pageIndex)
         }
         jumpToken += 1
@@ -516,6 +536,7 @@ struct ReaderView: View {
     }
 
     func currentCharOffset() -> Int {
+        if store.pageTurn == 2 { return min(max(scrollCharOffset, 0), attributed.length) }
         guard pages.indices.contains(pageIndex) else { return 0 }
         return pages[pageIndex].location
     }
@@ -531,6 +552,7 @@ struct ReaderView: View {
         let restored = restoredReadingPosition(b)
         chapterIndex = restored.chapter
         chapterLanding = .offset(restored.offset)
+        scrollCharOffset = restored.offset
         initialBrightness = UIScreen.main.brightness
         initialIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake || initialIdleTimerDisabled
@@ -556,15 +578,18 @@ struct ReaderView: View {
 
     func saveProgress(page: Int? = nil) {
         guard var b = book else { return }
-        let p = boundedReadingIndex(page ?? pageIndex, count: pages.count)
+        let scrollOffset = min(max(scrollCharOffset, 0), attributed.length)
+        let p = boundedReadingIndex(store.pageTurn == 2 ? pageIndex(for: scrollOffset) : (page ?? pageIndex), count: pages.count)
         b.chapterIndex = boundedReadingIndex(chapterIndex, count: b.chapters.count)
         b.paragraphIndex = p
-        if pages.indices.contains(p) {
+        if store.pageTurn == 2 { b.charOffset = scrollOffset }
+        else if pages.indices.contains(p) {
             b.charOffset = pages[p].location
         } else { b.charOffset = 0 }
         if !b.chapters.isEmpty {
             let pageCount = max(pages.count, 1)
-            let frac = Double(p) / Double(pageCount)
+            let frac = store.pageTurn == 2 && attributed.length > 0
+                ? Double(scrollOffset) / Double(attributed.length) : Double(p) / Double(pageCount)
             b.progress = (Double(b.chapterIndex) + min(frac, 1.0)) / Double(b.chapters.count)
         }
         b.lastRead = Date()
@@ -610,6 +635,7 @@ struct ReaderView: View {
                 case .end:
                     rebuild(size: lastSize, keepOffset: nil)
                     pageIndex = max(pages.count - 1, 0)
+                    scrollCharOffset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
                 case .offset(let offset): rebuild(size: lastSize, keepOffset: offset)
                 }
                 saveProgress(page: pageIndex)
@@ -724,14 +750,36 @@ struct ReaderView: View {
             errorText = "找不到对应书源（可能已删除），请重新搜索"
             return
         }
+        guard let previousBook = book, previousBook.chapters.indices.contains(chapterIndex) else { return }
+        let previousIndex = chapterIndex
+        let previousTitle = previousBook.chapters[previousIndex].title
+        let previousOffset = currentCharOffset()
+        // A pending request for the old source must not replace the new source
+        // while its directory is being fetched.
+        cancelChapterLoad()
         Task {
             do {
                 try await store.reloadBookFromSource(bookId: bookId, source: src, sourceBook: r)
                 await MainActor.run {
-                    chapterIndex = 0
-                    pageIndex = 0
-                    rebuild(size: lastSize, keepOffset: 0)
-                    jumpToken += 1
+                    guard let updated = book, !updated.chapters.isEmpty else { return }
+                    func normalized(_ title: String) -> String {
+                        title.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
+                    }
+                    let name = normalized(previousTitle)
+                    // Prefer the same chapter title when the sources have
+                    // different directory offsets; otherwise keep the old
+                    // position as closely as the new directory permits.
+                    let matches = updated.chapters.indices.filter { !name.isEmpty && normalized(updated.chapters[$0].title) == name }
+                    let target = matches.min(by: { abs($0 - previousIndex) < abs($1 - previousIndex) })
+                        ?? min(previousIndex, updated.chapters.count - 1)
+                    openChapter(target)
+                    chapterLanding = .offset(previousOffset)
+                    scrollCharOffset = previousOffset
+                    if !updated.chapters[target].text.hasPrefix("__URL__") {
+                        rebuild(size: lastSize, keepOffset: previousOffset)
+                        saveProgress(page: pageIndex)
+                        jumpToken += 1
+                    }
                 }
             } catch {
                 await MainActor.run { errorText = "换源失败：\(sourceErrorMessage(error))" }
@@ -795,6 +843,7 @@ struct ReaderView: View {
                 Button("缓存全书", systemImage: "arrow.down.circle") { startDownloadAll() }
                 Button(autoPageEnabled ? "关闭自动翻页" : "自动翻页", systemImage: "play.circle") { toggleAutoPage(!autoPageEnabled) }
             } label: { Image(systemName: "ellipsis").font(.system(size: 20)) }
+                .accessibilityLabel("更多操作")
 
         }
         .foregroundColor(Color(uiColor: theme.text))
@@ -1031,6 +1080,10 @@ struct ReaderView: View {
     func jumpToLine(_ line: String) {
         if let idx = locate(line) {
             pageIndex = idx
+            if store.pageTurn == 2 {
+                let match = (attributed.string as NSString).range(of: line)
+                if match.location != NSNotFound { scrollCharOffset = match.location; chapterLanding = .offset(match.location) }
+            }
             saveProgress(page: idx)
             jumpToken += 1
         }
@@ -1044,6 +1097,11 @@ struct ReaderView: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             if let idx = locate(line) {
                 pageIndex = idx
+                if store.pageTurn == 2 {
+                    let match = (attributed.string as NSString).range(of: line)
+                    if match.location != NSNotFound { scrollCharOffset = match.location; chapterLanding = .offset(match.location) }
+                    jumpToken += 1
+                }
                 saveProgress(page: idx)
             }
         }

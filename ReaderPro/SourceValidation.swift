@@ -103,7 +103,7 @@ enum SourceValidation {
                     guard let address = images.first else { throw SourceFailure(stage: stage, message: "图片列表为空") }
                     let request = try SourceHTTP.request(address, base: first.url ?? book.url, headers: source.requestHeaders)
                     let (_, response) = try await SourceTLS.$allowsInvalidCertificates.withValue(SourceTLS.isAllowed(source.bookSourceUrl)) {
-                        try await SourceTLS.session().data(for: request)
+                        try await SourceTLS.data(for: request)
                     }
                     guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
                           http.mimeType?.hasPrefix("image/") == true else {

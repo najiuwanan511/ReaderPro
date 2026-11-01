@@ -129,7 +129,8 @@ enum SourceHTTP {
         req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         // Use the originating page, never an unrelated source subscription site.
         if let baseURL = URL(string: base), baseURL.host != nil { req.setValue(base, forHTTPHeaderField: "Referer") }
-        for (k, v) in sourceHeaders { req.setValue(fill(v), forHTTPHeaderField: k) }
+        let sourceProxy = sourceHeaders.first { $0.key.caseInsensitiveCompare("proxy") == .orderedSame }.map { fill($0.value) }
+        for (k, v) in sourceHeaders where k.caseInsensitiveCompare("proxy") != .orderedSame { req.setValue(fill(v), forHTTPHeaderField: k) }
         for (k, v) in headers(parsed.options["headers"] ?? parsed.options["header"]) { req.setValue(v, forHTTPHeaderField: k) }
         // Legado executes URL option `js` after resolving the URL and merging
         // headers. The script can inspect java.url and mutate java.headerMap
@@ -188,7 +189,7 @@ enum SourceHTTP {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
             if req.value(forHTTPHeaderField: "Content-Type") == nil { req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         }
-        return req
+        return try SourceProxy.attach(sourceProxy, to: req)
     }
 
     static func inlinePage(_ address: String) throws -> SourcePage? {
@@ -207,7 +208,7 @@ enum SourceHTTP {
     static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false) async throws -> SourcePage {
         try Task.checkCancellation()
         do {
-            let (data, response) = try await SourceTLS.session().data(for: request)
+            let (data, response) = try await SourceTLS.data(for: request)
             let address = response.url?.absoluteString ?? request.url?.absoluteString ?? ""
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 let hint: String
@@ -233,9 +234,25 @@ enum SourceHTTP {
 extension LegadoSource {
     var requestHeaders: [String: String] {
         var text = header.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.lowercased().hasPrefix("@js:") {
-            text = LegadoJS.run(String(text.dropFirst(4)), input: "", baseUrl: bookSourceUrl,
-                                sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl)
+        let lower = text.lowercased()
+        var headerScript: String?
+        if lower.hasPrefix("@js:") {
+            headerScript = String(text.dropFirst(4))
+        } else if lower.hasPrefix("<js>"),
+                  let end = text.range(of: "</js>", options: [.caseInsensitive, .backwards]),
+                  end.lowerBound >= text.index(text.startIndex, offsetBy: 4) {
+            // BaseSource.getHeaderMap accepts both script wrappers. In the
+            // user's current pack the comic sources and 点众阅读 put their
+            // required Referer, User-Agent and auth headers in this form.
+            headerScript = String(text[text.index(text.startIndex, offsetBy: 4)..<end.lowerBound])
+        }
+        if let headerScript {
+            // Android catches optional header-rule exceptions and continues
+            // with default headers instead of aborting the whole source.
+            text = LegadoJSCtx.$failures.withValue(nil) {
+                LegadoJS.run(headerScript, input: "", baseUrl: bookSourceUrl,
+                             sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl)
+            }
         }
         text = Self.fillSearchTemplate(text, key: LegadoJSCtx.key, page: 1, sourceUrl: bookSourceUrl)
         if SourceHTTP.headers(text).isEmpty, text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {

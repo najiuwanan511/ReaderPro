@@ -4,22 +4,28 @@ import SwiftUI
 // Isolated simulator fixture; never included in the distributed IPA.
 struct ReaderBoundaryFixtureRoot: View {
     @StateObject private var store: BookStore
+    @AppStorage("ReaderPro.test.visibleScrollOffset") private var visibleScrollOffset = 0
     private let bookID = "reader-boundary-fixture"
 
     init() {
         let args = ProcessInfo.processInfo.arguments
         let store = BookStore()
+        if args.contains("--reader-scroll-position-fixture") {
+            UserDefaults.standard.set(0, forKey: "ReaderPro.test.visibleScrollOffset")
+        }
         store.showHeader = true
         store.showFooter = true
         if let arg = args.first(where: { $0.hasPrefix("--reader-mode=") }),
            let mode = Int(arg.dropFirst("--reader-mode=".count)) { store.pageTurn = mode }
         if args.contains("--reset-reader-boundary") {
+            UserDefaults.standard.set(0, forKey: "ReaderPro.test.visibleScrollOffset")
             let base = SourceTestFixtures.base
             var source = SourceTestFixtures.html()
             source.ruleContent.content = "@css:#content@text"
             source.ruleContent.nextContentUrl = ""
             var book = LocalBook(title: "翻页回归", sourceName: source.bookSourceName,
                                  sourceUrl: source.bookSourceUrl, fileName: "fixture.txt", kind: "web")
+            if args.contains("--reader-source-change-fixture") { book.title = "测试" }
             book.id = "reader-boundary-fixture"
             let url = base + "/reader-boundary/long"
             book.chapters = [
@@ -35,6 +41,17 @@ struct ReaderBoundaryFixtureRoot: View {
         _store = StateObject(wrappedValue: store)
     }
 
-    var body: some View { ReaderView(store: store, bookId: bookID) }
+    var body: some View {
+        ReaderView(store: store, bookId: bookID)
+            .overlay(alignment: .topLeading) {
+                if ProcessInfo.processInfo.arguments.contains("--reader-scroll-position-fixture") {
+                    VStack {
+                        Text("\(visibleScrollOffset)").accessibilityIdentifier("readerVisibleScrollOffset")
+                        Text("\(store.books.first(where: { $0.id == bookID })?.charOffset ?? 0)")
+                            .accessibilityIdentifier("readerSavedScrollOffset")
+                    }.font(.system(size: 1)).opacity(0.5).allowsHitTesting(false)
+                }
+            }
+    }
 }
 #endif

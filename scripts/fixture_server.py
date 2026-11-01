@@ -10,8 +10,72 @@ import time
 import ssl
 import subprocess
 import threading
+import socketserver
+import socket
+import select
+import base64
 import os
 from pathlib import Path
+
+class SocksFixture(socketserver.BaseRequestHandler):
+    """Minimal SOCKS5 endpoint proving that URLSession uses the proxy."""
+    def read_exact(self, count):
+        data = b''
+        while len(data) < count:
+            part = self.request.recv(count - len(data))
+            if not part:
+                raise ConnectionError('short SOCKS request')
+            data += part
+        return data
+
+    def handle(self):
+        self.request.settimeout(10)
+        try:
+            version, methods = self.read_exact(2)
+            offered = self.read_exact(methods)
+            credentials = getattr(self.server, 'expected_credentials', None)
+            method = 2 if credentials else 0
+            if version != 5 or method not in offered:
+                return
+            self.request.sendall(bytes((5, method)))
+            if credentials:
+                version, user_length = self.read_exact(2)
+                user = self.read_exact(user_length)
+                password_length = self.read_exact(1)[0]
+                password = self.read_exact(password_length)
+                if version != 1 or (user, password) != credentials:
+                    self.request.sendall(b'\x01\x01')
+                    return
+                self.request.sendall(b'\x01\x00')
+            version, command, _, address_type = self.read_exact(4)
+            if version != 5 or command != 1:
+                return
+            if address_type == 1:
+                self.read_exact(4)
+            elif address_type == 3:
+                self.read_exact(self.read_exact(1)[0])
+            elif address_type == 4:
+                self.read_exact(16)
+            else:
+                return
+            self.read_exact(2)
+            self.request.sendall(b'\x05\x00\x00\x01\x7f\x00\x00\x01\x00\x00')
+            request = b''
+            while b'\r\n\r\n' not in request and len(request) < 32768:
+                request += self.read_exact(1)
+            if b'\r\nproxy:' in request.lower():
+                body = b'proxy header leaked'
+                status = b'400 Bad Request'
+            else:
+                body = b'socks5-routed'
+                status = b'200 OK'
+            self.request.sendall(b'HTTP/1.1 ' + status + b'\r\nContent-Type: text/plain\r\nContent-Length: ' + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
+        except (OSError, ConnectionError):
+            pass
+
+class SocksFixtureServer(socketserver.ThreadingTCPServer):
+    allow_reuse_address = True
+    daemon_threads = True
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -20,11 +84,67 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.do_GET()
 
+    def do_CONNECT(self):
+        # Tunnel only this synthetic host to the local TLS fixture. Never act
+        # as an open network proxy for arbitrary destinations.
+        if self.path not in ('readerproxy.invalid:80', 'readerproxy.invalid:443'):
+            self.send_error(403)
+            return
+        expected = getattr(self.server, 'expected_proxy_auth', None)
+        if expected and self.headers.get('Proxy-Authorization') != expected:
+            self.send_response(407, 'Proxy Authentication Required')
+            self.send_header('Proxy-Authenticate', 'Basic realm="fixture"')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        try:
+            if self.path.endswith(':80'):
+                self.send_response(200, 'Connection Established')
+                self.end_headers()
+                self.connection.settimeout(10)
+                request = b''
+                while b'\r\n\r\n' not in request and len(request) < 32768:
+                    part = self.connection.recv(4096)
+                    if not part: return
+                    request += part
+                if b'\r\nproxy-authorization:' in request.lower() or b'\r\nproxy:' in request.lower():
+                    body, status = b'proxy credentials leaked', b'400 Bad Request'
+                else:
+                    body, status = b'proxy-routed:readerproxy.invalid', b'200 OK'
+                self.connection.sendall(b'HTTP/1.1 ' + status + b'\r\nContent-Type: text/plain\r\nContent-Length: ' + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
+                return
+            upstream = socket.create_connection(('127.0.0.1', 8766), timeout=5)
+            self.send_response(200, 'Connection Established')
+            self.end_headers()
+            sockets = (self.connection, upstream)
+            while True:
+                ready, _, _ = select.select(sockets, (), (), 10)
+                if not ready:
+                    break
+                for source in ready:
+                    data = source.recv(16384)
+                    if not data:
+                        return
+                    (upstream if source is self.connection else self.connection).sendall(data)
+        except OSError:
+            pass
+        finally:
+            if 'upstream' in locals(): upstream.close()
+
     def do_GET(self):
         path = urlsplit(self.path).path
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
+        elif path == '/source-proxy-test':
+            # An HTTP proxy receives absolute-form targets. This deterministic
+            # endpoint never forwards or resolves the fictional destination.
+            if urlsplit(self.path).scheme != 'http' or self.headers.get('proxy') is not None:
+                status, body = 400, 'missing proxy routing or leaked proxy header'
+            else:
+                body = 'proxy-routed:' + urlsplit(self.path).hostname
+        elif path == '/source-proxy-https-test':
+            body = 'https-proxy-routed'
         elif path == '/packs/audit-config':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({key: int(os.environ.get('SOURCE_AUDIT_' + key.upper(), default))
@@ -103,6 +223,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Location', '/library/categories/fiction')
             self.end_headers()
             return
+        elif path == '/discovery/pages':
+            page = int(parse_qs(urlsplit(self.path).query).get('page', ['1'])[0])
+            if page <= 2:
+                body = f'<ul class="books"><li><a class="name" href="/book/{page}/">发现第{page}页小说</a><em>测试作者</em></li></ul>'
+            else:
+                body = '<ul class="books"></ul>'
         elif path == '/library/categories/fiction' or path == '/search':
             if self.headers.get('X-Fixture') != 'ReaderPro':
                 status, body = 403, 'missing source header'
@@ -180,4 +306,12 @@ if __name__ == '__main__':
     context.load_cert_chain('build/fixture-cert.pem', 'build/fixture-key.pem')
     tls.socket = context.wrap_socket(tls.socket, server_side=True)
     threading.Thread(target=tls.serve_forever, daemon=True).start()
+    socks = SocksFixtureServer(('0.0.0.0', 8767), SocksFixture)
+    threading.Thread(target=socks.serve_forever, daemon=True).start()
+    socks_auth = SocksFixtureServer(('0.0.0.0', 8769), SocksFixture)
+    socks_auth.expected_credentials = (b'fixture-user', b'fixture-pass')
+    threading.Thread(target=socks_auth.serve_forever, daemon=True).start()
+    auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8768), Handler)
+    auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
+    threading.Thread(target=auth_proxy.serve_forever, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()

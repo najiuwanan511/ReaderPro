@@ -42,11 +42,16 @@ jobs:
             -only-testing:ReaderProUITests/SourceFlowUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
+            -only-testing:ReaderProUITests/DiscoveryPaginationUITests \
             -only-testing:ReaderProUITests/RssSourceUITests \
             -only-testing:ReaderProTests/JSConcurrencyStressTests \
             -only-testing:ReaderProTests/RssSourceTests \
             -only-testing:ReaderProTests/ContentPaginationRuleTests \
             -only-testing:ReaderProTests/SourceURLCompatibilityTests \
+            -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \
+            -only-testing:ReaderProTests/DiscoveryPaginationTests \
+            -only-testing:ReaderProTests/LegadoIndexRuleTests \
+            -only-testing:ReaderProTests/LegadoJSONPathRuleTests \
             -only-testing:ReaderProTests/JavaCryptoTests \
             -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \

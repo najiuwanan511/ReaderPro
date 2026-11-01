@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 // MARK: - JS 规则执行上下文（TaskLocal，并发安全）
 // 书源引擎执行 @js:/<js> 规则时需要知道当前书源的 sourceUrl、搜索词 key、书信息 book。
@@ -443,6 +444,60 @@ func matchesSelf(_ el: HtmlEl, parsed: Sel) -> Bool {
     return true
 }
 
+// AnalyzeByJSoup.ElementsSingle treats a trailing numeric [...] as Legado's
+// index syntax, not as a CSS attribute selector. Ranges are inclusive and
+// may run backwards. Attribute selectors such as [class=...] remain CSS.
+private struct LegadoElementIndex {
+    enum Item { case single(Int), range(Int?, Int?, Int) }
+    var excluding: Bool
+    var items: [Item]
+}
+
+private func splitElementIndex(_ token: String) -> (String, LegadoElementIndex?) {
+    guard token.hasSuffix("]"), let open = token.lastIndex(of: "[") else { return (token, nil) }
+    var body = String(token[token.index(after: open)..<token.index(before: token.endIndex)])
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let excluding = body.hasPrefix("!")
+    if excluding { body.removeFirst() }
+    let parts = body.split(separator: ",", omittingEmptySubsequences: false)
+    guard !parts.isEmpty else { return (token, nil) }
+    var items: [LegadoElementIndex.Item] = []
+    for part in parts {
+        let fields = part.split(separator: ":", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if fields.count == 1, let value = Int(fields[0]) { items.append(.single(value)); continue }
+        guard (2...3).contains(fields.count),
+              fields[0].isEmpty || Int(fields[0]) != nil,
+              fields[1].isEmpty || Int(fields[1]) != nil,
+              fields.count == 2 || Int(fields[2]) != nil else { return (token, nil) }
+        items.append(.range(Int(fields[0]), Int(fields[1]), fields.count == 3 ? Int(fields[2])! : 1))
+    }
+    return (String(token[..<open]), LegadoElementIndex(excluding: excluding, items: items))
+}
+
+private func selectElements(_ elements: [HtmlEl], by selection: LegadoElementIndex) -> [HtmlEl] {
+    let count = elements.count
+    guard count > 0 else { return [] }
+    var ordered: [Int] = [], seen = Set<Int>()
+    func add(_ index: Int) { if (0..<count).contains(index), seen.insert(index).inserted { ordered.append(index) } }
+    for item in selection.items {
+        switch item {
+        case .single(let value): add(value < 0 ? value + count : value)
+        case .range(let first, let last, let rawStep):
+            var start = first ?? 0, end = last ?? (count - 1)
+            if start < 0 { start += count }; if end < 0 { end += count }
+            if (start < 0 && end < 0) || (start >= count && end >= count) { continue }
+            start = min(max(start, 0), count - 1); end = min(max(end, 0), count - 1)
+            let step = rawStep > 0 ? rawStep : (rawStep > -count ? rawStep + count : 1)
+            if step >= count || start == end { add(start); continue }
+            let direction = end > start ? step : -step
+            for index in stride(from: start, through: end, by: direction) { add(index) }
+        }
+    }
+    return selection.excluding ? elements.enumerated().compactMap { seen.contains($0.offset) ? nil : $0.element }
+        : ordered.map { elements[$0] }
+}
+
 func stripText(_ html: String, preserveNewlines: Bool) -> String {
     let s = stripHTML(html)
     if preserveNewlines {
@@ -524,41 +579,36 @@ func evalDefaultChain(_ input: String, _ chain: String) -> [String] {
         if let idx = Int(token) {
             els = pickIndex(els, idx); prevWasSelector = false; continue
         }
-        let parsed = parseSelectorToken(token)
-        if token.hasPrefix("text.") {
-            let needle = String(token.dropFirst(5))
+        let (selector, bracketIndex) = splitElementIndex(token)
+        let parsed = parseSelectorToken(selector)
+        if selector.hasPrefix("text.") {
+            let needle = String(selector.dropFirst(5))
             var found: [HtmlEl] = []
             for el in els {
                 let searchIn = el.open.isEmpty ? el.full : el.inner
                 let all = findElements(searchIn, tag: nil, classes: [], idVal: nil, attrName: nil, attrOp: nil, attrVal: nil)
-                found.append(contentsOf: all.filter { stripText($0.inner, preserveNewlines: false).contains(needle) })
+                var matches = all.filter { stripText($0.inner, preserveNewlines: false).contains(needle) }
+                if let idx = parsed.index { matches = pickIndex(matches, idx) }
+                if let bracketIndex { matches = selectElements(matches, by: bracketIndex) }
+                found.append(contentsOf: matches)
             }
             els = found
-            if let idx = parsed.index { els = pickIndex(els, idx) }
             prevWasSelector = true
             continue
         }
         var found: [HtmlEl] = []
-        // CSS-style segment with spaces/child combinators, e.g. "#info p:nth-of-type(1) a"
-        // or ".s2 a": the old single-token parser treated the whole string as one
-        // tag and matched nothing, which broke most yckceo/1325 rules.
-        if (token.contains(" ") || token.contains(">") || token.contains("+") || token.contains("~")) && !token.hasPrefix("class.") {
-            for el in els {
-                let searchIn = el.open.isEmpty ? el.full : el.inner
-                found.append(contentsOf: findElementsSel(searchIn, parsed, token: token))
-                if !el.open.isEmpty && matchesSelf(el, parsed: parsed) {
-                    // A segment that matches the element itself (rare) is kept too.
-                }
-            }
-        } else {
-            for el in els {
-
-                let searchIn = el.open.isEmpty ? el.full : el.inner
-                found.append(contentsOf: findElementsSel(searchIn, parsed, token: token))
-            }
+        for el in els {
+            let searchIn = el.open.isEmpty ? el.full : el.inner
+            var matches = selector.isEmpty || selector == "children"
+                ? LegadoDOM.children(searchIn)
+                : findElementsSel(searchIn, parsed, token: selector)
+            // Legado applies each selector and index separately to each
+            // current parent before combining the resulting elements.
+            if let idx = parsed.index { matches = pickIndex(matches, idx) }
+            if let bracketIndex { matches = selectElements(matches, by: bracketIndex) }
+            found.append(contentsOf: matches)
         }
         els = found
-        if let idx = parsed.index { els = pickIndex(els, idx) }
         prevWasSelector = true
         if els.isEmpty { break }
     }
@@ -638,57 +688,115 @@ func jsonPathTokens(_ path: String) -> [String] {
     return out
 }
 
+private func jsonPathBracketParts(_ token: String) -> (String, [String])? {
+    guard let first = token.firstIndex(of: "[") else { return (token, []) }
+    let key = String(token[..<first])
+    var index = first, parts: [String] = []
+    while index < token.endIndex {
+        guard token[index] == "[" else { return nil }
+        let start = token.index(after: index)
+        var cursor = start, depth = 1, quote: Character?, escaped = false
+        while cursor < token.endIndex {
+            let char = token[cursor]
+            if let q = quote {
+                if escaped { escaped = false }
+                else if char == "\\" { escaped = true }
+                else if char == q { quote = nil }
+            } else if char == "\"" || char == "'" { quote = char }
+            else if char == "[" { depth += 1 }
+            else if char == "]" { depth -= 1; if depth == 0 { break } }
+            cursor = token.index(after: cursor)
+        }
+        guard cursor < token.endIndex, depth == 0 else { return nil }
+        parts.append(String(token[start..<cursor]).trimmingCharacters(in: .whitespacesAndNewlines))
+        index = token.index(after: cursor)
+    }
+    return (key, parts)
+}
+
+private func jsonPathFilter(_ value: Any, expression: String) -> Bool {
+    // Jayway JsonPath's common predicate forms used in Legado sources:
+    // [?(@.name)] and [?(@.name == 'value')] / !=.
+    guard expression.hasPrefix("?("), expression.hasSuffix(")") else { return false }
+    let condition = String(expression.dropFirst(2).dropLast()).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let regex = try? NSRegularExpression(pattern: #"^@((?:\.[A-Za-z_][A-Za-z0-9_-]*)+)\s*(?:(==|!=)\s*(.*))?$"#),
+          let match = regex.firstMatch(in: condition, range: NSRange(condition.startIndex..., in: condition)),
+          let pathRange = Range(match.range(at: 1), in: condition) else { return false }
+    let values = jsonWalk(value, "$" + String(condition[pathRange]))
+    guard match.range(at: 2).location != NSNotFound,
+          let operatorRange = Range(match.range(at: 2), in: condition),
+          let rhsRange = Range(match.range(at: 3), in: condition) else { return !values.isEmpty }
+    var rhs = String(condition[rhsRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+    if rhs.count >= 2, let quote = rhs.first, (quote == "'" || quote == "\""), rhs.last == quote {
+        rhs = String(rhs.dropFirst().dropLast())
+            .replacingOccurrences(of: "\\\"", with: "\"")
+            .replacingOccurrences(of: "\\'", with: "'")
+            .replacingOccurrences(of: "\\\\", with: "\\")
+    }
+    let equal = values.contains { jsonValueToString($0) == rhs || ($0 is NSNull && rhs == "null") }
+    return condition[operatorRange] == "==" ? equal : !equal
+}
+
+private func jsonPathSelect(_ value: Any, bracket: String) -> [Any] {
+    if bracket == "*" {
+        if let array = value as? [Any] { return array }
+        if let object = value as? [String: Any] { return Array(object.values) }
+        return []
+    }
+    if bracket.hasPrefix("?(") {
+        return (value as? [Any] ?? []).filter { jsonPathFilter($0, expression: bracket) }
+    }
+    if bracket.count >= 2, let quote = bracket.first, (quote == "'" || quote == "\""), bracket.last == quote {
+        let key = String(bracket.dropFirst().dropLast())
+        guard let object = value as? [String: Any], let item = object[key] else { return [] }
+        return [item]
+    }
+    guard let array = value as? [Any] else { return [] }
+    if let index = Int(bracket) {
+        let i = index >= 0 ? index : array.count + index
+        return array.indices.contains(i) ? [array[i]] : []
+    }
+    let union = bracket.split(separator: ",").map { Int($0.trimmingCharacters(in: .whitespacesAndNewlines)) }
+    if union.count > 1, union.allSatisfy({ $0 != nil }) {
+        return union.compactMap { index in
+            guard let index else { return nil }
+            let i = index >= 0 ? index : array.count + index
+            return array.indices.contains(i) ? array[i] : nil
+        }
+    }
+    return []
+}
+
 func jsonWalk(_ root: Any, _ path: String) -> [Any] {
     let tokens = jsonPathTokens(path)
     if tokens.isEmpty { return [root] }
     var current: [Any] = [root]
-    for tok in tokens {
+    for (tokenIndex, tok) in tokens.enumerated() {
         if tok == "**" {
             func descendants(_ value: Any) -> [Any] {
                 if let dictionary = value as? [String: Any] { return [value] + dictionary.values.flatMap(descendants) }
                 if let array = value as? [Any] { return [value] + array.flatMap(descendants) }
                 return [value]
             }
-            current = current.flatMap(descendants).filter { !($0 is [Any]) }
+            let nextIsBracket = tokens.indices.contains(tokenIndex + 1) && tokens[tokenIndex + 1].hasPrefix("[")
+            current = current.flatMap(descendants).filter { nextIsBracket || !($0 is [Any]) }
             continue
         }
         var next: [Any] = []
-        // tok may be "key", "key[*]", "key[0]", "key[-1]", "[*]", "[0]"
-        var key: String? = nil; var bracket: String? = nil
-        if let b = tok.firstIndex(of: "[") {
-            key = String(tok[..<b])
-            bracket = String(tok[b...])
-        } else if tok.hasPrefix("[") {
-            bracket = tok
-        } else {
-            key = tok
-        }
+        guard let (key, brackets) = jsonPathBracketParts(tok) else { return [] }
         for c in current {
             var values: [Any] = []
-            if let k = key, !k.isEmpty {
-                if k == "*", let d = c as? [String: Any] { values.append(contentsOf: d.values) }
-                else if let d = c as? [String: Any], let v = d[k] { values.append(v) }
+            if !key.isEmpty {
+                if key == "*", let d = c as? [String: Any] { values.append(contentsOf: d.values) }
+                else if let d = c as? [String: Any], let v = d[key] { values.append(v) }
                 else if let arr = c as? [Any] {
-                    for e in arr { if let d = e as? [String: Any], let v = d[k] { values.append(v) } }
+                    for e in arr { if let d = e as? [String: Any], let v = d[key] { values.append(v) } }
                 }
             } else {
                 values.append(c)
             }
-            for v in values {
-                if let br = bracket {
-                    let inner = br.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-                    if inner == "*" {
-                        if let arr = v as? [Any] { next.append(contentsOf: arr) }
-                    } else if let idx = Int(inner) {
-                        if let arr = v as? [Any] {
-                            let i = idx >= 0 ? idx : arr.count + idx
-                            if i >= 0 && i < arr.count { next.append(arr[i]) }
-                        }
-                    }
-                } else {
-                    next.append(v)
-                }
-            }
+            for bracket in brackets { values = values.flatMap { jsonPathSelect($0, bracket: bracket) } }
+            next.append(contentsOf: values)
         }
         current = next
         if current.isEmpty { break }
@@ -698,7 +806,10 @@ func jsonWalk(_ root: Any, _ path: String) -> [Any] {
 
 func jsonValueToString(_ v: Any) -> String {
     if let s = v as? String { return s }
-    if let n = v as? NSNumber { return n.stringValue }
+    if let n = v as? NSNumber {
+        if CFGetTypeID(n) == CFBooleanGetTypeID() { return n.boolValue ? "true" : "false" }
+        return n.stringValue
+    }
     if let b = v as? Bool { return b ? "true" : "false" }
     if JSONSerialization.isValidJSONObject(v), let data = try? JSONSerialization.data(withJSONObject: v) {
         return String(data: data, encoding: .utf8) ?? ""
@@ -811,6 +922,20 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
         return [out]
     }
     if rule.hasPrefix("http://") || rule.hasPrefix("https://") || rule.hasPrefix("/") && !rule.hasPrefix("//") { return [rule] }
+    if rule.contains("%%") {
+        // Legado interleaves lists by position (e.g. English line followed
+        // by its Chinese translation); it iterates only the first nonempty
+        // list's length, rather than concatenating or padding the lists.
+        let lists = rule.components(separatedBy: "%%")
+            .map { applyRuleNoReplace(input, $0, base: base) }
+            .filter { !$0.isEmpty }
+        guard let first = lists.first else { return [] }
+        var values: [String] = []
+        for index in first.indices {
+            for list in lists where list.indices.contains(index) { values.append(list[index]) }
+        }
+        return values
+    }
     if rule.contains("&&") {
         var out: [String] = []
         for part in rule.components(separatedBy: "&&") {
@@ -1332,15 +1457,15 @@ extension LegadoSource {
         return books
     }
 
-    func discover(category: ExploreCategory? = nil) async throws -> [SourceBook] {
+    func discover(category: ExploreCategory? = nil, page: Int = 1) async throws -> [SourceBook] {
         try await withRules {
             guard let category = category ?? exploreCategories().first else {
                 throw SourceFailure(stage: "发现分类", message: "没有解析到分类，请检查 exploreUrl 或脚本兼容性")
             }
-            let response = try await loadPage(category.url, stage: "发现分类「\(category.title)」")
+            let response = try await loadPage(category.url, page: max(1, page), stage: "发现分类「\(category.title)」")
             let rule = effectiveDiscoverRule.bookList.isEmpty && effectiveDiscoverRule.name.isEmpty ? ruleSearch : effectiveDiscoverRule
             let books = try parseBooks(response, rule: rule, stage: "发现列表")
-            guard !books.isEmpty else {
+            guard page > 1 || !books.isEmpty else {
                 throw SourceFailure(stage: "发现列表", message: "页面已返回，但书籍规则未匹配到有效书名和地址（也可能是验证码或登录页）", url: response.url)
             }
             return books

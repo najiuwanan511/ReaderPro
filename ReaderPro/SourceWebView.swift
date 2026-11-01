@@ -15,6 +15,7 @@ import Security
     private var allowsInvalidCertificates = false
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0) async throws -> SourcePage {
+        let proxy = try SourceProxy.configuration(for: request)
         // Each WKWebView can launch a separate WebKit process. Keeping only
         // two active reduces peak memory when many book sources are searched.
         while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -26,7 +27,10 @@ import Security
                 active[loader.id] = loader
                 loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
-                config.websiteDataStore = loader.allowsInvalidCertificates ? .nonPersistent() : .default()
+                // Never attach a source proxy to the global website store:
+                // other sources and the built-in browser must not inherit it.
+                config.websiteDataStore = (loader.allowsInvalidCertificates || proxy != nil) ? .nonPersistent() : .default()
+                if let proxy { config.websiteDataStore.proxyConfigurations = [proxy.networkProxy] }
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA

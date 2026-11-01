@@ -158,16 +158,25 @@ struct FullTextReader: UIViewRepresentable {
 // especially when a short chapter does not fill the viewport.
 struct ReaderScrollBoundaryObserver: UIViewRepresentable {
     var onBoundary: (Bool) -> Void
+    var restoreOffset: Int?
+    var restoreToken: Int
+    var onPosition: (Int, Bool) -> Void
 
     func makeUIView(context: Context) -> ReaderScrollBoundaryProbe {
         let view = ReaderScrollBoundaryProbe()
         view.isUserInteractionEnabled = false
         view.onBoundary = onBoundary
+        view.onPosition = onPosition
+        view.restoreOffset = restoreOffset
+        view.restoreToken = restoreToken
         return view
     }
 
     func updateUIView(_ view: ReaderScrollBoundaryProbe, context: Context) {
         view.onBoundary = onBoundary
+        view.onPosition = onPosition
+        view.restoreOffset = restoreOffset
+        view.restoreToken = restoreToken
         view.scheduleAttach()
     }
 
@@ -178,7 +187,16 @@ struct ReaderScrollBoundaryObserver: UIViewRepresentable {
 
 final class ReaderScrollBoundaryProbe: UIView {
     var onBoundary: ((Bool) -> Void)?
+    var onPosition: ((Int, Bool) -> Void)?
+    var restoreOffset: Int?
+    var restoreToken = 0
     private weak var observedScroll: UIScrollView?
+    private weak var observedText: UITextView?
+    private var observation: NSKeyValueObservation?
+    private var settleWork: DispatchWorkItem?
+    private var restoredToken: Int?
+    private var restoring = false
+    private var lastPosition: Int?
     private var startedAtTop = false
     private var startedAtBottom = false
 
@@ -196,18 +214,76 @@ final class ReaderScrollBoundaryProbe: UIView {
         DispatchQueue.main.async { [weak self] in self?.attachIfNeeded() }
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if observedText == nil || (restoreOffset != nil && restoredToken != restoreToken) { scheduleAttach() }
+    }
+
     private func attachIfNeeded() {
         var parent = superview
         while let view = parent, !(view is UIScrollView) { parent = view.superview }
-        guard let scroll = parent as? UIScrollView, scroll !== observedScroll else { return }
-        detach()
-        observedScroll = scroll
-        scroll.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+        guard let scroll = parent as? UIScrollView else { return }
+        if scroll !== observedScroll {
+            detach()
+            observedScroll = scroll
+            scroll.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+            observation = scroll.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+                DispatchQueue.main.async { [weak self] in self?.publishPosition() }
+            }
+        }
+        if observedText == nil { observedText = findText(in: scroll) }
+        restoreIfNeeded()
     }
 
     func detach() {
+        settleWork?.cancel(); settleWork = nil
+        observation?.invalidate(); observation = nil
         observedScroll?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
         observedScroll = nil
+        observedText = nil
+    }
+
+    private func findText(in view: UIView) -> UITextView? {
+        if let text = view as? UITextView, text.accessibilityIdentifier == "readerFullText" { return text }
+        for child in view.subviews { if let result = findText(in: child) { return result } }
+        return nil
+    }
+
+    private func restoreIfNeeded() {
+        guard let offset = restoreOffset, restoredToken != restoreToken,
+              let scroll = observedScroll, let text = observedText,
+              text.bounds.width > 0, text.bounds.height > 0, text.textStorage.length > 0 else { return }
+        text.layoutManager.ensureLayout(for: text.textContainer)
+        let index = min(max(offset, 0), text.textStorage.length - 1)
+        let glyph = text.layoutManager.glyphIndexForCharacter(at: index)
+        guard glyph < text.layoutManager.numberOfGlyphs else { return }
+        let line = text.layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil)
+        let target = text.convert(CGPoint(x: 0, y: line.minY + text.textContainerInset.top), to: scroll).y
+        let top = -scroll.adjustedContentInset.top
+        let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+        restoring = true
+        let targetY = offset <= 0 ? top : min(max(target - scroll.adjustedContentInset.top, top), bottom)
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: targetY), animated: false)
+        restoredToken = restoreToken
+        restoring = false
+        publishPosition()
+    }
+
+    private func publishPosition() {
+        guard !restoring, (restoreOffset == nil || restoredToken == restoreToken),
+              let scroll = observedScroll, let text = observedText,
+              text.textStorage.length > 0 else { return }
+        text.layoutManager.ensureLayout(for: text.textContainer)
+        guard text.layoutManager.numberOfGlyphs > 0 else { return }
+        let visible = text.convert(CGPoint(x: scroll.bounds.midX, y: scroll.bounds.minY + scroll.adjustedContentInset.top), from: scroll)
+        let point = CGPoint(x: 0, y: max(0, visible.y - text.textContainerInset.top))
+        let glyph = min(text.layoutManager.glyphIndex(for: point, in: text.textContainer), text.layoutManager.numberOfGlyphs - 1)
+        let offset = min(text.layoutManager.characterIndexForGlyph(at: glyph), text.textStorage.length)
+        if offset != lastPosition { lastPosition = offset; onPosition?(offset, false) }
+        settleWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.onPosition?(offset, true) }
+        settleWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
