@@ -49,6 +49,7 @@ jobs:
             -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 300 \
             -skip-testing:ReaderProTests/SourcePackAuditTests \
+            -skip-testing:ReaderProTests/SourcePack1329AuditTests \
             -resultBundlePath build/SourceRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/tests.log

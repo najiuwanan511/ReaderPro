@@ -1,0 +1,88 @@
+name: Audit 1329 source collection
+
+on:
+  workflow_dispatch:
+    inputs:
+      start:
+        default: '0'
+        description: First source index
+      count:
+        default: '0'
+        description: Number of sources
+      concurrency:
+        default: '24'
+        description: Concurrent searches
+      sanitizer:
+        default: 'NO'
+        description: Enable Address Sanitizer (YES or NO)
+
+jobs:
+  diagnose:
+    runs-on: macos-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare diagnostic fixture
+        env:
+          SOURCE_AUDIT_START: ${{ inputs.start }}
+          SOURCE_AUDIT_COUNT: ${{ inputs.count }}
+          SOURCE_AUDIT_CONCURRENCY: ${{ inputs.concurrency }}
+          SOURCE_AUDIT_PACK_FILE: build/source-pack-1329.json
+        run: |
+          brew install xcodegen
+          xcodegen generate
+          mkdir -p build
+          python3 scripts/fetch_user_pack_1329.py
+          # The audit only needs the pack and configuration endpoints. Avoid
+          # provisioning the unrelated TLS and proxy servers on this runner.
+          python3 -u scripts/source_audit_server.py > build/fixture-server.log 2>&1 &
+          SERVER_PID=$!
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8765/health; then exit 0; fi
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then break; fi
+            sleep 1
+          done
+          cat build/fixture-server.log
+          exit 1
+      - name: Audit source window and capture native crashes
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
+          echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
+            -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
+            -enableAddressSanitizer ${{ inputs.sanitizer }} -enableCodeCoverage NO \
+            -only-testing:ReaderProTests/SourcePack1329AuditTests \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 1800 \
+            -maximum-test-execution-time-allowance 1800 \
+            -resultBundlePath build/SourceCrash.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-crash.log
+      - name: Preserve crash and progress evidence
+        if: always()
+        run: |
+          xcrun xcresulttool export diagnostics --path build/SourceCrash.xcresult --output-path build/diagnostics || true
+          xcrun xcresulttool export attachments --path build/SourceCrash.xcresult --output-path build/audit-attachments || true
+          CONTAINER=$(xcrun simctl get_app_container "$READER_SIMULATOR_ID" com.selfuse.readerpro data 2>/dev/null || true)
+          if [ -n "$CONTAINER" ]; then
+            for REPORT in source-pack-1329-search-audit.json source-pack-1329-search-audit-progress.json source-pack-1329-certificate-audit-progress.json; do
+              if [ -f "$CONTAINER/tmp/$REPORT" ]; then cp "$CONTAINER/tmp/$REPORT" "build/$REPORT"; fi
+              if [ -f "$CONTAINER/Documents/$REPORT" ]; then cp "$CONTAINER/Documents/$REPORT" "build/$REPORT"; fi
+            done
+          fi
+          # CrashReporter writes asynchronously after xcodebuild observes death.
+          sleep 15
+          mkdir -p build/native-crashes
+          find "$HOME/Library/Logs/DiagnosticReports" "$HOME/Library/Developer/CoreSimulator/Devices/$READER_SIMULATOR_ID/data/Library/Logs" \
+            -type f \( -name '*ReaderPro*.ips' -o -name '*ReaderPro*.crash' \) \
+            -exec cp {} build/native-crashes/ \; 2>/dev/null || true
+          for REPORT in source-pack-1329-search-audit.json source-pack-1329-search-audit-progress.json source-pack-1329-certificate-audit-progress.json; do
+            if [ ! -f "build/$REPORT" ]; then
+              FOUND=$(find "$HOME/Library/Developer/CoreSimulator/Devices/$READER_SIMULATOR_ID/data/Containers/Data/Application" -name "$REPORT" -print -quit 2>/dev/null || true)
+              if [ -n "$FOUND" ]; then cp "$FOUND" "build/$REPORT"; fi
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: source-1329-audit-evidence
+          path: build

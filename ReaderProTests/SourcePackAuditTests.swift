@@ -35,11 +35,7 @@ private actor PackSearchAudit {
     }
 }
 
-final class SourcePackAuditTests: XCTestCase {
-    func testSearchEverySourceInUserPackAndExportIndividualResults() async throws {
-        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
-        let sources = importSourcesDetailed(raw).sources
-        XCTAssertEqual(sources.count, 1466)
+private func runPackSearchAudit(_ sources: [LegadoSource], reportPrefix: String, test: XCTestCase) async throws {
         struct Configuration: Decodable { var start: Int; var count: Int; var concurrency: Int }
         let configText = try await fetchText(urlString: SourceTestFixtures.base + "/packs/audit-config")
         let config = try JSONDecoder().decode(Configuration.self, from: Data(configText.utf8))
@@ -47,7 +43,7 @@ final class SourcePackAuditTests: XCTestCase {
         let end = config.count > 0 ? min(sources.count, start + config.count) : sources.count
         let selected = Array(sources[start..<end])
         print("SOURCE_AUDIT_SCOPE start=\(start) end=\(end) concurrency=\(config.concurrency)")
-        let audit = PackSearchAudit()
+        let audit = PackSearchAudit(checkpointName: reportPrefix + "-search-audit-progress.json")
         // Exercise every entry with the production engine. A failed remote
         // request is evidence to report, not an assertion that a source is dead.
         await streamSourceSearch(selected, key: "斗罗大陆", concurrency: config.concurrency, timeout: 18,
@@ -67,7 +63,7 @@ final class SourcePackAuditTests: XCTestCase {
         defer { for (url, allowed) in previous { SourceTLS.setAllowed(allowed, for: url) } }
         // Keep the strict and certificate-compatibility progress separate;
         // previously the second pass overwrote the first pass's checkpoint.
-        let compatibility = PackSearchAudit(checkpointName: "source-pack-certificate-audit-progress.json")
+        let compatibility = PackSearchAudit(checkpointName: reportPrefix + "-certificate-audit-progress.json")
         await streamSourceSearch(tlsSources, key: "斗罗大陆", concurrency: 24, timeout: 18) { await compatibility.add($0) }
         let legacyRows = await compatibility.rows
         let legacyByID = Dictionary(uniqueKeysWithValues: legacyRows.compactMap { row -> (String, [String: String])? in
@@ -86,7 +82,26 @@ final class SourcePackAuditTests: XCTestCase {
         print(summary)
         let data = try JSONSerialization.data(withJSONObject: ["summary": summary, "keyword": "斗罗大陆", "perSourceTimeoutSeconds": 18, "results": rows], options: [.prettyPrinted, .sortedKeys])
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-        attachment.name = "1466-source-search-audit.json"; attachment.lifetime = .keepAlways; add(attachment)
-        try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("source-pack-search-audit.json"))
+        attachment.name = "\(sources.count)-source-search-audit.json"; attachment.lifetime = .keepAlways; test.add(attachment)
+        try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(reportPrefix + "-search-audit.json"))
+}
+
+final class SourcePackAuditTests: XCTestCase {
+    func testSearchEverySourceInUserPackAndExportIndividualResults() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let sources = importSourcesDetailed(raw).sources
+        XCTAssertEqual(sources.count, 1466)
+        try await runPackSearchAudit(sources, reportPrefix: "source-pack", test: self)
+    }
+}
+
+// This separate class is run only by the dedicated 1329 workflow. The regular
+// release and 1325 diagnostics continue to execute their existing audit only.
+final class SourcePack1329AuditTests: XCTestCase {
+    func testSearchEverySourceIn1329PackAndExportIndividualResults() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let sources = importSourcesDetailed(raw).sources
+        XCTAssertEqual(sources.count, 320)
+        try await runPackSearchAudit(sources, reportPrefix: "source-pack-1329", test: self)
     }
 }

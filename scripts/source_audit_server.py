@@ -11,7 +11,7 @@ class Handler(BaseHTTPRequestHandler):
             content_type, body = "text/plain", b"ready"
         elif self.path == "/packs/user":
             content_type = "application/json; charset=utf-8"
-            body = Path("build/source-pack-1325.json").read_bytes()
+            body = Path(os.environ.get("SOURCE_AUDIT_PACK_FILE", "build/source-pack-1325.json")).read_bytes()
         elif self.path == "/packs/audit-config":
             content_type = "application/json; charset=utf-8"
             config = {key: int(os.environ.get("SOURCE_AUDIT_" + key.upper(), default))
