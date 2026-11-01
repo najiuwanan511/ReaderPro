@@ -201,6 +201,8 @@ class Handler(BaseHTTPRequestHandler):
             body = self.headers.get('Cookie', '')
         elif path == '/bridge-library':
             body = "function remoteCategory() { return '远程分类'; }"
+        elif path == '/bridge-special':
+            body = '中文😀"\\\n\r\t\x00end'
         elif path == '/bridge-library-first':
             body = "var libraryOrder='first'; function Map(key){return key+'-value';}"
         elif path == '/bridge-library-second':
@@ -305,6 +307,8 @@ class Handler(BaseHTTPRequestHandler):
             status, body = 404, path
         self.send_response(status)
         self.send_header('Content-Type', mime)
+        if path == '/bridge-special':
+            self.send_header('X-Bridge-Fixture', 'quote"backslash\\end')
         data = body.encode('utf-8')
         self.send_header('Content-Length', str(len(data)))
         self.end_headers()

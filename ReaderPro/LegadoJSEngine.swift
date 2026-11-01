@@ -157,7 +157,14 @@ final class LegadoJS {
             let value = values.joined(separator: "\n")
             return isURL ? resolveUrl(value, base: baseUrl) : value
         }
-        let getElements: @convention(block) (String, String) -> [String] = { rule, text in applyRule(text, rule, base: baseUrl) }
+        func encodedStrings(_ values: [String]) -> String {
+            guard let data = try? JSONEncoder().encode(values), let json = String(data: data, encoding: .utf8) else {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: "脚本列表序列化失败", in: JSContext.current())
+                return "[]"
+            }
+            return json
+        }
+        let getElements: @convention(block) (String, String) -> String = { rule, text in encodedStrings(applyRule(text, rule, base: baseUrl)) }
         let getContent: @convention(block) () -> String = { content }
         let setContent: @convention(block) (String) -> Void = { content = $0 }
         java.setObject(getString, forKeyedSubscript: "_getString" as NSString)
@@ -173,15 +180,24 @@ final class LegadoJS {
         java.setObject(LegadoJS.strBlock, forKeyedSubscript: "str" as NSString)
         ctx.setObject(java, forKeyedSubscript: "java" as NSString)
 
-        let request: @convention(block) (String, String, String, String, Double, Bool) -> [String: Any] = { address, method, body, headersJSON, timeout, follow in
+        // Return one string over the Objective-C/JavaScriptCore callback
+        // boundary. Returning nested Swift dictionaries requires JavaScriptCore
+        // to recursively bridge transient containers while a script is active.
+        let request: @convention(block) (String, String, String, String, Double, Bool) -> String = { address, method, body, headersJSON, timeout, follow in
+            let result: [String: Any]
             do {
                 let headers = (urlContext?.headers ?? LegadoJSCtx.headers).merging(SourceHTTP.headers(headersJSON)) { _, value in value }
-                return try SourceJSBridge.request(address, base: baseUrl, headers: headers,
-                                                   method: method, body: body,
-                                                   timeout: timeout > 0 ? timeout / 1000 : 20, followRedirects: follow)
+                result = try SourceJSBridge.request(address, base: baseUrl, headers: headers,
+                                                    method: method, body: body,
+                                                    timeout: timeout > 0 ? timeout / 1000 : 20, followRedirects: follow)
             } catch {
-                return ["error": sourceErrorMessage(error)]
+                result = ["error": sourceErrorMessage(error)]
             }
+            guard let data = try? JSONSerialization.data(withJSONObject: result),
+                  let json = String(data: data, encoding: .utf8) else {
+                return #"{"error":"脚本网络响应序列化失败"}"#
+            }
+            return json
         }
         java.setObject(request, forKeyedSubscript: "_request" as NSString)
         let web: @convention(block) (String, String, String) -> String = { html, address, script in
@@ -194,7 +210,7 @@ final class LegadoJS {
             }
         }
         java.setObject(web, forKeyedSubscript: "_webView" as NSString)
-        let select: @convention(block) (String, String) -> [String] = { text, selector in LegadoDOM.css(text, selector).map(\.full) }
+        let select: @convention(block) (String, String) -> String = { text, selector in encodedStrings(LegadoDOM.css(text, selector).map(\.full)) }
         let attribute: @convention(block) (String, String) -> String = { text, name in
             LegadoDOM.css(text, "body > *").first.map { htmlAttrs($0.open)[name.lowercased()] ?? "" } ?? ""
         }
@@ -445,7 +461,7 @@ final class LegadoJS {
         return object;
     }
     java.getString = function(rule, content, isUrl) { return java._getString(String(rule), _text(content), !!isUrl); };
-    java.getStringList = function(rule, content) { return _array(java._getElements(String(rule), _text(content))); };
+    java.getStringList = function(rule, content) { return _array(JSON.parse(java._getElements(String(rule), _text(content)))); };
     function _typed(value) {
         if (typeof value !== 'string') return value;
         if (/^\s*</.test(value)) return _element(value);
@@ -453,7 +469,7 @@ final class LegadoJS {
         return value;
     }
     java.getElements = function(rule, content) {
-        var values=java._getElements(String(rule), _text(content)).map(_typed);
+        var values=JSON.parse(java._getElements(String(rule), _text(content))).map(_typed);
         if(values.length===1 && Array.isArray(values[0])) values=values[0];
         return values.every(function(value){return value && typeof value.outerHtml==='function';}) ? _elements(values) : _array(values);
     };
@@ -466,6 +482,7 @@ final class LegadoJS {
     };
     java.setContent = function(value) { java._setContent(_text(value)); };
     function _response(data) {
+        data = JSON.parse(data);
         if (data.error) throw new Error(data.error);
         return {
             body: function() {
@@ -517,7 +534,7 @@ final class LegadoJS {
             text:function(){return java._textOnly(html);},
             html:function(){return html.replace(/^<[^>]+>/,'').replace(/<\/[^>]+>$/,'');},
             attr:function(name){return java._attr(html, String(name));},
-            select:function(selector){return _elements(java._select(html, String(selector)));},
+            select:function(selector){return _elements(JSON.parse(java._select(html, String(selector))));},
             selectFirst:function(selector){return this.select(selector).first();},
             getElementsByTag:function(tag){return this.select(tag);},
             getElementsByClass:function(name){return this.select('.'+name);},
@@ -532,7 +549,7 @@ final class LegadoJS {
             attr:function(name){return this.length && typeof this[0].attr==='function' ? this[0].attr(name) : '';},
             html:function(){return this.map(function(e){return typeof e.html==='function' ? e.html() : String(e);}).join('\n');},
             outerHtml:function(){return this.map(String).join('\n');}, toString:function(){return this.outerHtml();},
-            select:function(selector){return _elements([].concat.apply([],this.map(function(e){return java._select(String(e),selector); })));}
+            select:function(selector){return _elements([].concat.apply([],this.map(function(e){return JSON.parse(java._select(String(e),selector)); })));}
         });
     }
     var org={jsoup:{Jsoup:{parse:function(html){return _element(String(html));}}}};
