@@ -53,8 +53,11 @@ struct ReaderBoundaryFixtureRoot: View {
             .overlay(alignment: .topLeading) {
                 if ProcessInfo.processInfo.arguments.contains("--reader-scroll-position-fixture") {
                     VStack {
-                        Text("\(visibleScrollOffset)").accessibilityIdentifier("readerVisibleScrollOffset")
-                        Text("\(store.books.first(where: { $0.id == bookID })?.charOffset ?? 0)")
+                        // SwiftUI formats interpolated integers for the current locale
+                        // (for example, 9,139). Expose stable decimal digits so the
+                        // UI tests can parse offsets above one thousand correctly.
+                        Text(verbatim: String(visibleScrollOffset)).accessibilityIdentifier("readerVisibleScrollOffset")
+                        Text(verbatim: String(store.books.first(where: { $0.id == bookID })?.charOffset ?? 0))
                             .accessibilityIdentifier("readerSavedScrollOffset")
                     }.font(.system(size: 1)).opacity(0.5).allowsHitTesting(false)
                 }

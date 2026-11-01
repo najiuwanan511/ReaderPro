@@ -2,7 +2,6 @@ import Foundation
 import Security
 import CryptoKit
 import Network
-import CFNetwork
 
 // Legado's `proxy` source-header entry controls the client, not an HTTP
 // request header. Store it in URLProtocol metadata so it can never leak to
@@ -109,11 +108,6 @@ enum SourceTLS {
         }
         func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            #if DEBUG || READERPRO_TESTING
-            if proxy != nil {
-                print("SOURCE_PROXY_CHALLENGE isProxy=\(challenge.protectionSpace.isProxy()) method=\(challenge.protectionSpace.authenticationMethod) attempt=\(challenge.previousFailureCount)")
-            }
-            #endif
             if allow, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
                let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
             else if let proxy, let username = proxy.username, let password = proxy.password,
@@ -142,14 +136,7 @@ enum SourceTLS {
             if proxy.kind == .http && scheme.lowercased() == "http" {
                 // On iOS 17 proxyConfigurations CONNECT works for HTTPS, but
                 // does not route plain HTTP. Use Apple's supported HTTP keys.
-                var settings: [AnyHashable: Any] = ["HTTPEnable": 1, "HTTPProxy": proxy.host, "HTTPPort": proxy.port]
-                // These public CFNetwork keys identify proxy credentials; do
-                // not attach Proxy-Authorization to the destination request.
-                if let username = proxy.username, let password = proxy.password {
-                    settings[kCFProxyUsernameKey as String] = username
-                    settings[kCFProxyPasswordKey as String] = password
-                }
-                configuration.connectionProxyDictionary = settings
+                configuration.connectionProxyDictionary = ["HTTPEnable": 1, "HTTPProxy": proxy.host, "HTTPPort": proxy.port]
             } else {
                 configuration.proxyConfigurations = [proxy.networkProxy]
             }
@@ -177,6 +164,12 @@ enum SourceTLS {
         // URLSession captures the request without contacting real proxies.
         if let test = SourceHTTP.testSession { return Lease(session: test, owned: false) }
         if let proxy {
+            // iOS does not authenticate plain-HTTP requests through the
+            // connectionProxyDictionary transport used here. Fail before
+            // networking instead of leaking credentials or bypassing proxy.
+            if proxy.kind == .http, proxy.username != nil, request.url?.scheme?.lowercased() == "http" {
+                throw SourceFailure(stage: "书源代理", message: "暂不支持需要认证的 HTTP 明文代理请求，请改用 HTTPS 书源地址或 SOCKS5 代理")
+            }
             return Lease(session: makeSession(allow: allowsInvalidCertificates, redirects: followRedirects,
                                               proxy: proxy, scheme: request.url?.scheme ?? ""), owned: true)
         }

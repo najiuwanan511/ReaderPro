@@ -173,12 +173,18 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         XCTAssertEqual(page.text, "https-proxy-routed")
     }
 
-    func testAuthenticatedProxyAndNoDirectFallback() async throws {
-        let target = "http://readerproxy.invalid/source-proxy-test"
+    func testAuthenticatedPlainHTTPProxyIsRejectedWithoutDirectFallback() async throws {
+        // This address is reachable directly: a request that escapes the
+        // configured proxy would succeed rather than raise our explicit error.
+        let target = "http://127.0.0.1:8765/health"
         let request = try SourceHTTP.request(target, base: target,
                                              headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
-        let page = try await SourceHTTP.load(request, stage: "认证代理测试")
-        XCTAssertEqual(page.text, "proxy-routed:readerproxy.invalid")
+        do {
+            _ = try await SourceHTTP.load(request, stage: "认证代理测试")
+            XCTFail("Unsupported authenticated HTTP proxy must not connect directly")
+        } catch {
+            XCTAssertTrue(sourceErrorMessage(error).contains("暂不支持需要认证的 HTTP 明文代理请求"), sourceErrorMessage(error))
+        }
     }
 
     func testAuthenticatedHTTPSProxyDoesNotLeakCredentials() async throws {
