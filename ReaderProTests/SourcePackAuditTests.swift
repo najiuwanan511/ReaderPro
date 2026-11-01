@@ -4,7 +4,12 @@ import XCTest
 private actor PackSearchAudit {
     var rows: [[String: String]] = []
     var active: [String: String] = [:]
-    let checkpoint = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("source-pack-search-audit-progress.json")
+    let checkpointName: String
+    let checkpoint: URL
+    init(checkpointName: String = "source-pack-search-audit-progress.json") {
+        self.checkpointName = checkpointName
+        checkpoint = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent(checkpointName)
+    }
     func start(_ source: LegadoSource) {
         active[source.id] = source.bookSourceName + " [" + source.bookSourceUrl + "]"
         print("SOURCE_AUDIT_START id=\(source.id) name=\(source.bookSourceName) url=\(source.bookSourceUrl)")
@@ -24,7 +29,7 @@ private actor PackSearchAudit {
         if rows.count % 100 == 0 { print("USER_PACK_AUDIT completed=\(rows.count)") }
         if rows.count % 25 == 0,
            let data = try? JSONSerialization.data(withJSONObject: ["completed": rows.count, "results": rows], options: [.sortedKeys]) {
-            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("source-pack-search-audit-progress.json"), options: .atomic)
+            try? data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent(checkpointName), options: .atomic)
         }
         saveCheckpoint()
     }
@@ -60,7 +65,9 @@ final class SourcePackAuditTests: XCTestCase {
         let previous = Dictionary(uniqueKeysWithValues: tlsSources.map { ($0.bookSourceUrl, SourceTLS.isAllowed($0.bookSourceUrl)) })
         for source in tlsSources { SourceTLS.setAllowed(true, for: source.bookSourceUrl) }
         defer { for (url, allowed) in previous { SourceTLS.setAllowed(allowed, for: url) } }
-        let compatibility = PackSearchAudit()
+        // Keep the strict and certificate-compatibility progress separate;
+        // previously the second pass overwrote the first pass's checkpoint.
+        let compatibility = PackSearchAudit(checkpointName: "source-pack-certificate-audit-progress.json")
         await streamSourceSearch(tlsSources, key: "斗罗大陆", concurrency: 24, timeout: 18) { await compatibility.add($0) }
         let legacyRows = await compatibility.rows
         let legacyByID = Dictionary(uniqueKeysWithValues: legacyRows.compactMap { row -> (String, [String: String])? in

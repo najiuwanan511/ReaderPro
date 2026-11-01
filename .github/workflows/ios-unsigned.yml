@@ -87,7 +87,7 @@ jobs:
           fi
           CONTAINER=$(xcrun simctl get_app_container "$READER_SIMULATOR_ID" com.selfuse.readerpro data 2>/dev/null || true)
           if [ -n "$CONTAINER" ]; then
-            for REPORT in source-pack-search-audit.json source-pack-search-audit-progress.json; do
+            for REPORT in source-pack-search-audit.json source-pack-search-audit-progress.json source-pack-certificate-audit-progress.json; do
               if [ -f "$CONTAINER/tmp/$REPORT" ]; then cp "$CONTAINER/tmp/$REPORT" "build/$REPORT"; fi
               if [ -f "$CONTAINER/Documents/$REPORT" ]; then cp "$CONTAINER/Documents/$REPORT" "build/$REPORT"; fi
             done
@@ -106,6 +106,7 @@ jobs:
             build/source-pack-audit.json
             build/source-pack-search-audit.json
             build/source-pack-search-audit-progress.json
+            build/source-pack-certificate-audit-progress.json
             build/UserPackAudit.xcresult
             build/source-audit.log
             build/audit-attachments
