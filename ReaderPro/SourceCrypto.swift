@@ -278,6 +278,11 @@ enum SourceCrypto {
             };
         };
         java.aesBase64DecodeToString = function(data,key,algorithm,iv){return java._crypt(java.base64DecodeToByteArray(data),algorithm || 'AES/ECB/PKCS5Padding',key,iv,true,'string');};
+        // Legado's legacy four-string helper uses UTF-8 data/key/IV and
+        // returns the encrypted bytes as unwrapped Base64.
+        java.aesEncodeToBase64String = function(data,key,transformation,iv){
+            return java._crypt(String(data),String(transformation),String(key),iv == null ? null : String(iv),false,'base64');
+        };
         java.desEncodeToBase64String = function(data,key,algorithm,iv){return java._crypt(data,algorithm || 'DES/ECB/PKCS5Padding',key,iv,false,'base64');};
         java.base64Decoder = java.base64DecodeToByteArray;
         java.HMacHex=function(text,algorithm,key){return java._hmac(String(text),String(algorithm),String(key),false);};

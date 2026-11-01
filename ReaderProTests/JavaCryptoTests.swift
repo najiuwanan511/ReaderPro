@@ -13,6 +13,27 @@ final class JavaCryptoTests: XCTestCase {
         }
     }
 
+    func testLegacyAesEncodeToBase64String() throws {
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            // Independent AES-128 vectors from .NET Aes/PKCS7; PKCS5 and
+            // PKCS7 use the same padding for AES's 16-byte block size.
+            let output = LegadoJS.run(#"""
+            var data='hello 世界', key='0123456789abcdef', iv='abcdef9876543210';
+            if(java.aesEncodeToBase64String(data,key,'AES/CBC/PKCS5Padding',iv)!=='H9vUwTZFna//FB4KdLqc0w==') throw Error('CBC UTF-8 vector');
+            if(java.aesEncodeToBase64String(data,key,'AES/ECB/PKCS5Padding','')!=='OkfUWPjtVNZKznyyEC+03g==') throw Error('ECB vector');
+            var badKey=false, badIV=false, badPadding=false;
+            try { java.aesEncodeToBase64String(data,'short','AES/CBC/PKCS5Padding',iv); } catch(e) { badKey=true; }
+            try { java.aesEncodeToBase64String(data,key,'AES/CBC/PKCS5Padding','short'); } catch(e) { badIV=true; }
+            try { java.aesEncodeToBase64String(data,key,'AES/CBC/unsupported',iv); } catch(e) { badPadding=true; }
+            if(!badKey || !badIV || !badPadding) throw Error('invalid AES parameters must fail');
+            'ok';
+            """#, input: "", baseUrl: "https://example.test", sourceKey: "", sourceUrl: "https://example.test")
+            try failures.check()
+            XCTAssertEqual(output, "ok")
+        }
+    }
+
     func testJavaImporterAESDESHMACAndBinaryCodecs() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {
