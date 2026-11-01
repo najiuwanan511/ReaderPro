@@ -87,6 +87,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = '<main><ul class="books"><li><div><a class="name" href="/book/1/">测试小说</a><em>测试作者</em></div></li></ul></main>'
                 if path.startswith('/library'):
                     body = body.replace('/book/1/', '../../book/1/')
+        elif path == '/library/categories/alternate':
+            if self.headers.get('X-Fixture') != 'ReaderPro':
+                status, body = 403, 'missing source header'
+            else:
+                body = '<main><ul class="books"><li><div><a class="name" href="/book/1/">另一本小说</a><em>测试作者</em></div></li></ul></main>'
         elif path == '/book/1/':
             body = '<h1>测试小说</h1><div id="intro">用于回归测试的原创样本文字</div><a class="toc" href="toc/1">查看目录</a>'
         elif path.startswith('/book/1/toc/'):

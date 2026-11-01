@@ -11,7 +11,7 @@ jobs:
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare iOS 17 simulator and fixtures
+      - name: Prepare iOS 17.0 simulator and fixtures
         run: |
           sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
           xcodebuild -version
@@ -25,11 +25,11 @@ jobs:
             sleep 1
           done
           curl --fail --silent http://127.0.0.1:8765/health
-          if ! xcrun simctl list runtimes available | grep -q 'iOS 17.5'; then
-            xcodebuild -downloadPlatform iOS -buildVersion 17.5
+          if ! xcrun simctl list runtimes available | grep -q 'iOS 17.0'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.0
           fi
           xcrun simctl list runtimes available
-          DEVICE=$(xcrun simctl create ReaderPro-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-5)
+          DEVICE=$(xcrun simctl create ReaderPro-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-0)
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE"
           xcrun simctl bootstatus "$DEVICE" -b

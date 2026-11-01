@@ -96,7 +96,9 @@ struct SourceExploreCard: View {
                     Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
                         .rotationEffect(.degrees(expanded ? 90 : 0)).foregroundStyle(.secondary)
                 }.padding(.horizontal, 16).frame(minHeight: 48).contentShape(Rectangle())
-            }.buttonStyle(.plain).accessibilityValue(expanded ? "已展开" : "已折叠")
+            }.buttonStyle(.plain)
+                .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
+                .accessibilityValue(expanded ? "已展开" : "已折叠")
             if expanded {
                 if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }
                 else if categories.isEmpty {
@@ -108,13 +110,16 @@ struct SourceExploreCard: View {
                 }
                 else {
                     CategoryFlow {
-                        ForEach(categories) { category in
-                            Button { onTapCategory(category) } label: {
-                                Text(category.title).font(.system(size: 13)).lineLimit(1)
+                        // Some real source packs contain repeated title+URL
+                        // pairs. Category IDs are therefore not unique: use
+                        // each row's position while preserving every entry.
+                        ForEach(Array(categories.enumerated()), id: \.offset) { entry in
+                            Button { onTapCategory(entry.element) } label: {
+                                Text(entry.element.title).font(.system(size: 13)).lineLimit(1)
                                     .padding(.horizontal, 12).padding(.vertical, 8)
                                     .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 4))
                                     .foregroundStyle(.primary)
-                            }.buttonStyle(.plain)
+                            }.buttonStyle(.plain).accessibilityIdentifier("explore-category-\(entry.offset)")
                         }
                     }.padding(.horizontal, 16).padding(.bottom, 12)
                 }

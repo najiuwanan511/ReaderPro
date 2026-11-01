@@ -65,6 +65,23 @@ final class SourceFlowUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "分类到目录直接阅读"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
+    func testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--duplicate-category-fixture"]
+        app.launch()
+        app.tabBars.buttons["发现"].tap()
+        app.buttons["回归测试书源"].tap()
+        for index in 0..<3 {
+            let category = app.buttons["explore-category-\(index)"]
+            XCTAssertTrue(category.waitForExistence(timeout: 15), "Duplicate category \(index) must stay visible")
+            category.tap()
+            let expected = index < 2 ? "测试小说" : "另一本小说"
+            XCTAssertTrue(app.staticTexts[expected].waitForExistence(timeout: 15), "Category \(index) must navigate to its own URL")
+            app.navigationBars.buttons.element(boundBy: 0).tap()
+        }
+    }
+
     func testSearchOpensDirectory() {
         let app = launch()
         app.tabBars.buttons["搜索"].tap()
@@ -153,5 +170,91 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertEqual(app.state, .runningForeground)
         cancel.tap()
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已停止")).firstMatch.waitForExistence(timeout: 10))
+    }
+
+    func testDiscoveryOpensStaticAndScriptCategoriesFromRealUserPack() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--user-pack-ui-fixture"]
+        app.launch()
+        app.tabBars.buttons["发现"].tap()
+
+        let first = app.buttons["source-explore-https://m.cuoceng.org/"]
+        XCTAssertTrue(first.waitForExistence(timeout: 50), "The real user pack must load its first discovery source")
+        first.tap()
+        let fiction = app.buttons.matching(NSPredicate(format: "label == %@", "玄幻")).firstMatch
+        XCTAssertTrue(fiction.waitForExistence(timeout: 20), "A real static category must render without terminating")
+        XCTAssertEqual(app.state, .runningForeground)
+        first.tap()
+
+        let scripted = app.buttons["source-explore-https://www.huangjinwu.org/"]
+        XCTAssertTrue(scripted.waitForExistence(timeout: 15))
+        scripted.tap()
+        let ranking = app.buttons.matching(NSPredicate(format: "label == %@", "总点击")).firstMatch
+        XCTAssertTrue(ranking.waitForExistence(timeout: 30), "A real JavaScript category must render without terminating")
+        XCTAssertEqual(app.state, .runningForeground)
+        scripted.tap()
+
+        // This source has no header/jsLib and its category is static JSON;
+        // displaying it exercises the SwiftUI path without web or JS work.
+        let staticOnly = app.buttons["source-explore-https://www.gulongwang.com"]
+        for _ in 0..<8 {
+            if staticOnly.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(staticOnly.waitForExistence(timeout: 15))
+        staticOnly.tap()
+        let classic = app.buttons.matching(NSPredicate(format: "label == %@", "古龙全集")).firstMatch
+        XCTAssertTrue(classic.waitForExistence(timeout: 20), "A static category without scripts or a network request must render")
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    func testPersistedRealPackThroughProductionRootSearchAndDiscovery() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--seed-persistent-user-pack"]
+        app.launch()
+        // Restore the prior app files and settings even when an assertion fails
+        // or the production-root application terminates during this test.
+        addTeardownBlock {
+            if app.state != .notRunning { app.terminate() }
+            app.launchArguments = ["--source-ui-fixture", "--restore-persistent-fixture"]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["持久化测试数据已恢复"].waitForExistence(timeout: 30))
+            app.terminate()
+        }
+        XCTAssertTrue(app.staticTexts["持久化书源准备完成"].waitForExistence(timeout: 60), "All 1466 sources must be saved and read back first")
+        app.terminate()
+
+        // No fixture argument: the app initializes the actual ContentView,
+        // BookStore and bookshelf navigation from the saved files.
+        app.launchArguments = []
+        app.launch()
+        let searchEntry = app.buttons["搜索书籍"]
+        XCTAssertTrue(searchEntry.waitForExistence(timeout: 25))
+        searchEntry.tap()
+        let sourceCount = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "个已导入")).firstMatch
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            sourceCount.exists && sourceCount.label.replacingOccurrences(of: ",", with: "").contains("1466")
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 45), .completed)
+        let search = app.textFields["bookSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("斗罗大陆")
+        app.buttons["submitBookSearch"].tap()
+        let cancel = app.buttons["cancelBookSearch"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 12)
+        XCTAssertEqual(app.state, .runningForeground)
+        cancel.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已停止")).firstMatch.waitForExistence(timeout: 10))
+        app.navigationBars.buttons.element(boundBy: 0).tap()
+
+        app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["source-explore-https://m.cuoceng.org/"]
+        XCTAssertTrue(source.waitForExistence(timeout: 30))
+        source.tap()
+        let fiction = app.buttons.matching(NSPredicate(format: "label == %@", "玄幻")).firstMatch
+        XCTAssertTrue(fiction.waitForExistence(timeout: 20), "The persisted original source must expand its static categories")
+        XCTAssertEqual(app.state, .runningForeground)
     }
 }
