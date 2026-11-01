@@ -21,6 +21,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var jsLib: String = ""
     var loginUrl: String = ""
     var bookSourceComment: String = ""
+    var variableComment: String? = nil
     var enabledExplore: Bool = true
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
@@ -77,7 +78,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment
+        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment, variableComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -92,6 +93,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
         loginUrl = c.tolerantString(.loginUrl)
         bookSourceComment = c.tolerantString(.bookSourceComment)
+        variableComment = try? c.decodeIfPresent(String.self, forKey: .variableComment)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
         ruleBookInfo = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleBookInfo)) ?? RuleSet()
         ruleToc = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleToc)) ?? RuleSet()
@@ -108,6 +110,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
         try c.encode(loginUrl, forKey: .loginUrl)
         try c.encode(bookSourceComment, forKey: .bookSourceComment)
+        try c.encodeIfPresent(variableComment, forKey: .variableComment)
         try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
         try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
     }

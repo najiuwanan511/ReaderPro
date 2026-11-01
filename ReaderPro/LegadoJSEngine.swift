@@ -280,6 +280,7 @@ final class LegadoJS {
         // search/info/category rules. Apply the same token-aware Java string
         // adaptation as jsLib; the persisted source comment remains original.
         source.setObject(SourceScript.adaptingJavaCalls(LegadoJSCtx.comment), forKeyedSubscript: "bookSourceComment" as NSString)
+        source.setObject(LegadoJSCtx.variableComment as Any? ?? NSNull(), forKeyedSubscript: "variableComment" as NSString)
         source.setObject(LegadoJSCtx.loginURL, forKeyedSubscript: "loginUrl" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)

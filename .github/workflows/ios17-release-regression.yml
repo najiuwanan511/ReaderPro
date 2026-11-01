@@ -47,6 +47,7 @@ jobs:
             -only-testing:ReaderProTests/JSConcurrencyStressTests \
             -only-testing:ReaderProTests/JSBridgeStressTests \
             -only-testing:ReaderProTests/JSImportAndResponseTests \
+            -only-testing:ReaderProTests/SourceVariableCommentTests \
             -only-testing:ReaderProTests/RssSourceTests \
             -only-testing:ReaderProTests/ContentPaginationRuleTests \
             -only-testing:ReaderProTests/SourceURLCompatibilityTests \
