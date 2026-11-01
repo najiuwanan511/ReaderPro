@@ -144,7 +144,13 @@ struct BookshelfView: View {
                             }.padding().background(Color.gray.opacity(0.12)).cornerRadius(12)
                         }.buttonStyle(.plain).accessibilityIdentifier("shelfSearchSources")
                         if shelfSearch.searching {
-                            HStack { ProgressView("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)"); Spacer(); Button("停止") { shelfSearch.cancel() } }
+                            HStack {
+                                ProgressView("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)")
+                                Spacer()
+                                Button { shelfSearch.cancel() } label: {
+                                    Text("停止").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                                }
+                            }
                         }
                         if !shelfSearch.keyword.isEmpty {
                             Text("源搜索结果 \(shelfSearch.results.count) 本 · “\(shelfSearch.keyword)” · \(shelfSearch.searching ? "搜索中" : (shelfSearch.cancelled ? "已停止" : "已完成"))")
@@ -417,7 +423,9 @@ struct SourceView: View {
                 HStack {
                     ProgressView("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.results.count) 本")
                     Spacer()
-                    Button("停止") { searchState.cancel() }.accessibilityIdentifier("cancelBookSearch")
+                    Button { searchState.cancel() } label: {
+                        Text("停止").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }.accessibilityIdentifier("cancelBookSearch")
                 }.padding(.horizontal).font(.caption)
             } else if !searchState.keyword.isEmpty {
                 Text("\(searchState.cancelled ? "已停止" : "搜索完成") · 已搜索 \(searchState.completed)/\(searchState.total) · 找到 \(searchState.results.count) 本")

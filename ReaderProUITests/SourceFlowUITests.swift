@@ -188,6 +188,8 @@ final class SourceFlowUITests: XCTestCase {
         app.buttons["submitBookSearch"].tap()
         let cancel = app.buttons["cancelBookSearch"]
         XCTAssertTrue(cancel.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(cancel.frame.width, 44, "停止按钮需要足够的触摸宽度")
+        XCTAssertGreaterThanOrEqual(cancel.frame.height, 44, "停止按钮需要足够的触摸高度")
         Thread.sleep(forTimeInterval: 12) // Keep the actual multi-source workers and result view active.
         XCTAssertEqual(app.state, .runningForeground)
         cancel.tap()
