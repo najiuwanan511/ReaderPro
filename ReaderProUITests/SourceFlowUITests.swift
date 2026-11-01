@@ -112,7 +112,7 @@ final class SourceFlowUITests: XCTestCase {
         app.buttons["submitBookSearch"].tap()
         let completed = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "搜索完成")).firstMatch
         XCTAssertTrue(completed.waitForExistence(timeout: 120), "All 16 sources must finish without terminating the app")
-        XCTAssertTrue(completed.label.contains("6400"), completed.label)
+        XCTAssertTrue(completed.label.replacingOccurrences(of: ",", with: "").contains("6400"), completed.label)
         let book = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "批量书籍")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap()
         XCTAssertTrue(app.staticTexts["目录 · 1 章"].waitForExistence(timeout: 20))
@@ -124,8 +124,11 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(shelfSearch.waitForExistence(timeout: 10)); shelfSearch.tap(); shelfSearch.typeText("stress")
         let submit = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "在书源中搜")).firstMatch
         XCTAssertTrue(submit.waitForExistence(timeout: 10)); submit.tap()
-        let results = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "源搜索结果 6400 本")).firstMatch
-        XCTAssertTrue(results.waitForExistence(timeout: 120), "Bookshelf must render the large result set without terminating")
+        let results = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "源搜索结果")).firstMatch
+        let fullResults = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            results.exists && results.label.replacingOccurrences(of: ",", with: "").contains("6400")
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [fullResults], timeout: 120), .completed, "Bookshelf must render the large result set without terminating")
         app.swipeUp()
         XCTAssertEqual(app.state, .runningForeground)
     }
@@ -136,7 +139,11 @@ final class SourceFlowUITests: XCTestCase {
         app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--user-pack-ui-fixture"]
         app.launch()
         app.tabBars.buttons["搜索"].tap()
-        XCTAssertTrue(app.staticTexts["1466 个已导入"].waitForExistence(timeout: 40))
+        let sourceCount = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "个已导入")).firstMatch
+        let loaded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            sourceCount.exists && sourceCount.label.replacingOccurrences(of: ",", with: "").contains("1466")
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [loaded], timeout: 40), .completed)
         let search = app.textFields["bookSearch"]
         XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("test")
         app.buttons["submitBookSearch"].tap()

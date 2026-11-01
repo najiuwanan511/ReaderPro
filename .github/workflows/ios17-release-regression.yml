@@ -44,7 +44,7 @@ jobs:
             -maximum-test-execution-time-allowance 300 \
             -resultBundlePath build/ReleaseRegression.xcresult \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/release-regression.log
+            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/release-regression.log
       - name: Preserve test results and crash reports
         if: always()
         run: |
