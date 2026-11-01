@@ -1,4 +1,5 @@
 import XCTest
+import CryptoKit
 @testable import ReaderPro
 
 private final class HeaderResponseProtocol: URLProtocol {
@@ -100,6 +101,43 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         XCTAssertEqual(values["all"] as? String, target)
     }
 
+    #if DEBUG || READERPRO_TESTING
+    func testLoginHeaderFallbackWhenKeychainEntitlementIsMissing() throws {
+        let source = "https://fallback-\(UUID().uuidString).example"
+        let other = "https://other-\(UUID().uuidString).example"
+        let account = SHA256.hash(data: Data(source.utf8)).map { String(format: "%02x", $0) }.joined()
+        let root = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+        let folder = root.appendingPathComponent("SourceLoginHeaders", isDirectory: true)
+        let stored = folder.appendingPathComponent(account)
+        defer { try? SourceLoginHeaders.testPurgeFallback(source) }
+        try SourceLoginHeaders.$testForceMissingEntitlement.withValue(true) {
+            try SourceLoginHeaders.put(#"{"Authorization":"fixture-secret"}"#, source: source)
+            XCTAssertEqual(SourceLoginHeaders.map(source)?["Authorization"], "fixture-secret")
+            XCTAssertNil(SourceLoginHeaders.get(other))
+            XCTAssertTrue(FileManager.default.fileExists(atPath: stored.path))
+            let permissions = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: stored.path)[.posixPermissions] as? Int)
+            XCTAssertEqual(permissions & 0o077, 0, "Fallback file must not be accessible to other users")
+            try SourceLoginHeaders.put(#"{"Authorization":"updated"}"#, source: source)
+            XCTAssertEqual(SourceLoginHeaders.map(source)?["Authorization"], "updated")
+        }
+        // A new context must read the protected fallback even if Keychain
+        // later becomes available again.
+        XCTAssertEqual(SourceLoginHeaders.map(source)?["Authorization"], "updated")
+        try SourceLoginHeaders.$testForceMissingEntitlement.withValue(true) { try SourceLoginHeaders.remove(source) }
+        XCTAssertNil(SourceLoginHeaders.get(source))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: stored.path))
+        SourceLoginHeaders.$testKeychainReadValue.withValue(#"{"Authorization":"old-keychain-token"}"#) {
+            XCTAssertNil(SourceLoginHeaders.get(source), "Deleting without entitlement must suppress stale Keychain values after access returns")
+        }
+        try SourceLoginHeaders.$testForceMissingEntitlement.withValue(true) {
+            try SourceLoginHeaders.put(#"{"Authorization":"new-token"}"#, source: source)
+        }
+        SourceLoginHeaders.$testKeychainReadValue.withValue(#"{"Authorization":"old-keychain-token"}"#) {
+            XCTAssertEqual(SourceLoginHeaders.map(source)?["Authorization"], "new-token", "A new login must replace the deletion marker")
+        }
+    }
+    #endif
+
     func testSourceLoginHeaderPersistenceIsolationAndImmediateAjax() async throws {
         let base = "http://127.0.0.1:8765"
         let identity = base + "/login-" + UUID().uuidString
@@ -107,6 +145,10 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         defer {
             try? SourceLoginHeaders.remove(identity)
             try? SourceLoginHeaders.remove(otherIdentity)
+            #if DEBUG || READERPRO_TESTING
+            try? SourceLoginHeaders.testPurgeFallback(identity)
+            try? SourceLoginHeaders.testPurgeFallback(otherIdentity)
+            #endif
             if let url = URL(string: identity) {
                 for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] where cookie.name == "fixturelogin" {
                     HTTPCookieStorage.shared.deleteCookie(cookie)

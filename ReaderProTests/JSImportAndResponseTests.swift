@@ -2,6 +2,22 @@ import Foundation
 import XCTest
 @testable import ReaderPro
 
+private final class ImportVersionProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var requests = 0
+    static func reset() { lock.lock(); requests = 0; lock.unlock() }
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "import-version.test" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock(); Self.requests += 1; let version = Self.requests; Self.lock.unlock()
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "text/plain; charset=utf-8"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data("script-version-\(version)".utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 final class JSImportAndResponseTests: XCTestCase {
     func testRemoteImportReturnsEvaluableSourceAndReportsHTTPFailure() async {
         let result = await Task.detached { () -> (String, String) in
@@ -21,6 +37,35 @@ final class JSImportAndResponseTests: XCTestCase {
         }.value
         XCTAssertEqual(result.1, "")
         XCTAssertEqual(result.0, "ok")
+    }
+
+    func testDeletingAndroidScriptCacheKeyRefreshesImport() async {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [ImportVersionProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        ImportVersionProtocol.reset()
+        SourceJSBridge.invalidateImportedScripts()
+        let source = "https://import-version.test/source-\(UUID().uuidString)"
+        let outcome = await Task.detached { () -> (String, String) in
+            let failures = RuleFailures()
+            let output = SourceHTTP.$testSession.withValue(session) {
+                LegadoJSCtx.$sourceUrl.withValue(source) {
+                    LegadoJSCtx.$failures.withValue(failures) {
+                        LegadoJS.run(#"""
+                        var u='https://import-version.test/library.js';
+                        var first=java.importScript(u), cached=java.importScript(u);
+                        cache.delete(java.md5Encode16(u));
+                        var refreshed=java.importScript(u);
+                        first+'|'+cached+'|'+refreshed;
+                        """#, input: "", baseUrl: source, sourceKey: "", sourceUrl: source)
+                    }
+                }
+            }
+            do { try failures.check(); return (output, "") } catch { return (output, sourceErrorMessage(error)) }
+        }.value
+        XCTAssertEqual(outcome.1, "")
+        XCTAssertEqual(outcome.0, "script-version-1|script-version-1|script-version-2")
     }
 
     func testLocalImportUsesAppDocumentsAndRejectsEscape() throws {
@@ -54,6 +99,27 @@ final class JSImportAndResponseTests: XCTestCase {
         }
         XCTAssertNoThrow(try failures.check())
         XCTAssertEqual(result, "A&B中\"")
+    }
+
+    func testCacheMissingExpiredDeletedValuesAreNull() {
+        let failures = RuleFailures()
+        let source = "https://cache-test-\(UUID().uuidString).invalid"
+        let result = LegadoJSCtx.$sourceUrl.withValue(source) {
+            LegadoJSCtx.$failures.withValue(failures) {
+                LegadoJS.run(#"""
+                var absent = cache.get('missing') === null && JSON.parse(cache.get('missing')) === null &&
+                    JSON.parse(cache.get(java.md5Encode16('https://godamh.com' + 'headers'))) === null;
+                cache.put('saved','hello',0);
+                var saved = cache.get('saved') === 'hello';
+                cache.put('expired','value',-1);
+                var expired = cache.get('expired') === null;
+                cache.delete('saved');
+                absent && saved && expired && cache.get('saved') === null ? 'ok' : 'failed';
+                """#, input: "", baseUrl: source, sourceKey: "", sourceUrl: source)
+            }
+        }
+        XCTAssertNoThrow(try failures.check())
+        XCTAssertEqual(result, "ok")
     }
 
     func testRawResponseHeadersUsesCaseInsensitiveList() async {

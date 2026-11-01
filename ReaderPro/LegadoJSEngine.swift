@@ -138,6 +138,8 @@ final class LegadoJS {
         java.setObject(LegadoJS.md5Block, forKeyedSubscript: "md5Encode" as NSString)
         java.setObject(LegadoJS.md5_16Block, forKeyedSubscript: "md5Encode16" as NSString)
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
+        java.setObject(LegadoJS.traditionalToSimplifiedBlock, forKeyedSubscript: "t2s" as NSString)
+        java.setObject(LegadoJS.simplifiedToTraditionalBlock, forKeyedSubscript: "s2t" as NSString)
         if let urlContext {
             java.setObject(urlContext.url, forKeyedSubscript: "url" as NSString)
             let map = JSValue(newObjectIn: ctx)!
@@ -211,6 +213,8 @@ final class LegadoJS {
             }
         }
         java.setObject(importScript, forKeyedSubscript: "importScript" as NSString)
+        let invalidateImportedScripts: @convention(block) () -> Void = { SourceJSBridge.invalidateImportedScripts() }
+        java.setObject(invalidateImportedScripts, forKeyedSubscript: "_invalidateImportedScripts" as NSString)
         let web: @convention(block) (String, String, String) -> String = { html, address, script in
             do {
                 let request = try SourceHTTP.request(address.isEmpty ? baseUrl : address, base: baseUrl, headers: LegadoJSCtx.headers)
@@ -491,6 +495,16 @@ final class LegadoJS {
 
     // MARK: 工具 block（静态，避免每次 run 重复创建）
 
+    // Foundation uses ICU's character conversion. Legado uses a different
+    // dictionary with explicit phrase exclusions, so regional phrase choices
+    // are not guaranteed to be identical even when individual characters are.
+    static let traditionalToSimplifiedBlock: @convention(block) (String) -> String = { text in
+        text.applyingTransform(.traditionalToSimplified, reverse: false) ?? text
+    }
+    static let simplifiedToTraditionalBlock: @convention(block) (String) -> String = { text in
+        text.applyingTransform(.traditionalToSimplified, reverse: true) ?? text
+    }
+
     private static let compatibilityScript = #"""
     function _text(value) {
         if (value == null) return java._content();
@@ -619,8 +633,11 @@ final class LegadoJS {
     java.clearCookie = cookie.removeCookie;
     var cache = {
         put: function(key, value, seconds) { return source.put('cache:'+key, JSON.stringify({value:String(value),until:seconds ? Date.now()+seconds*1000 : 0})); },
-        get: function(key) { try { var item=JSON.parse(source.get('cache:'+key)); return item.until && item.until<Date.now() ? '' : item.value; } catch(e) { return ''; } },
-        delete: function(key) { source.put('cache:'+key,''); }
+        // Legado CacheManager.get returns null for a missing or expired key.
+        // Several real comic sources pass that value directly to JSON.parse:
+        // JSON.parse(null) is valid, whereas JSON.parse('') throws.
+        get: function(key) { try { var item=JSON.parse(source.get('cache:'+key)); return item.until && item.until<=Date.now() ? null : item.value; } catch(e) { return null; } },
+        delete: function(key) { source.put('cache:'+key,''); java._invalidateImportedScripts(); }
     };
     """#
 

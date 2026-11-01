@@ -9,6 +9,18 @@ enum SourceJSBridge {
         cache.totalCostLimit = 8 * 1024 * 1024
         return cache
     }()
+    private static let importCacheLock = NSLock()
+    private static var importCacheGeneration: UInt64 = 0
+
+    // Legado stores downloaded scripts under md5Encode16(url), so a source
+    // can remove that cache key after detecting a changed ETag. Evicting the
+    // bounded in-memory cache on any explicit deletion is conservative and
+    // avoids keeping a separate unbounded reverse index of script URLs.
+    static func invalidateImportedScripts() {
+        importCacheLock.lock(); defer { importCacheLock.unlock() }
+        importCacheGeneration &+= 1
+        importedScripts.removeAllObjects()
+    }
 
     // Android's importScript returns source text, rather than evaluating it.
     // Cache downloaded libraries for this process and resolve local relative
@@ -26,7 +38,12 @@ enum SourceJSBridge {
                 return (HTTPCookieStorage.shared.cookies(for: url) ?? []).isEmpty
             }
             let key = ((source.isEmpty ? base : source) + "\n" + value) as NSString
-            if cacheable(), let cached = importedScripts.object(forKey: key) { return cached as String }
+            let eligible = cacheable()
+            importCacheLock.lock()
+            let generation = importCacheGeneration
+            let cached = eligible ? importedScripts.object(forKey: key) : nil
+            importCacheLock.unlock()
+            if let cached { return cached as String }
             let response = try request(value, base: base, headers: headers)
             let status = response["status"] as? Int ?? 0
             guard (200..<300).contains(status) else {
@@ -36,7 +53,15 @@ enum SourceJSBridge {
             guard !script.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw SourceFailure(stage: "导入脚本", message: "脚本内容为空", url: value)
             }
-            if cacheable() { importedScripts.setObject(script as NSString, forKey: key, cost: script.utf8.count) }
+            if eligible && cacheable() {
+                importCacheLock.lock()
+                // A cache.delete while the request was in flight must not
+                // repopulate the cache with the just-invalidated response.
+                if generation == importCacheGeneration {
+                    importedScripts.setObject(script as NSString, forKey: key, cost: script.utf8.count)
+                }
+                importCacheLock.unlock()
+            }
             return script
         }
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath().standardizedFileURL

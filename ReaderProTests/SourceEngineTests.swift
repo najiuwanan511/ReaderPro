@@ -440,6 +440,15 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertNotNil(first.range(of: "^[0-9a-f]{16}$", options: .regularExpression))
     }
 
+    func testScriptChineseConversionSupportsSourceHTMLAndBothDirections() {
+        let html = "<ul><li class='chapter'>第一章 繁體書籍</li></ul>"
+        let rule = "<js>java.t2s(result)</js>\nclass.chapter@text"
+        XCTAssertEqual(applyRule(html, rule, base: base), ["第一章 繁体书籍"])
+        XCTAssertEqual(LegadoJS.run("java.t2s('繁體書籍😀')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "繁体书籍😀")
+        XCTAssertEqual(LegadoJS.run("java.s2t('简体书籍😀')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "簡體書籍😀")
+        XCTAssertEqual(LegadoJS.run("java.t2s('') + java.s2t('')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "")
+    }
+
     func testURLScriptsCanSetVariablesBeforeALiteralURL() throws {
         let raw = "<js>java.put('test17k','value')</js>\nhttps://h5.17k.com/ck/search/list?keyword={{key}}"
         XCTAssertEqual(LegadoSource.fillSearchTemplate(raw, key: "测试", page: 1, sourceUrl: base), "https://h5.17k.com/ck/search/list?keyword=%E6%B5%8B%E8%AF%95")
