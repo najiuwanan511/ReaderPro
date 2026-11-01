@@ -300,23 +300,31 @@ struct CurlPageController: UIViewControllerRepresentable {
     let pageSize: CGSize
     let background: UIColor
     var startIndex: Int
+    var animatedCurl: Bool = true
     var hasPreviousChapter: Bool
     var hasNextChapter: Bool
     var onPageChange: (Int) -> Void
     var onChapterBoundary: (Bool) -> Void
+    var onEdgeTap: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeUIViewController(context: Context) -> UIPageViewController {
         let vc = UIPageViewController(
-            transitionStyle: .pageCurl,
+            transitionStyle: animatedCurl ? .pageCurl : .scroll,
             navigationOrientation: .horizontal,
-            options: [UIPageViewController.OptionsKey.spineLocation: 0]
+            options: animatedCurl ? [UIPageViewController.OptionsKey.spineLocation: 0] : nil
         )
         vc.dataSource = context.coordinator
         vc.delegate = context.coordinator
         vc.view.backgroundColor = background
         vc.isDoubleSided = false
+        if !animatedCurl {
+            let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.edgeTapped(_:)))
+            tap.cancelsTouchesInView = false
+            tap.delegate = context.coordinator
+            vc.view.addGestureRecognizer(tap)
+        }
         if let start = context.coordinator.pageVC(for: startIndex) {
             vc.setViewControllers([start], direction: .forward, animated: false)
         }
@@ -327,10 +335,20 @@ struct CurlPageController: UIViewControllerRepresentable {
         context.coordinator.update(vc, parent: self)
     }
 
-    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+    final class Coordinator: NSObject, UIPageViewControllerDataSource, UIPageViewControllerDelegate, UIGestureRecognizerDelegate {
         var parent: CurlPageController
         var lastPages: [NSRange] = []
         init(_ p: CurlPageController) { parent = p }
+
+        @objc func edgeTapped(_ tap: UITapGestureRecognizer) {
+            guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
+            let fraction = tap.location(in: view).x / view.bounds.width
+            if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
+            else if fraction > 2.0 / 3.0 { parent.onEdgeTap(true) }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
 
         func pageVC(for index: Int) -> PageHostController? {
             let sub: NSAttributedString

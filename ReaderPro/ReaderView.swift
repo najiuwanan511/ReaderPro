@@ -158,6 +158,7 @@ struct ReaderView: View {
             }
             .onChange(of: layoutSignature(size)) { _, _ in
                 rebuild(size: size, keepOffset: currentCharOffset())
+                if store.pageTurn == 1 || store.pageTurn == 4 { jumpToken += 1 }
             }
         }
         .background(Color(uiColor: theme.background).ignoresSafeArea())
@@ -210,14 +211,10 @@ struct ReaderView: View {
     // 平移（TabView .page）
     @ViewBuilder
     func pagedReader(size: CGSize) -> some View {
-        TabView(selection: $pageIndex) {
-            ForEach(pages.indices, id: \.self) { i in
-                pageView(i: i, size: size).tag(i)
-            }
-        }
-        .tabViewStyle(.page(indexDisplayMode: .never))
-        .onChange(of: pageIndex) { _, v in saveProgress(page: v) }
-        .simultaneousGesture(boundarySwipe(width: size.width))
+        // A TabView's underlying scroll view consumes edge swipes on iOS 17,
+        // so a simultaneous SwiftUI gesture cannot reliably turn the chapter.
+        // Use real neighboring boundary controllers, as in the curl reader.
+        pageControllerReader(size: size, animatedCurl: false)
     }
 
     // 无动画：直接显示当前页
@@ -231,6 +228,11 @@ struct ReaderView: View {
     // 仿真翻页（pageCurl 卷曲动画）
     @ViewBuilder
     func curlReader(size: CGSize) -> some View {
+        pageControllerReader(size: size, animatedCurl: true)
+    }
+
+    @ViewBuilder
+    private func pageControllerReader(size: CGSize, animatedCurl: Bool) -> some View {
         ZStack {
             CurlPageController(
                 pages: pages,
@@ -238,6 +240,7 @@ struct ReaderView: View {
                 pageSize: pageSize,
                 background: theme.background,
                 startIndex: pageIndex,
+                animatedCurl: animatedCurl,
                 hasPreviousChapter: chapterIndex > 0,
                 hasNextChapter: chapterIndex < (book?.chapters.count ?? 0) - 1,
                 onPageChange: { idx in
@@ -246,6 +249,10 @@ struct ReaderView: View {
                 },
                 onChapterBoundary: { forward in
                     if forward { goNext() } else { goPrev() }
+                },
+                onEdgeTap: { forward in
+                    if forward { goNext() } else { goPrev() }
+                    jumpToken += 1
                 }
             )
             // 中间 1/3 点击弹菜单，左右交给系统翻页
@@ -258,7 +265,28 @@ struct ReaderView: View {
             }
         }
         .frame(width: size.width, height: size.height)
-        .id("curl-\(jumpToken)")
+        .overlay(alignment: .top) {
+            if store.showHeader, let c = chapter {
+                HStack {
+                    Text(c.title).font(.system(size: CGFloat(max(store.fontSize - 5, 11)), weight: .medium))
+                        .foregroundColor(Color(uiColor: theme.secondary)).lineLimit(1)
+                    Spacer()
+                }.padding(.horizontal, CGFloat(store.pagePaddingH))
+                    .padding(.top, CGFloat(max(store.pagePaddingV * 0.35, 6)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if store.showFooter {
+                HStack { Text("第 \(pageIndex + 1) 页"); Spacer(); Text("共 \(max(pages.count, 1)) 页") }
+                    .font(.system(size: CGFloat(max(store.fontSize - 6, 10))))
+                    .foregroundColor(Color(uiColor: theme.secondary))
+                    .padding(.horizontal, CGFloat(store.pagePaddingH))
+                    .padding(.bottom, CGFloat(max(store.pagePaddingV * 0.35, 6)))
+                    .allowsHitTesting(false)
+            }
+        }
+        .id("page-controller-\(animatedCurl)-\(jumpToken)")
     }
 
     // 覆盖：当前页 + 手势左滑盖入下一页
@@ -276,7 +304,7 @@ struct ReaderView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
-        .gesture(
+        .simultaneousGesture(
             DragGesture()
                 .onChanged { g in
                     if g.translation.width < 0 {
@@ -323,6 +351,7 @@ struct ReaderView: View {
             .padding(.vertical, CGFloat(store.pagePaddingV))
         }
         .coordinateSpace(name: "reader-scroll")
+        .scrollBounceBehavior(.always, axes: .vertical)
         .onPreferenceChange(ReaderScrollBoundsKey.self) { scrollBounds = $0 }
         .simultaneousGesture(DragGesture(minimumDistance: 20)
             .onChanged { _ in
@@ -815,7 +844,7 @@ struct ReaderView: View {
                     get: { Double(pageIndex) },
                     set: { pageIndex = Int($0); saveProgress(page: pageIndex) }
                 ), in: 0...Double(max(pages.count - 1, 1)), step: 1, onEditingChanged: { editing in
-                    if !editing && store.pageTurn == 4 { jumpToken += 1 }
+                    if !editing && (store.pageTurn == 1 || store.pageTurn == 4) { jumpToken += 1 }
                 }).disabled(store.pageTurn == 2 || pages.count < 2)
                     .accessibilityLabel("本章阅读进度")
                     .accessibilityIdentifier("readerProgressSlider")

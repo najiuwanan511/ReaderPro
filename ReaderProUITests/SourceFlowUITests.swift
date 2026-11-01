@@ -77,7 +77,10 @@ final class SourceFlowUITests: XCTestCase {
             XCTAssertTrue(category.waitForExistence(timeout: 15), "Duplicate category \(index) must stay visible")
             category.tap()
             let expected = index < 2 ? "测试小说" : "另一本小说"
-            XCTAssertTrue(app.staticTexts[expected].waitForExistence(timeout: 15), "Category \(index) must navigate to its own URL")
+            // On a cold iOS 17 simulator the request can be scheduled more
+            // than 30 seconds after navigation. Still require the actual
+            // category-specific book, rather than only the loading screen.
+            XCTAssertTrue(app.staticTexts[expected].waitForExistence(timeout: 60), "Category \(index) must navigate to its own URL")
             app.navigationBars.buttons.element(boundBy: 0).tap()
         }
     }

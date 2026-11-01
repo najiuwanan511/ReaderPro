@@ -26,6 +26,14 @@ final class ReaderChapterPagingUITests: XCTestCase {
         // The first swipe back at the beginning must not leave chapter one.
         app.swipeRight()
         XCTAssertTrue(page(app, containing: "第一章分页内容").exists)
+        if mode == 1 {
+            // The native scroll controller must retain edge tapping without
+            // double-advancing when its own recognizers also see the tap.
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+            XCTAssertTrue(app.staticTexts["第 2 页"].waitForExistence(timeout: 10))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)).tap()
+            XCTAssertTrue(app.staticTexts["第 1 页"].waitForExistence(timeout: 10))
+        }
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let slider = app.sliders["readerProgressSlider"]
         XCTAssertTrue(slider.waitForExistence(timeout: 10))

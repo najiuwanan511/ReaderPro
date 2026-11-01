@@ -9,6 +9,8 @@ struct ReaderBoundaryFixtureRoot: View {
     init() {
         let args = ProcessInfo.processInfo.arguments
         let store = BookStore()
+        store.showHeader = true
+        store.showFooter = true
         if let arg = args.first(where: { $0.hasPrefix("--reader-mode=") }),
            let mode = Int(arg.dropFirst("--reader-mode=".count)) { store.pageTurn = mode }
         if args.contains("--reset-reader-boundary") {
