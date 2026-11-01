@@ -52,7 +52,9 @@ enum SourceJSBridge {
             // 20 ms delay on every synchronous ajax in a list script.
             _ = completed.wait(timeout: .now() + .milliseconds(20))
         }
-        let (data, response) = try box.get()!.get()
+        let (data, response): (Data, URLResponse)
+        do { (data, response) = try box.get()!.get() }
+        catch { throw SourceTLS.contextualizeProxyError(error, request: request) }
         let http = response as? HTTPURLResponse
         let fields = (http?.allHeaderFields ?? [:]).reduce(into: [String: String]()) { $0[String(describing: $1.key).lowercased()] = String(describing: $1.value) }
         let text = (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()

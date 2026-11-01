@@ -179,6 +179,20 @@ enum SourceTLS {
     static func data(for request: URLRequest) async throws -> (Data, URLResponse) {
         let lease = try lease(for: request)
         defer { lease.finish() }
-        return try await lease.session.data(for: request)
+        do { return try await lease.session.data(for: request) }
+        catch { throw contextualizeProxyError(error, request: request) }
+    }
+
+    // iOS 17 can report this POSIX error when Network.framework cannot
+    // complete CONNECT authentication. Keep the original diagnostic and
+    // avoid relabelling unrelated network, certificate, or cancellation errors.
+    static func contextualizeProxyError(_ error: Error, request: URLRequest) -> Error {
+        if #available(iOS 18.0, *) { return error }
+        let original = error as NSError
+        guard original.domain == NSPOSIXErrorDomain, original.code == 80,
+              request.url?.scheme?.lowercased() == "https",
+              let proxy = try? SourceProxy.configuration(for: request),
+              proxy.kind == .http, proxy.username != nil else { return error }
+        return SourceFailure(stage: "书源代理", message: "iOS 17 未能完成 HTTP 代理认证，请尝试 SOCKS5 代理。系统错误（\(original.domain) \(original.code)）：\(original.localizedDescription)", url: request.url?.absoluteString ?? "")
     }
 }

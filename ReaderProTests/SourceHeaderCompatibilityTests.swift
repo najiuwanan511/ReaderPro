@@ -209,6 +209,29 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         XCTAssertEqual(page.text, "https-proxy-routed")
     }
 
+    func testProxyAuthenticationErrorPreservesSystemContext() throws {
+        let target = "https://readerproxy.invalid/source-proxy-https-test"
+        let request = try SourceHTTP.request(target, base: target,
+            headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
+        let original = NSError(domain: NSPOSIXErrorDomain, code: 80,
+                               userInfo: [NSLocalizedDescriptionKey: "fixture authentication error"])
+        let result = SourceTLS.contextualizeProxyError(original, request: request)
+        if #available(iOS 18.0, *) {
+            XCTAssertEqual((result as NSError).domain, NSPOSIXErrorDomain)
+            XCTAssertEqual((result as NSError).code, 80)
+        } else {
+            let description = sourceErrorMessage(result)
+            XCTAssertTrue(description.contains("iOS 17 未能完成 HTTP 代理认证"), description)
+            XCTAssertTrue(description.contains("NSPOSIXErrorDomain 80"), description)
+            XCTAssertTrue(description.contains("fixture authentication error"), description)
+            XCTAssertFalse(description.contains("fixture-pass"), description)
+        }
+        let timeout = URLError(.timedOut)
+        XCTAssertEqual((SourceTLS.contextualizeProxyError(timeout, request: request) as NSError).code, NSURLErrorTimedOut)
+        let direct = try SourceHTTP.request(target, base: target)
+        XCTAssertEqual((SourceTLS.contextualizeProxyError(original, request: direct) as NSError).domain, NSPOSIXErrorDomain)
+    }
+
     func testFailedProxyAndCrossSchemeRedirectNeverFallBackDirectly() async throws {
         // A failed proxy must not fall back to the reachable direct endpoint.
         let directTarget = "http://127.0.0.1:8765/health"
