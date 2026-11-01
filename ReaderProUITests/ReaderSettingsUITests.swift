@@ -32,15 +32,21 @@ final class ReaderSettingsUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["阅读设置"].waitForExistence(timeout: 10))
         let awake = app.switches["阅读时保持屏幕常亮"]
         XCTAssertTrue(awake.waitForExistence(timeout: 10))
-        let initial = awake.value as? String
-        awake.tap()
-        let changed = awake.value as? String
-        XCTAssertNotEqual(initial, changed)
+        guard let initial = awake.value as? String, initial == "0" || initial == "1" else {
+            return XCTFail("常亮开关应报告打开或关闭状态")
+        }
+        let changed = initial == "0" ? "1" : "0"
+        // In a SwiftUI Form, the accessibility switch frame covers the full
+        // row. Its centre is the text label, while the native switch is on
+        // the right; tapping the row centre does not reliably change it.
+        awake.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        let changedValue = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", changed), object: awake)
+        XCTAssertEqual(XCTWaiter.wait(for: [changedValue], timeout: 5), .completed)
         XCTAssertFalse(app.staticTexts["字距"].exists)
         app.buttons["完成"].tap()
         app.buttons["设置"].tap()
         XCTAssertTrue(awake.waitForExistence(timeout: 10))
         XCTAssertEqual(awake.value as? String, changed)
-        awake.tap() // Restore the user's prior preference in this test sandbox.
+        awake.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() // Restore the previous setting.
     }
 }
