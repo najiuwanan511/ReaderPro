@@ -28,20 +28,6 @@ private enum ReaderChapterLanding {
     case start, end, offset(Int)
 }
 
-private struct ReaderScrollBounds: Equatable {
-    var top: CGFloat = 0
-    var bottom: CGFloat = .greatestFiniteMagnitude
-}
-
-private struct ReaderScrollBoundsKey: PreferenceKey {
-    static var defaultValue = ReaderScrollBounds()
-    static func reduce(value: inout ReaderScrollBounds, nextValue: () -> ReaderScrollBounds) {
-        let next = nextValue()
-        if next.top != 0 { value.top = next.top }
-        if next.bottom != .greatestFiniteMagnitude { value.bottom = next.bottom }
-    }
-}
-
 struct ReaderView: View {
     @ObservedObject var store: BookStore
     let bookId: String
@@ -75,8 +61,6 @@ struct ReaderView: View {
     @State private var chapterLoadToken = UUID()
     @State private var chapterLanding: ReaderChapterLanding = .start
     @State private var pageDragStartIndex: Int?
-    @State private var scrollBounds = ReaderScrollBounds()
-    @State private var scrollDragStart: (top: Bool, bottom: Bool)?
     @State private var initialBrightness: CGFloat = 0.5
     @State private var initialIdleTimerDisabled = false
 
@@ -294,9 +278,9 @@ struct ReaderView: View {
     func coverReader(size: CGSize) -> some View {
         let w = size.width
         ZStack {
-            pageView(i: pageIndex, size: size)
+            pageView(i: pageIndex, size: size, interactive: false)
             if pageIndex < pages.count - 1 {
-                pageView(i: pageIndex + 1, size: size)
+                pageView(i: pageIndex + 1, size: size, interactive: false)
                     .frame(width: size.width, height: size.height)
                     .background(Color(uiColor: theme.background))
                     .offset(x: w + coverDrag)
@@ -304,18 +288,26 @@ struct ReaderView: View {
         }
         .frame(width: size.width, height: size.height)
         .clipped()
-        .simultaneousGesture(
-            DragGesture()
+        .contentShape(Rectangle())
+        // A single parent recognizer handles both taps and horizontal drags.
+        // On iOS 17 a parent drag + child tap gesture can swallow the menu.
+        .gesture(
+            DragGesture(minimumDistance: 0)
                 .onChanged { g in
-                    if g.translation.width < 0 {
+                    if g.translation.width < 0 && abs(g.translation.width) > abs(g.translation.height) {
                         coverDrag = g.translation.width
                     }
                 }
                 .onEnded { g in
-                    if g.translation.width < -w * 0.25 {
+                    if g.translation.width < -w * 0.25 && abs(g.translation.width) > abs(g.translation.height) {
                         goNext()
-                    } else if g.translation.width > w * 0.25 {
+                    } else if g.translation.width > w * 0.25 && abs(g.translation.width) > abs(g.translation.height) {
                         goPrev()
+                    } else if abs(g.translation.width) < 10 && abs(g.translation.height) < 10 {
+                        let fraction = g.location.x / max(w, 1)
+                        if fraction < 1.0 / 3.0 { goPrev() }
+                        else if fraction > 2.0 / 3.0 { goNext() }
+                        else { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
                     }
                     withAnimation(.easeOut(duration: store.pageTurnSpeed)) { coverDrag = 0 }
                 }
@@ -328,9 +320,13 @@ struct ReaderView: View {
         ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: CGFloat(store.paragraphSpacing)) {
-                Color.clear.frame(height: 0).id("reader-scroll-top")
-                    .background(GeometryReader { geo in
-                        Color.clear.preference(key: ReaderScrollBoundsKey.self, value: ReaderScrollBounds(top: geo.frame(in: .named("reader-scroll")).minY))
+                Color.clear.frame(height: 1).id("reader-scroll-top")
+                    .background(ReaderScrollBoundaryObserver { forward in
+                        if forward && chapterIndex < (book?.chapters.count ?? 0) - 1 {
+                            openChapter(chapterIndex + 1)
+                        } else if !forward && chapterIndex > 0 {
+                            openChapter(chapterIndex - 1, atEnd: true)
+                        }
                     })
                 if let c = chapter, store.showHeader {
                     Text(c.title)
@@ -343,33 +339,11 @@ struct ReaderView: View {
                     width: max(size.width - CGFloat(store.pagePaddingH * 2), 100)
                 )
                 Color.clear.frame(height: 0).id("reader-scroll-bottom")
-                    .background(GeometryReader { geo in
-                        Color.clear.preference(key: ReaderScrollBoundsKey.self, value: ReaderScrollBounds(bottom: geo.frame(in: .named("reader-scroll")).maxY))
-                    })
             }
             .padding(.horizontal, CGFloat(store.pagePaddingH))
             .padding(.vertical, CGFloat(store.pagePaddingV))
         }
-        .coordinateSpace(name: "reader-scroll")
         .scrollBounceBehavior(.always, axes: .vertical)
-        .onPreferenceChange(ReaderScrollBoundsKey.self) { scrollBounds = $0 }
-        .simultaneousGesture(DragGesture(minimumDistance: 20)
-            .onChanged { _ in
-                if scrollDragStart == nil {
-                    let inset = CGFloat(store.pagePaddingV) + 3
-                    scrollDragStart = (scrollBounds.top >= inset - 6, scrollBounds.bottom <= size.height - inset + 6)
-                }
-            }
-            .onEnded { drag in
-                defer { scrollDragStart = nil }
-                guard let start = scrollDragStart, abs(drag.translation.height) > 60,
-                      abs(drag.translation.height) > abs(drag.translation.width) else { return }
-                if start.bottom && drag.translation.height < 0 && chapterIndex < (book?.chapters.count ?? 0) - 1 {
-                    openChapter(chapterIndex + 1)
-                } else if start.top && drag.translation.height > 0 && chapterIndex > 0 {
-                    openChapter(chapterIndex - 1, atEnd: true)
-                }
-            })
         .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
         .onAppear {
             if isEndLanding {
@@ -387,7 +361,7 @@ struct ReaderView: View {
 
     // 单页 + 点按三区（左翻上页 / 中弹菜单 / 右翻下页）
     @ViewBuilder
-    func pageView(i: Int, size: CGSize) -> some View {
+    func pageView(i: Int, size: CGSize, interactive: Bool = true) -> some View {
         let range = pages.indices.contains(i) ? pages[i] : NSRange(location: 0, length: 0)
         let sub = attributed.attributedSubstring(from: range)
         PageTextView(attributed: sub, pageSize: pageSize)
@@ -422,13 +396,15 @@ struct ReaderView: View {
                     .allowsHitTesting(false)
                 }
             }
-            .overlay(
-                HStack(spacing: 0) {
-                    Color.clear.contentShape(Rectangle()).onTapGesture { goPrev() }
-                    Color.clear.contentShape(Rectangle()).onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
-                    Color.clear.contentShape(Rectangle()).onTapGesture { goNext() }
+            .overlay {
+                if interactive {
+                    HStack(spacing: 0) {
+                        Color.clear.contentShape(Rectangle()).onTapGesture { goPrev() }
+                        Color.clear.contentShape(Rectangle()).onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
+                        Color.clear.contentShape(Rectangle()).onTapGesture { goNext() }
+                    }
                 }
-            )
+            }
     }
 
     // MARK: 翻页

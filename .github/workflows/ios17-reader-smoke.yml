@@ -1,0 +1,65 @@
+name: iOS 17 reader paging smoke
+
+on:
+  workflow_dispatch:
+
+jobs:
+  reader-paging:
+    runs-on: macos-15
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare iOS 17.0 simulator and fixtures
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+          mkdir -p build
+          python3 scripts/fetch_user_pack.py
+          python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8765/health; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8765/health
+          if ! xcrun simctl list runtimes available | grep -q 'iOS 17.0'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.0
+          fi
+          xcrun simctl list runtimes available
+          DEVICE=$(xcrun simctl create ReaderPro-iOS17-smoke com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-0)
+          echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+      - name: Test paging and duplicate categories on iOS 17
+        run: |
+          set -o pipefail
+          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+            -maximum-test-execution-time-allowance 300 \
+            -resultBundlePath build/ReaderPagingSmoke.xcresult \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
+            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/reader-paging-smoke.log
+      - name: Preserve test results and crash reports
+        if: always()
+        run: |
+          if [ -d build/ReaderPagingSmoke.xcresult ]; then
+            xcrun xcresulttool export diagnostics --path build/ReaderPagingSmoke.xcresult --output-path build/diagnostics || true
+            xcrun xcresulttool export attachments --path build/ReaderPagingSmoke.xcresult --output-path build/attachments || true
+          fi
+          sleep 10
+          mkdir -p build/native-crashes
+          if [ -n "$READER_SIMULATOR_ID" ]; then
+            find "$HOME/Library/Logs/DiagnosticReports" "$HOME/Library/Developer/CoreSimulator/Devices/$READER_SIMULATOR_ID/data/Library/Logs" \
+              -type f \( -name '*ReaderPro*.ips' -o -name '*ReaderPro*.crash' \) \
+              -exec cp {} build/native-crashes/ \; 2>/dev/null || true
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios17-reader-paging-smoke
+          path: build

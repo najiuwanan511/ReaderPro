@@ -153,6 +153,83 @@ struct FullTextReader: UIViewRepresentable {
     }
 }
 
+// Observe the native scroll view's existing pan recognizer rather than adding
+// a competing SwiftUI gesture. iOS 17 can let UIScrollView consume the latter,
+// especially when a short chapter does not fill the viewport.
+struct ReaderScrollBoundaryObserver: UIViewRepresentable {
+    var onBoundary: (Bool) -> Void
+
+    func makeUIView(context: Context) -> ReaderScrollBoundaryProbe {
+        let view = ReaderScrollBoundaryProbe()
+        view.isUserInteractionEnabled = false
+        view.onBoundary = onBoundary
+        return view
+    }
+
+    func updateUIView(_ view: ReaderScrollBoundaryProbe, context: Context) {
+        view.onBoundary = onBoundary
+        view.scheduleAttach()
+    }
+
+    static func dismantleUIView(_ view: ReaderScrollBoundaryProbe, coordinator: ()) {
+        view.detach()
+    }
+}
+
+final class ReaderScrollBoundaryProbe: UIView {
+    var onBoundary: ((Bool) -> Void)?
+    private weak var observedScroll: UIScrollView?
+    private var startedAtTop = false
+    private var startedAtBottom = false
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        scheduleAttach()
+    }
+
+    override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        scheduleAttach()
+    }
+
+    func scheduleAttach() {
+        DispatchQueue.main.async { [weak self] in self?.attachIfNeeded() }
+    }
+
+    private func attachIfNeeded() {
+        var parent = superview
+        while let view = parent, !(view is UIScrollView) { parent = view.superview }
+        guard let scroll = parent as? UIScrollView, scroll !== observedScroll else { return }
+        detach()
+        observedScroll = scroll
+        scroll.panGestureRecognizer.addTarget(self, action: #selector(handlePan(_:)))
+    }
+
+    func detach() {
+        observedScroll?.panGestureRecognizer.removeTarget(self, action: #selector(handlePan(_:)))
+        observedScroll = nil
+    }
+
+    @objc private func handlePan(_ recognizer: UIPanGestureRecognizer) {
+        guard let scroll = observedScroll else { return }
+        switch recognizer.state {
+        case .began:
+            let top = -scroll.adjustedContentInset.top
+            let bottom = max(top, scroll.contentSize.height - scroll.bounds.height + scroll.adjustedContentInset.bottom)
+            startedAtTop = scroll.contentOffset.y <= top + 4
+            startedAtBottom = scroll.contentOffset.y >= bottom - 4
+        case .ended:
+            let distance = recognizer.translation(in: scroll)
+            guard abs(distance.y) > 60, abs(distance.y) > abs(distance.x) else { return }
+            if startedAtBottom && distance.y < 0 { DispatchQueue.main.async { [weak self] in self?.onBoundary?(true) } }
+            else if startedAtTop && distance.y > 0 { DispatchQueue.main.async { [weak self] in self?.onBoundary?(false) } }
+        default: break
+        }
+    }
+
+    deinit { detach() }
+}
+
 // MARK: - 朗读控制器（AVSpeechSynthesizer，逐段续读）
 
 final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
