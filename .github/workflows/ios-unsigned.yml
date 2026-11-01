@@ -85,6 +85,7 @@ jobs:
           if [ -n "$CONTAINER" ]; then
             for REPORT in source-pack-search-audit.json source-pack-search-audit-progress.json; do
               if [ -f "$CONTAINER/tmp/$REPORT" ]; then cp "$CONTAINER/tmp/$REPORT" "build/$REPORT"; fi
+              if [ -f "$CONTAINER/Documents/$REPORT" ]; then cp "$CONTAINER/Documents/$REPORT" "build/$REPORT"; fi
             done
           fi
 
