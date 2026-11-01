@@ -13,6 +13,7 @@ enum LegadoJSCtx {
     @TaskLocal static var library = ""
     @TaskLocal static var comment = ""
     @TaskLocal static var variableComment: String? = nil
+    @TaskLocal static var ruleSource: LegadoSource? = nil
     @TaskLocal static var loginURL = ""
     @TaskLocal static var strictContentHTTP = false
     @TaskLocal static var failures: RuleFailures? = nil
@@ -1226,7 +1227,9 @@ extension LegadoSource {
     func exploreCategories() -> [ExploreCategory] {
         LegadoJSCtx.$library.withValue(jsLib) {
             LegadoJSCtx.$comment.withValue(bookSourceComment) {
-                LegadoJSCtx.$variableComment.withValue(variableComment) { exploreCategoriesImpl() }
+                LegadoJSCtx.$variableComment.withValue(variableComment) {
+                    LegadoJSCtx.$ruleSource.withValue(self) { exploreCategoriesImpl() }
+                }
             }
         }
     }
@@ -1363,6 +1366,7 @@ extension LegadoSource {
                     try await LegadoJSCtx.$library.withValue(jsLib) {
                       try await LegadoJSCtx.$comment.withValue(bookSourceComment) {
                        try await LegadoJSCtx.$variableComment.withValue(variableComment) {
+                        try await LegadoJSCtx.$ruleSource.withValue(self) {
                         try await LegadoJSCtx.$loginURL.withValue(loginUrl) {
                         try await LegadoJSCtx.$failures.withValue(failures) {
                             return try await LegadoJSCtx.$headers.withValue(requestHeaders) {
@@ -1377,6 +1381,7 @@ extension LegadoSource {
                                 throw error
                               }
                             }
+                        }
                         }
                         }
                        }

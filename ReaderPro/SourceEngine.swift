@@ -9,6 +9,7 @@ import Foundation
 // separately, so one bad source no longer blocks the rest.
 
 struct LegadoSource: Identifiable, Codable, Equatable {
+    private var originalNullRules: Set<String> = []
     var id: String = UUID().uuidString
     var bookSourceName: String = ""
     var bookSourceUrl: String = ""
@@ -31,6 +32,11 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var ruleExplore: RuleSet = RuleSet()
     var bookSourceType: Int = 0 // 0 文本, 1 音频, 2 图片/漫画
     struct RuleSet: Codable, Equatable {
+        // Preserve Android fields and their null/empty distinctions even when
+        // the iOS rule engine does not yet interpret a particular field.
+        private var originalValues: [String: String] = [:]
+        private var originalNulls: Set<String> = []
+        private var decodedObject = false
         var bookList: String = ""
         var name: String = ""
         var author: String = ""
@@ -51,13 +57,27 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         var imageUrl: String = ""
         var checkKeyWord: String = ""
         var initRule: String = ""
-        enum CodingKeys: String, CodingKey {
+        enum CodingKeys: String, CodingKey, CaseIterable {
             case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex, imageUrl, checkKeyWord
+            case updateTime, preUpdateJs, formatJs, isVolume, isVip, isPay, subContent, title, webJs, sourceRegex, imageStyle, imageDecode, payAction, callBackJs
             case initRule = "init"
         }
         init() {}
         init(from decoder: Decoder) throws {
+            // Legado also accepts a JSON object encoded as a JSON string.
+            if let single = try? decoder.singleValueContainer(),
+               let text = try? single.decode(String.self),
+               let data = text.data(using: .utf8),
+               let value = try? JSONDecoder().decode(RuleSet.self, from: data) {
+                self = value
+                return
+            }
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            decodedObject = true
+            for key in CodingKeys.allCases where c.contains(key) {
+                if (try? c.decodeNil(forKey: key)) == true { originalNulls.insert(key.rawValue) }
+                else { originalValues[key.rawValue] = c.tolerantString(key) }
+            }
             bookList = c.tolerantString(.bookList); name = c.tolerantString(.name); author = c.tolerantString(.author)
             bookUrl = c.tolerantString(.bookUrl); coverUrl = c.tolerantString(.coverUrl); intro = c.tolerantString(.intro)
             tocUrl = c.tolerantString(.tocUrl); chapterList = c.tolerantString(.chapterList); chapterName = c.tolerantString(.chapterName)
@@ -68,13 +88,48 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
         func encode(to encoder: Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
-            try c.encode(bookList, forKey: .bookList); try c.encode(name, forKey: .name); try c.encode(author, forKey: .author)
-            try c.encode(bookUrl, forKey: .bookUrl); try c.encode(coverUrl, forKey: .coverUrl); try c.encode(intro, forKey: .intro)
-            try c.encode(tocUrl, forKey: .tocUrl); try c.encode(chapterList, forKey: .chapterList); try c.encode(chapterName, forKey: .chapterName)
-            try c.encode(chapterUrl, forKey: .chapterUrl); try c.encode(content, forKey: .content); try c.encode(nextContentUrl, forKey: .nextContentUrl)
-            try c.encode(nextTocUrl, forKey: .nextTocUrl); try c.encode(kind, forKey: .kind); try c.encode(wordCount, forKey: .wordCount)
-            try c.encode(lastChapter, forKey: .lastChapter); try c.encode(replaceRegex, forKey: .replaceRegex); try c.encode(imageUrl, forKey: .imageUrl)
-            try c.encode(checkKeyWord, forKey: .checkKeyWord); try c.encode(initRule, forKey: .initRule)
+            for key in CodingKeys.allCases {
+                if let value = androidValue(key.rawValue) { try c.encode(value, forKey: key) }
+                else if originalNulls.contains(key.rawValue) { try c.encodeNil(forKey: key) }
+            }
+        }
+
+        // Current engine/editor values win over the imported snapshot. An
+        // unchanged empty value remains null only when the original was null
+        // or absent; older saved rules that already contain "" remain "".
+        func androidValue(_ field: String) -> String? {
+            let value: String
+            switch field {
+            case "bookList": value = bookList
+            case "name": value = name
+            case "author": value = author
+            case "bookUrl": value = bookUrl
+            case "coverUrl": value = coverUrl
+            case "intro": value = intro
+            case "tocUrl": value = tocUrl
+            case "chapterList": value = chapterList
+            case "chapterName": value = chapterName
+            case "chapterUrl": value = chapterUrl
+            case "content": value = content
+            case "nextContentUrl": value = nextContentUrl
+            case "nextTocUrl": value = nextTocUrl
+            case "kind": value = kind
+            case "wordCount": value = wordCount
+            case "lastChapter": value = lastChapter
+            case "replaceRegex": value = replaceRegex
+            case "imageUrl": value = imageUrl
+            case "checkKeyWord": value = checkKeyWord
+            case "init": value = initRule
+            default: return originalValues[field]
+            }
+            return value.isEmpty && originalValues[field] == nil ? nil : value
+        }
+        var hasAndroidObject: Bool {
+            decodedObject || CodingKeys.allCases.contains { androidValue($0.rawValue) != nil }
+        }
+        static func == (lhs: RuleSet, rhs: RuleSet) -> Bool {
+            lhs.hasAndroidObject == rhs.hasAndroidObject &&
+                CodingKeys.allCases.allSatisfy { lhs.androidValue($0.rawValue) == rhs.androidValue($0.rawValue) }
         }
     }
     enum CodingKeys: String, CodingKey {
@@ -83,6 +138,9 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     init() {}
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        for key in [CodingKeys.ruleSearch, .ruleBookInfo, .ruleDiscover, .ruleExplore, .ruleToc, .ruleContent] where c.contains(key) {
+            if (try? c.decodeNil(forKey: key)) == true { originalNullRules.insert(key.rawValue) }
+        }
         if let s = try? c.decode(String.self, forKey: .id), !s.isEmpty { id = s }
         bookSourceName = c.tolerantString(.bookSourceName); bookSourceUrl = c.tolerantString(.bookSourceUrl)
         bookSourceGroup = c.tolerantString(.bookSourceGroup); enabled = c.tolerantBool(.enabled, defaultValue: true)
@@ -111,10 +169,26 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(loginUrl, forKey: .loginUrl)
         try c.encode(bookSourceComment, forKey: .bookSourceComment)
         try c.encodeIfPresent(variableComment, forKey: .variableComment)
-        try c.encode(ruleSearch, forKey: .ruleSearch); try c.encode(ruleBookInfo, forKey: .ruleBookInfo); try c.encode(ruleToc, forKey: .ruleToc)
-        try c.encode(ruleContent, forKey: .ruleContent); try c.encode(ruleDiscover, forKey: .ruleDiscover); try c.encode(ruleExplore, forKey: .ruleExplore); try c.encode(bookSourceType, forKey: .bookSourceType)
+        func encodeRule(_ rule: RuleSet, _ key: CodingKeys) throws {
+            if rule.hasAndroidObject { try c.encode(rule, forKey: key) }
+            else if originalNullRules.contains(key.rawValue) { try c.encodeNil(forKey: key) }
+        }
+        try encodeRule(ruleSearch, .ruleSearch); try encodeRule(ruleBookInfo, .ruleBookInfo)
+        try encodeRule(ruleToc, .ruleToc); try encodeRule(ruleContent, .ruleContent)
+        try encodeRule(ruleDiscover, .ruleDiscover); try encodeRule(ruleExplore, .ruleExplore)
+        try c.encode(bookSourceType, forKey: .bookSourceType)
     }
     // Legado's real discovery fields are exploreUrl + ruleExplore, not discoverUrl.
+    static func == (lhs: LegadoSource, rhs: LegadoSource) -> Bool {
+        lhs.id == rhs.id && lhs.bookSourceName == rhs.bookSourceName && lhs.bookSourceUrl == rhs.bookSourceUrl &&
+        lhs.bookSourceGroup == rhs.bookSourceGroup && lhs.enabled == rhs.enabled && lhs.searchUrl == rhs.searchUrl &&
+        lhs.discoverUrl == rhs.discoverUrl && lhs.exploreUrl == rhs.exploreUrl && lhs.header == rhs.header &&
+        lhs.jsLib == rhs.jsLib && lhs.loginUrl == rhs.loginUrl && lhs.bookSourceComment == rhs.bookSourceComment &&
+        lhs.variableComment == rhs.variableComment && lhs.enabledExplore == rhs.enabledExplore &&
+        lhs.ruleSearch == rhs.ruleSearch && lhs.ruleBookInfo == rhs.ruleBookInfo && lhs.ruleToc == rhs.ruleToc &&
+        lhs.ruleContent == rhs.ruleContent && lhs.ruleDiscover == rhs.ruleDiscover && lhs.ruleExplore == rhs.ruleExplore &&
+        lhs.bookSourceType == rhs.bookSourceType
+    }
     var effectiveDiscoverUrl: String { discoverUrl.isEmpty ? exploreUrl : discoverUrl }
     var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }
     // 漫画书源：bookSourceType == 2，或正文规则里带图片提取规则 imageUrl

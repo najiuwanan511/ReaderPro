@@ -281,6 +281,31 @@ final class LegadoJS {
         // adaptation as jsLib; the persisted source comment remains original.
         source.setObject(SourceScript.adaptingJavaCalls(LegadoJSCtx.comment), forKeyedSubscript: "bookSourceComment" as NSString)
         source.setObject(LegadoJSCtx.variableComment as Any? ?? NSNull(), forKeyedSubscript: "variableComment" as NSString)
+        // Android exposes the nullable Kotlin data-class rule objects. Its
+        // generated toString includes type, declared field order and nulls;
+        // real rules also access the same fields directly.
+        func installRule(_ name: String, type: String, rule: LegadoSource.RuleSet?, fields: [String]) {
+            guard let rule, rule.hasAndroidObject, let object = JSValue(newObjectIn: ctx) else {
+                source.setObject(NSNull(), forKeyedSubscript: name as NSString)
+                return
+            }
+            for field in fields {
+                object.setObject(rule.androidValue(field) as Any? ?? NSNull(), forKeyedSubscript: field as NSString)
+            }
+            let description: @convention(block) () -> String = {
+                type + "(" + fields.map { $0 + "=" + (rule.androidValue($0) ?? "null") }.joined(separator: ", ") + ")"
+            }
+            object.setObject(description, forKeyedSubscript: "toString" as NSString)
+            source.setObject(object, forKeyedSubscript: name as NSString)
+        }
+        let bookFields = ["bookList", "name", "author", "intro", "kind", "lastChapter", "updateTime", "bookUrl", "coverUrl", "wordCount"]
+        let actualSource = LegadoJSCtx.ruleSource
+        installRule("ruleSearch", type: "SearchRule", rule: actualSource?.ruleSearch, fields: ["checkKeyWord"] + bookFields)
+        installRule("ruleExplore", type: "ExploreRule", rule: actualSource?.ruleExplore, fields: bookFields)
+        installRule("ruleToc", type: "TocRule", rule: actualSource?.ruleToc,
+                    fields: ["preUpdateJs", "chapterList", "chapterName", "chapterUrl", "formatJs", "isVolume", "isVip", "isPay", "updateTime", "nextTocUrl"])
+        installRule("ruleContent", type: "ContentRule", rule: actualSource?.ruleContent,
+                    fields: ["content", "subContent", "title", "nextContentUrl", "webJs", "sourceRegex", "replaceRegex", "imageStyle", "imageDecode", "payAction", "callBackJs"])
         source.setObject(LegadoJSCtx.loginURL, forKeyedSubscript: "loginUrl" as NSString)
         source.setObject(getKey, forKeyedSubscript: "getKey" as NSString)
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
