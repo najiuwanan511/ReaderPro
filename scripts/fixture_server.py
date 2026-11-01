@@ -92,11 +92,19 @@ class Handler(BaseHTTPRequestHandler):
             return
         expected = getattr(self.server, 'expected_proxy_auth', None)
         if expected and self.headers.get('Proxy-Authorization') != expected:
+            # Compare CFNetwork's behavior with a persistent HTTP/1.1 407
+            # separately from the existing HTTP/1.0 close-after-407 proxy.
+            if getattr(self.server, 'persistent_proxy_auth', False):
+                self.protocol_version = 'HTTP/1.1'
+                self.close_connection = False
             self.send_response(407, 'Proxy Authentication Required')
             self.send_header('Proxy-Authenticate', 'Basic realm="fixture"')
             self.send_header('Content-Length', '0')
             self.end_headers()
             return
+        # Once CONNECT succeeds, the rest of this socket is tunnel data rather
+        # than another HTTP proxy request; close it when the tunnel finishes.
+        self.close_connection = True
         try:
             if self.path.endswith(':80'):
                 self.send_response(200, 'Connection Established')
@@ -335,4 +343,8 @@ if __name__ == '__main__':
     auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8768), Handler)
     auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
     threading.Thread(target=auth_proxy.serve_forever, daemon=True).start()
+    persistent_auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8770), Handler)
+    persistent_auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
+    persistent_auth_proxy.persistent_proxy_auth = True
+    threading.Thread(target=persistent_auth_proxy.serve_forever, daemon=True).start()
     ThreadingHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()

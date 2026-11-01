@@ -197,6 +197,18 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         XCTAssertEqual(page.text, "https-proxy-routed")
     }
 
+    func testAuthenticatedHTTPSProxyWithPersistentHTTP11Challenge() async throws {
+        let target = "https://readerproxy.invalid/source-proxy-https-test"
+        let request = try SourceHTTP.request(target, base: target,
+            headers: ["proxy": "http://127.0.0.1:8770@fixture-user@fixture-pass"])
+        let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
+            try await SourceHTTP.load(request, stage: "HTTP/1.1 认证代理测试")
+        }
+        // The TLS fixture returns HTTP 400 if Proxy-Authorization or the
+        // source's proxy setting reaches the destination.
+        XCTAssertEqual(page.text, "https-proxy-routed")
+    }
+
     func testFailedProxyAndCrossSchemeRedirectNeverFallBackDirectly() async throws {
         // A failed proxy must not fall back to the reachable direct endpoint.
         let directTarget = "http://127.0.0.1:8765/health"
