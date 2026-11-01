@@ -179,7 +179,19 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
                                              headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
         let page = try await SourceHTTP.load(request, stage: "认证代理测试")
         XCTAssertEqual(page.text, "proxy-routed:readerproxy.invalid")
+    }
 
+    func testAuthenticatedHTTPSProxyDoesNotLeakCredentials() async throws {
+        let target = "https://readerproxy.invalid/source-proxy-https-test"
+        let request = try SourceHTTP.request(target, base: target,
+            headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
+        let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
+            try await SourceHTTP.load(request, stage: "HTTPS 认证代理测试")
+        }
+        XCTAssertEqual(page.text, "https-proxy-routed")
+    }
+
+    func testFailedProxyAndCrossSchemeRedirectNeverFallBackDirectly() async throws {
         // A failed proxy must not fall back to the reachable direct endpoint.
         let directTarget = "http://127.0.0.1:8765/health"
         var badProxy = try SourceHTTP.request(directTarget, base: directTarget, headers: ["proxy": "http://127.0.0.1:1"])
@@ -191,7 +203,7 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
 
         // The two schemes use different iOS proxy transports; never follow a
         // cross-scheme redirect on a session that could connect directly.
-        let cross = try SourceHTTP.request("http://readerproxy.invalid/source-proxy-cross-scheme", base: target,
+        let cross = try SourceHTTP.request("http://readerproxy.invalid/source-proxy-cross-scheme", base: "http://readerproxy.invalid",
                                            headers: ["proxy": "http://127.0.0.1:8765"])
         do {
             _ = try await SourceHTTP.load(cross, stage: "代理跳转测试")

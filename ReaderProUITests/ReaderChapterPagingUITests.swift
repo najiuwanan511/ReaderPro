@@ -77,9 +77,12 @@ final class ReaderChapterPagingUITests: XCTestCase {
         let more = app.buttons["更多操作"]
         XCTAssertTrue(more.waitForExistence(timeout: 10))
         XCTAssertGreaterThanOrEqual(more.frame.height, 40, "阅读菜单按钮不能被裁切，需保留可触摸区域")
-        XCTAssertTrue(more.isHittable, "阅读菜单按钮必须可点击")
-        more.tap()
-        app.buttons["切换书源"].tap()
+        // SwiftUI Menu can report isHittable=false to XCTest even while its
+        // visible 44pt label is on screen. Send the physical tap and require
+        // the actual menu action to appear and work.
+        more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let changeSource = app.buttons["切换书源"]
+        XCTAssertTrue(changeSource.waitForExistence(timeout: 10)); changeSource.tap()
         XCTAssertTrue(app.navigationBars["换源"].waitForExistence(timeout: 10))
         app.buttons["搜索"].tap()
         let result = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
@@ -94,8 +97,8 @@ final class ReaderChapterPagingUITests: XCTestCase {
         XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let more = app.buttons["更多操作"]
-        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        app.buttons["查看书签"].tap()
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["查看书签"].waitForExistence(timeout: 10)); app.buttons["查看书签"].tap()
         let old = app.buttons.containing(.staticText, identifier: "旧网络书签").firstMatch
         XCTAssertTrue(old.waitForExistence(timeout: 10)); old.tap()
         XCTAssertTrue(page(app, containing: "第一章分页内容").waitForExistence(timeout: 30))
@@ -103,8 +106,8 @@ final class ReaderChapterPagingUITests: XCTestCase {
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(app.buttons["下一章"].waitForExistence(timeout: 10)); app.buttons["下一章"].tap()
         XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 15))
-        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        app.buttons["查看书签"].tap()
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["查看书签"].waitForExistence(timeout: 10)); app.buttons["查看书签"].tap()
         let current = app.buttons.containing(.staticText, identifier: "新网络书签").firstMatch
         XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
         XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 30), "字符书签应回到同一正文位置")
@@ -117,8 +120,8 @@ final class ReaderChapterPagingUITests: XCTestCase {
         XCTAssertTrue(app.textViews["readerFullText"].waitForExistence(timeout: 20))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let more = app.buttons["更多操作"]
-        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
-        app.buttons["查看书签"].tap()
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["查看书签"].waitForExistence(timeout: 10)); app.buttons["查看书签"].tap()
         let bookmark = app.buttons.containing(.staticText, identifier: "新网络书签").firstMatch
         XCTAssertTrue(bookmark.waitForExistence(timeout: 10)); bookmark.tap()
         let visible = app.staticTexts["readerVisibleScrollOffset"]

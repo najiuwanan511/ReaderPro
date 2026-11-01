@@ -2,6 +2,7 @@ import Foundation
 import Security
 import CryptoKit
 import Network
+import CFNetwork
 
 // Legado's `proxy` source-header entry controls the client, not an HTTP
 // request header. Store it in URLProtocol metadata so it can never leak to
@@ -108,6 +109,11 @@ enum SourceTLS {
         }
         func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            #if DEBUG || READERPRO_TESTING
+            if proxy != nil {
+                print("SOURCE_PROXY_CHALLENGE isProxy=\(challenge.protectionSpace.isProxy()) method=\(challenge.protectionSpace.authenticationMethod) attempt=\(challenge.previousFailureCount)")
+            }
+            #endif
             if allow, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
                let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
             else if let proxy, let username = proxy.username, let password = proxy.password,
@@ -136,7 +142,14 @@ enum SourceTLS {
             if proxy.kind == .http && scheme.lowercased() == "http" {
                 // On iOS 17 proxyConfigurations CONNECT works for HTTPS, but
                 // does not route plain HTTP. Use Apple's supported HTTP keys.
-                configuration.connectionProxyDictionary = ["HTTPEnable": 1, "HTTPProxy": proxy.host, "HTTPPort": proxy.port]
+                var settings: [AnyHashable: Any] = ["HTTPEnable": 1, "HTTPProxy": proxy.host, "HTTPPort": proxy.port]
+                // These public CFNetwork keys identify proxy credentials; do
+                // not attach Proxy-Authorization to the destination request.
+                if let username = proxy.username, let password = proxy.password {
+                    settings[kCFProxyUsernameKey as String] = username
+                    settings[kCFProxyPasswordKey as String] = password
+                }
+                configuration.connectionProxyDictionary = settings
             } else {
                 configuration.proxyConfigurations = [proxy.networkProxy]
             }

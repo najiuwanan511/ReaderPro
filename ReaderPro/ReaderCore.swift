@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+import ObjectiveC
 
 // MARK: - 阅读主题
 
@@ -76,6 +77,8 @@ enum Paginator {
 
 // MARK: - 单页渲染（与分页同一套 TextKit 属性，保证不溢出、不错位）
 
+private var readerSourceTextKey: UInt8 = 0
+
 func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextView {
     let storage = NSTextStorage(attributedString: attributed)
     let manager = NSLayoutManager(); manager.usesFontLeading = true
@@ -92,13 +95,20 @@ func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextV
     view.textContainerInset = .zero
     container.widthTracksTextView = false; container.heightTracksTextView = false
     view.attributedText = attributed
+    objc_setAssociatedObject(view, &readerSourceTextKey, attributed.copy() as? NSAttributedString, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
     return view
 }
 
 // Reassigning identical text invalidates TextKit layout. SwiftUI can update
 // the wrapper for unrelated settings, so leave the storage intact in that case.
 func setReaderTextIfChanged(_ view: UITextView, _ attributed: NSAttributedString) {
-    if !view.textStorage.isEqual(to: attributed) { view.textStorage.setAttributedString(attributed) }
+    // UITextView can normalize attributes on assignment, so its textStorage
+    // is not necessarily equal to the original source even when unchanged.
+    // Compare the last requested source instead of the normalized storage.
+    if let source = objc_getAssociatedObject(view, &readerSourceTextKey) as? NSAttributedString,
+       source.isEqual(to: attributed) { return }
+    view.textStorage.setAttributedString(attributed)
+    objc_setAssociatedObject(view, &readerSourceTextKey, attributed.copy() as? NSAttributedString, .OBJC_ASSOCIATION_RETAIN_NONATOMIC)
 }
 
 struct PageTextView: UIViewRepresentable {

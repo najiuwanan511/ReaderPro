@@ -152,7 +152,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 body = 'proxy-routed:' + urlsplit(self.path).hostname
         elif path == '/source-proxy-https-test':
-            body = 'https-proxy-routed'
+            if self.headers.get('Proxy-Authorization') or self.headers.get('proxy'):
+                status, body = 400, 'proxy credentials leaked to destination'
+            else:
+                body = 'https-proxy-routed'
         elif path == '/source-proxy-cross-scheme':
             self.send_response(302)
             self.send_header('Location', 'https://readerproxy.invalid/source-proxy-https-test')
