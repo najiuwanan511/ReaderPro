@@ -483,6 +483,80 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(SourceScript.adaptingJavaCalls(spaced), "[[1,2]].map(([a, /* binding */ b]) => a+b)")
     }
 
+    func testJavaCallPreflightPreservesCommentsUnicodeAndLiterals() throws {
+        let script = #"""
+        var literal='word.length()';
+        var regex=/[a,b]=>x/;
+        var value='hello';
+        var n=value. /* first */ length /* second */( /* third */ );
+        var sum=[[1,2]].map([a,b] /* comment */=>a+b)[0];
+        if(literal!=='word.length()' || !regex.test('a=>x')) throw Error('literal modified');
+        n+'|'+sum;
+        """#
+        XCTAssertTrue(SourceScript.needsJavaCallTokenization(script))
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            let result = LegadoJS.run(script, input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+            XCTAssertEqual(result, "5|3")
+            try failures.check()
+        }
+
+        // The tokenizer permits comments with Unicode and Unicode newlines
+        // between tokens. The byte preflight must remain a conservative superset.
+        let unicode = "var value='abc';value.// 中文\u{2028}length\u{00a0}(/* 注释 */)"
+        XCTAssertTrue(SourceScript.needsJavaCallTokenization(unicode))
+        let unicodeFailures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(unicodeFailures) {
+            XCTAssertEqual(LegadoJS.run(unicode, input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "3")
+            try unicodeFailures.check()
+        }
+        let longComment = "var value='long'; value./*" + String(repeating: "x", count: 5000) + "*/length()"
+        XCTAssertTrue(SourceScript.needsJavaCallTokenization(longComment), "Long trivia must fall back rather than miss a call")
+        let longFailures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(longFailures) {
+            XCTAssertEqual(LegadoJS.run(longComment, input: "", baseUrl: base, sourceKey: "", sourceUrl: base), "4")
+            try longFailures.check()
+        }
+    }
+
+    func testOriginalLargeLibrariesSkipJavaCallTokenization() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let sources = importSourcesDetailed(raw).sources
+        let large = sources.filter { $0.jsLib.utf8.count > 500_000 }
+        XCTAssertEqual(large.count, 2)
+        XCTAssertTrue(large.contains { $0.bookSourceUrl == "https://fanqienovel.com" && $0.jsLib.utf8.count > 1_400_000 })
+        let started = Date()
+        for source in large {
+            XCTAssertFalse(SourceScript.needsJavaCallTokenization(source.jsLib), source.bookSourceName)
+            XCTAssertEqual(SourceScript.adaptingJavaCalls(source.jsLib), source.jsLib, source.bookSourceName)
+        }
+        // Even when preflight skips tokenization, the library must still run
+        // in each fresh JS context: source authors may depend on side effects.
+        let identity = base + "/library-side-effects/" + UUID().uuidString
+        let library = "java.put('runs', String(Number(java.get('runs') || 0) + 1)); var ordinaryLength = 'length';"
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            for expected in ["1", "2"] {
+                let value = LegadoJSCtx.$library.withValue(library) {
+                    LegadoJS.run("java.get('runs')", input: "", baseUrl: base, sourceKey: "", sourceUrl: identity)
+                }
+                XCTAssertEqual(value, expected)
+            }
+            try failures.check()
+        }
+        let tomato = try XCTUnwrap(large.first { $0.bookSourceUrl == "https://fanqienovel.com" })
+        let realFailures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(realFailures) {
+            let value = LegadoJSCtx.$library.withValue(tomato.jsLib) {
+                LegadoJS.run("(page - 1) * 10", input: "", baseUrl: tomato.bookSourceUrl,
+                             sourceKey: "", sourceUrl: tomato.bookSourceUrl, page: 2)
+            }
+            XCTAssertEqual(value, "10", "The original large library and search URL expression must execute")
+            try realFailures.check()
+        }
+        print("JAVA_PREFLIGHT largeLibraries=\(large.count) bytes=\(large.map { $0.jsLib.utf8.count }) elapsed=\(Date().timeIntervalSince(started))s")
+    }
+
     func testBookVariablesPersistAcrossContextsAndRemainIsolated() throws {
         let identity = base + "/variables/" + UUID().uuidString
         let first = LegadoJS.BookCtx(bookUrl: identity + "/book/1")

@@ -40,6 +40,8 @@ jobs:
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProUITests/SourceFlowUITests \
+            -only-testing:ReaderProTests/JSConcurrencyStressTests \
+            -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \
             -resultBundlePath build/ReleaseRegression.xcresult \
