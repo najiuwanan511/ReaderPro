@@ -145,7 +145,9 @@ struct BookshelfView: View {
                         }.buttonStyle(.plain).accessibilityIdentifier("shelfSearchSources")
                         if shelfSearch.searching {
                             HStack {
-                                ProgressView("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)")
+                                ProgressView().controlSize(.small)
+                                Text("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)")
+                                    .lineLimit(1).minimumScaleFactor(0.75)
                                 Spacer()
                                 Button { shelfSearch.cancel() } label: {
                                     Text("停止").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
@@ -421,7 +423,9 @@ struct SourceView: View {
             .font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
             if searchState.searching {
                 HStack {
-                    ProgressView("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.results.count) 本")
+                    ProgressView().controlSize(.small)
+                    Text("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.results.count) 本")
+                        .lineLimit(1).minimumScaleFactor(0.75)
                     Spacer()
                     Button { searchState.cancel() } label: {
                         Text("停止").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
