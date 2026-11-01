@@ -95,6 +95,12 @@ func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextV
     return view
 }
 
+// Reassigning identical text invalidates TextKit layout. SwiftUI can update
+// the wrapper for unrelated settings, so leave the storage intact in that case.
+func setReaderTextIfChanged(_ view: UITextView, _ attributed: NSAttributedString) {
+    if !view.textStorage.isEqual(to: attributed) { view.textStorage.setAttributedString(attributed) }
+}
+
 struct PageTextView: UIViewRepresentable {
     let attributed: NSAttributedString
     let pageSize: CGSize
@@ -140,14 +146,14 @@ struct FullTextReader: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
-        tv.attributedText = attributed
-        tv.accessibilityLabel = attributed.string
+        setReaderTextIfChanged(tv, attributed)
+        if tv.accessibilityLabel != attributed.string { tv.accessibilityLabel = attributed.string }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
         let fittingWidth = max(proposal.width ?? width, 1)
         uiView.textContainer.size = CGSize(width: fittingWidth, height: .greatestFiniteMagnitude)
-        uiView.textStorage.setAttributedString(attributed)
+        setReaderTextIfChanged(uiView, attributed)
         uiView.layoutManager.ensureLayout(for: uiView.textContainer)
         return CGSize(width: fittingWidth, height: ceil(uiView.layoutManager.usedRect(for: uiView.textContainer).maxY))
     }

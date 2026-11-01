@@ -15,7 +15,13 @@ import Security
     private var allowsInvalidCertificates = false
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0) async throws -> SourcePage {
-        let proxy = try SourceProxy.configuration(for: request)
+        // The iOS 17 Swift-only WebKit proxy overlay can link against
+        // libswiftWebKit, which is absent on supported iOS simulator/runtime
+        // combinations. Never silently bypass a configured source proxy or
+        // make the whole app fail to launch; report this specific limitation.
+        if try SourceProxy.configuration(for: request) != nil {
+            throw SourceFailure(stage: "网页脚本", message: "此书源使用代理，网页渲染暂不支持该代理，请关闭网页渲染或更换书源")
+        }
         // Each WKWebView can launch a separate WebKit process. Keeping only
         // two active reduces peak memory when many book sources are searched.
         while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -27,10 +33,7 @@ import Security
                 active[loader.id] = loader
                 loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
-                // Never attach a source proxy to the global website store:
-                // other sources and the built-in browser must not inherit it.
-                config.websiteDataStore = (loader.allowsInvalidCertificates || proxy != nil) ? .nonPersistent() : .default()
-                if let proxy { config.websiteDataStore.proxyConfigurations = [proxy.networkProxy] }
+                config.websiteDataStore = loader.allowsInvalidCertificates ? .nonPersistent() : .default()
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA

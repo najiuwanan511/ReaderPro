@@ -36,6 +36,13 @@ struct ReaderBoundaryFixtureRoot: View {
             book.chapterIndex = args.contains("--reader-start-second") ? 1 : 0
             store.books = [book]
             store.sources = [source]
+            if args.contains("--reader-bookmark-fixture") {
+                let endOffset = (String(repeating: "第一章分页内容。", count: 1200) as NSString).length
+                store.bookmarks = [
+                    Bookmark(bookId: book.id, chapterIndex: 0, paragraphIndex: 2, snippet: "旧网络书签"),
+                    Bookmark(bookId: book.id, chapterIndex: 0, paragraphIndex: 2, snippet: "新网络书签", charOffset: endOffset)
+                ]
+            }
             store.save()
         }
         _store = StateObject(wrappedValue: store)

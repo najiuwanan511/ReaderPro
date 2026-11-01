@@ -102,22 +102,46 @@ enum SourceTLS {
     private final class Delegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
         let allow: Bool
         let redirects: Bool
-        init(allow: Bool, redirects: Bool) { self.allow = allow; self.redirects = redirects }
+        let proxy: SourceProxy.Configuration?
+        init(allow: Bool, redirects: Bool, proxy: SourceProxy.Configuration? = nil) {
+            self.allow = allow; self.redirects = redirects; self.proxy = proxy
+        }
         func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             if allow, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
                let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
+            else if let proxy, let username = proxy.username, let password = proxy.password,
+                    challenge.protectionSpace.isProxy(),
+                    challenge.protectionSpace.host.caseInsensitiveCompare(proxy.host) == .orderedSame,
+                    challenge.protectionSpace.port == proxy.port,
+                    challenge.previousFailureCount == 0 {
+                // Credentials only answer the configured proxy's challenge,
+                // never a destination server's authentication challenge.
+                completionHandler(.useCredential, URLCredential(user: username, password: password, persistence: .forSession))
+            }
             else { completionHandler(.performDefaultHandling, nil) }
         }
         func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                         newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
-            completionHandler(redirects ? request : nil)
+            // HTTP and HTTPS use different iOS proxy transports. A cross-
+            // scheme redirect must not silently escape the configured proxy.
+            let changesScheme = response.url?.scheme?.lowercased() != request.url?.scheme?.lowercased()
+            completionHandler(redirects && !(proxy?.kind == .http && changesScheme) ? request : nil)
         }
     }
-    private static func makeSession(allow: Bool, redirects: Bool, proxy: SourceProxy.Configuration? = nil) -> URLSession {
+    private static func makeSession(allow: Bool, redirects: Bool, proxy: SourceProxy.Configuration? = nil,
+                                    scheme: String = "") -> URLSession {
         let configuration = SourceHTTP.configuration()
-        if let proxy { configuration.proxyConfigurations = [proxy.networkProxy] }
-        return URLSession(configuration: configuration, delegate: Delegate(allow: allow, redirects: redirects), delegateQueue: nil)
+        if let proxy {
+            if proxy.kind == .http && scheme.lowercased() == "http" {
+                // On iOS 17 proxyConfigurations CONNECT works for HTTPS, but
+                // does not route plain HTTP. Use Apple's supported HTTP keys.
+                configuration.connectionProxyDictionary = ["HTTPEnable": 1, "HTTPProxy": proxy.host, "HTTPPort": proxy.port]
+            } else {
+                configuration.proxyConfigurations = [proxy.networkProxy]
+            }
+        }
+        return URLSession(configuration: configuration, delegate: Delegate(allow: allow, redirects: redirects, proxy: proxy), delegateQueue: nil)
     }
     private static let legacy = makeSession(allow: true, redirects: true)
     private static let legacyDirect = makeSession(allow: true, redirects: false)
@@ -140,7 +164,8 @@ enum SourceTLS {
         // URLSession captures the request without contacting real proxies.
         if let test = SourceHTTP.testSession { return Lease(session: test, owned: false) }
         if let proxy {
-            return Lease(session: makeSession(allow: allowsInvalidCertificates, redirects: followRedirects, proxy: proxy), owned: true)
+            return Lease(session: makeSession(allow: allowsInvalidCertificates, redirects: followRedirects,
+                                              proxy: proxy, scheme: request.url?.scheme ?? ""), owned: true)
         }
         return Lease(session: session(followRedirects: followRedirects), owned: false)
     }

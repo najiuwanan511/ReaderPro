@@ -213,6 +213,8 @@ enum SourceHTTP {
             if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 let hint: String
                 switch http.statusCode {
+                case 300..<400 where (try? SourceProxy.configuration(for: request)) != nil:
+                    hint = "代理请求跨 HTTP/HTTPS 跳转未自动跟随，避免绕过代理"
                 case 401: hint = "需要登录"
                 case 403: hint = "访问被拒绝，可能需要登录、Cookie 或验证码"
                 case 404: hint = "地址不存在，书源规则或域名可能已变更"

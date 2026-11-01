@@ -25,7 +25,13 @@ func restoredReadingPosition(_ book: LocalBook) -> (chapter: Int, offset: Int) {
 }
 
 private enum ReaderChapterLanding {
-    case start, end, offset(Int)
+    case start, end, offset(Int), page(Int)
+}
+
+// Scroll offsets change every frame. Keep the latest offset in a stable
+// reference so a drag does not invalidate the entire SwiftUI reader tree.
+private final class ReaderScrollProgress {
+    var offset = 0
 }
 
 struct ReaderView: View {
@@ -60,7 +66,7 @@ struct ReaderView: View {
     @State private var chapterLoadTask: Task<Void, Never>?
     @State private var chapterLoadToken = UUID()
     @State private var chapterLanding: ReaderChapterLanding = .start
-    @State private var scrollCharOffset = 0
+    @State private var scrollProgress = ReaderScrollProgress()
     @State private var pageDragStartIndex: Int?
     @State private var initialBrightness: CGFloat = 0.5
     @State private var initialIdleTimerDisabled = false
@@ -329,11 +335,13 @@ struct ReaderView: View {
                             openChapter(chapterIndex - 1, atEnd: true)
                         }
                     }, restoreOffset: scrollRestoreOffset, restoreToken: jumpToken, onPosition: { offset, settled in
-                        scrollCharOffset = offset
-                        let visiblePage = pageIndex(for: offset)
-                        if pageIndex != visiblePage { pageIndex = visiblePage }
+                        scrollProgress.offset = offset
+                        if settled {
+                            let visiblePage = pageIndex(for: offset)
+                            if pageIndex != visiblePage { pageIndex = visiblePage }
+                        }
                         #if DEBUG || READERPRO_TESTING
-                        if ProcessInfo.processInfo.arguments.contains("--reader-boundary-fixture") {
+                        if settled && ProcessInfo.processInfo.arguments.contains("--reader-boundary-fixture") {
                             UserDefaults.standard.set(offset, forKey: "ReaderPro.test.visibleScrollOffset")
                         }
                         #endif
@@ -428,7 +436,7 @@ struct ReaderView: View {
     }
 
     private var scrollRestoreOffset: Int? {
-        if case .offset = chapterLanding { return scrollCharOffset }
+        if case .offset = chapterLanding { return scrollProgress.offset }
         return nil
     }
 
@@ -467,7 +475,7 @@ struct ReaderView: View {
         guard let b = book, !b.chapters.isEmpty else { return }
         chapterIndex = max(0, min(i, b.chapters.count - 1))
         chapterLanding = atEnd ? .end : .start
-        scrollCharOffset = 0
+        scrollProgress.offset = 0
         pageIndex = 0
         if b.chapters[chapterIndex].text.hasPrefix("__URL__") {
             // Do not paginate the URL placeholder or save the previous
@@ -480,7 +488,7 @@ struct ReaderView: View {
             cancelChapterLoad()
             rebuild(size: lastSize, keepOffset: nil)
             pageIndex = atEnd ? max(pages.count - 1, 0) : 0
-            if atEnd { scrollCharOffset = pages.last?.location ?? 0 }
+            if atEnd { scrollProgress.offset = pages.last?.location ?? 0 }
             saveProgress(page: pageIndex)
         }
         jumpToken += 1
@@ -536,7 +544,7 @@ struct ReaderView: View {
     }
 
     func currentCharOffset() -> Int {
-        if store.pageTurn == 2 { return min(max(scrollCharOffset, 0), attributed.length) }
+        if store.pageTurn == 2 { return min(max(scrollProgress.offset, 0), attributed.length) }
         guard pages.indices.contains(pageIndex) else { return 0 }
         return pages[pageIndex].location
     }
@@ -552,7 +560,7 @@ struct ReaderView: View {
         let restored = restoredReadingPosition(b)
         chapterIndex = restored.chapter
         chapterLanding = .offset(restored.offset)
-        scrollCharOffset = restored.offset
+        scrollProgress.offset = restored.offset
         initialBrightness = UIScreen.main.brightness
         initialIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake || initialIdleTimerDisabled
@@ -578,7 +586,7 @@ struct ReaderView: View {
 
     func saveProgress(page: Int? = nil) {
         guard var b = book else { return }
-        let scrollOffset = min(max(scrollCharOffset, 0), attributed.length)
+        let scrollOffset = min(max(scrollProgress.offset, 0), attributed.length)
         let p = boundedReadingIndex(store.pageTurn == 2 ? pageIndex(for: scrollOffset) : (page ?? pageIndex), count: pages.count)
         b.chapterIndex = boundedReadingIndex(chapterIndex, count: b.chapters.count)
         b.paragraphIndex = p
@@ -635,8 +643,17 @@ struct ReaderView: View {
                 case .end:
                     rebuild(size: lastSize, keepOffset: nil)
                     pageIndex = max(pages.count - 1, 0)
-                    scrollCharOffset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
-                case .offset(let offset): rebuild(size: lastSize, keepOffset: offset)
+                    scrollProgress.offset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
+                case .offset(let offset):
+                    rebuild(size: lastSize, keepOffset: offset)
+                    scrollProgress.offset = min(max(offset, 0), attributed.length)
+                case .page(let savedPage):
+                    // Old bookmarks contain a page number only. Resolve it
+                    // after the network chapter has actually been paginated.
+                    rebuild(size: lastSize, keepOffset: nil)
+                    pageIndex = boundedReadingIndex(savedPage, count: pages.count)
+                    scrollProgress.offset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
+                    if store.pageTurn == 2 { chapterLanding = .offset(scrollProgress.offset) }
                 }
                 saveProgress(page: pageIndex)
                 jumpToken += 1
@@ -651,17 +668,35 @@ struct ReaderView: View {
 
     func addBookmark() {
         guard let b = book, b.chapters.indices.contains(chapterIndex) else { return }
+        let offset = currentCharOffset()
+        let visiblePage = boundedReadingIndex(store.pageTurn == 2 ? pageIndex(for: offset) : pageIndex, count: pages.count)
         var snippet = ""
-        if pages.indices.contains(pageIndex) {
-            snippet = String(attributed.attributedSubstring(from: pages[pageIndex]).string.prefix(40))
+        if pages.indices.contains(visiblePage) {
+            snippet = String(attributed.attributedSubstring(from: pages[visiblePage]).string.prefix(40))
         }
-        store.addBookmark(Bookmark(bookId: b.id, chapterIndex: chapterIndex, paragraphIndex: pageIndex, snippet: snippet))
+        store.addBookmark(Bookmark(bookId: b.id, chapterIndex: chapterIndex, paragraphIndex: visiblePage, snippet: snippet, charOffset: offset))
     }
 
     func jumpToBookmark(_ bm: Bookmark) {
         showBookmarks = false
+        showMenu = false
         openChapter(bm.chapterIndex, atStart: true)
-        pageIndex = boundedReadingIndex(bm.paragraphIndex, count: pages.count)
+        if let offset = bm.charOffset {
+            chapterLanding = .offset(max(0, offset))
+            scrollProgress.offset = max(0, offset)
+        } else {
+            chapterLanding = .page(bm.paragraphIndex)
+        }
+        // For an unloaded web chapter, keep the target until loading and
+        // pagination finish; pages is intentionally empty at this point.
+        guard chapter?.text.hasPrefix("__URL__") != true else { return }
+        if let offset = bm.charOffset {
+            rebuild(size: lastSize, keepOffset: max(0, offset))
+        } else {
+            pageIndex = boundedReadingIndex(bm.paragraphIndex, count: pages.count)
+            scrollProgress.offset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
+            if store.pageTurn == 2 { chapterLanding = .offset(scrollProgress.offset) }
+        }
         saveProgress(page: pageIndex)
         jumpToken += 1
     }
@@ -746,6 +781,7 @@ struct ReaderView: View {
 
     func changeSource(to r: SourceBook) {
         showSourceChange = false
+        showMenu = false
         guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
             errorText = "找不到对应书源（可能已删除），请重新搜索"
             return
@@ -774,7 +810,7 @@ struct ReaderView: View {
                         ?? min(previousIndex, updated.chapters.count - 1)
                     openChapter(target)
                     chapterLanding = .offset(previousOffset)
-                    scrollCharOffset = previousOffset
+                    scrollProgress.offset = previousOffset
                     if !updated.chapters[target].text.hasPrefix("__URL__") {
                         rebuild(size: lastSize, keepOffset: previousOffset)
                         saveProgress(page: pageIndex)
@@ -825,6 +861,7 @@ struct ReaderView: View {
         HStack(spacing: 14) {
             Button { dismiss() } label: {
                 Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium))
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(book?.title ?? "").font(.headline).lineLimit(1)
@@ -835,6 +872,7 @@ struct ReaderView: View {
             Spacer()
             Button { addBookmark() } label: {
                 Image(systemName: "bookmark").font(.system(size: 18))
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             Menu {
                 Button("搜索正文", systemImage: "magnifyingglass") { showSearch = true }
@@ -842,7 +880,10 @@ struct ReaderView: View {
                 Button("切换书源", systemImage: "arrow.triangle.2.circlepath") { openSourceChange() }
                 Button("缓存全书", systemImage: "arrow.down.circle") { startDownloadAll() }
                 Button(autoPageEnabled ? "关闭自动翻页" : "自动翻页", systemImage: "play.circle") { toggleAutoPage(!autoPageEnabled) }
-            } label: { Image(systemName: "ellipsis").font(.system(size: 20)) }
+            } label: {
+                Image(systemName: "ellipsis").font(.system(size: 20))
+                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            }
                 .accessibilityLabel("更多操作")
 
         }
@@ -1082,7 +1123,7 @@ struct ReaderView: View {
             pageIndex = idx
             if store.pageTurn == 2 {
                 let match = (attributed.string as NSString).range(of: line)
-                if match.location != NSNotFound { scrollCharOffset = match.location; chapterLanding = .offset(match.location) }
+                if match.location != NSNotFound { scrollProgress.offset = match.location; chapterLanding = .offset(match.location) }
             }
             saveProgress(page: idx)
             jumpToken += 1
@@ -1099,7 +1140,7 @@ struct ReaderView: View {
                 pageIndex = idx
                 if store.pageTurn == 2 {
                     let match = (attributed.string as NSString).range(of: line)
-                    if match.location != NSNotFound { scrollCharOffset = match.location; chapterLanding = .offset(match.location) }
+                    if match.location != NSNotFound { scrollProgress.offset = match.location; chapterLanding = .offset(match.location) }
                     jumpToken += 1
                 }
                 saveProgress(page: idx)

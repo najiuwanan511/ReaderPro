@@ -132,7 +132,15 @@ class Handler(BaseHTTPRequestHandler):
             if 'upstream' in locals(): upstream.close()
 
     def do_GET(self):
-        path = urlsplit(self.path).path
+        parsed = urlsplit(self.path)
+        expected = getattr(self.server, 'expected_proxy_auth', None)
+        if parsed.scheme and expected and self.headers.get('Proxy-Authorization') != expected:
+            self.send_response(407, 'Proxy Authentication Required')
+            self.send_header('Proxy-Authenticate', 'Basic realm="fixture"')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+        path = parsed.path
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
@@ -145,6 +153,12 @@ class Handler(BaseHTTPRequestHandler):
                 body = 'proxy-routed:' + urlsplit(self.path).hostname
         elif path == '/source-proxy-https-test':
             body = 'https-proxy-routed'
+        elif path == '/source-proxy-cross-scheme':
+            self.send_response(302)
+            self.send_header('Location', 'https://readerproxy.invalid/source-proxy-https-test')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
         elif path == '/packs/audit-config':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({key: int(os.environ.get('SOURCE_AUDIT_' + key.upper(), default))

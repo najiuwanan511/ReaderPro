@@ -9,7 +9,9 @@ final class RssSourceUITests: XCTestCase {
         app.tabBars.buttons["订阅"].tap()
         let feed = app.buttons.containing(.staticText, identifier: "订阅样式测试").firstMatch
         XCTAssertTrue(feed.waitForExistence(timeout: 10)); feed.tap()
-        XCTAssertTrue(app.staticTexts["样本文章1"].waitForExistence(timeout: 20))
+        // A cold iOS 17 simulator can schedule the fixture request more than
+        // 20 seconds after opening the feed. Still require the parsed item.
+        XCTAssertTrue(app.staticTexts["样本文章1"].waitForExistence(timeout: 60))
         let style = app.buttons["订阅列表样式"]
         XCTAssertTrue(style.waitForExistence(timeout: 10))
         XCTAssertEqual(style.value as? String, "样式 0")

@@ -40,6 +40,9 @@ struct Bookmark: Identifiable, Codable, Equatable, Hashable {
     var chapterIndex: Int
     var paragraphIndex: Int
     var snippet: String
+    // New bookmarks keep a UTF-16 character position independent of font
+    // size and page layout. Older saved bookmarks have no such field.
+    var charOffset: Int? = nil
     var date: Date = Date()
 }
 

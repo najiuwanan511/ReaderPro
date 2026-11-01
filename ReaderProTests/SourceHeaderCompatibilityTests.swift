@@ -32,8 +32,9 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         JSON.stringify(headers);
         </JS>
         """#
+        let fixture = source
         let headers = try await withTimeout(10) {
-            try await source.withRules { LegadoJSCtx.headers }
+            try await fixture.withRules { LegadoJSCtx.headers }
         }
         XCTAssertEqual(headers["Referer"], "https://example.test/")
         XCTAssertEqual(headers["Origin"], "https://example.test")
@@ -45,8 +46,9 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         var source = LegadoSource()
         source.bookSourceUrl = "https://example.test"
         source.header = "<js>throw new Error('broken optional header');</js>"
+        let fixture = source
         let headers = try await withTimeout(10) {
-            try await source.withRules { LegadoJSCtx.headers }
+            try await fixture.withRules { LegadoJSCtx.headers }
         }
         XCTAssertTrue(headers.isEmpty)
     }
@@ -55,11 +57,13 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         var source = LegadoSource()
         source.bookSourceUrl = "https://example.test"
         source.header = "@js:JSON.stringify({'Referer': baseUrl, 'X-Test': 'ok'})"
-        let scripted = try await withTimeout(10) { try await source.withRules { LegadoJSCtx.headers } }
+        let scriptedSource = source
+        let scripted = try await withTimeout(10) { try await scriptedSource.withRules { LegadoJSCtx.headers } }
         XCTAssertEqual(scripted["Referer"], "https://example.test")
         XCTAssertEqual(scripted["X-Test"], "ok")
         source.header = #"{"Accept":"text/html"}"#
-        let plain = try await withTimeout(10) { try await source.withRules { LegadoJSCtx.headers } }
+        let plainSource = source
+        let plain = try await withTimeout(10) { try await plainSource.withRules { LegadoJSCtx.headers } }
         XCTAssertEqual(plain["Accept"], "text/html")
     }
 
@@ -69,7 +73,7 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
             configuration.protocolClasses = [HeaderResponseProtocol.self]
             let session = URLSession(configuration: configuration)
             defer { session.invalidateAndCancel() }
-            return try await SourceHTTP.$testSession.withValue(session) {
+            return try SourceHTTP.$testSession.withValue(session) {
                 let failures = RuleFailures()
                 return try LegadoJSCtx.$failures.withValue(failures) {
                     // From the user's 笔趣阁#6 redirect search pattern.
@@ -184,13 +188,28 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
             _ = try await SourceHTTP.load(badProxy, stage: "代理回退测试")
             XCTFail("Failed proxy must not fall back to direct connection")
         } catch { /* expected failed proxy */ }
+
+        // The two schemes use different iOS proxy transports; never follow a
+        // cross-scheme redirect on a session that could connect directly.
+        let cross = try SourceHTTP.request("http://readerproxy.invalid/source-proxy-cross-scheme", base: target,
+                                           headers: ["proxy": "http://127.0.0.1:8765"])
+        do {
+            _ = try await SourceHTTP.load(cross, stage: "代理跳转测试")
+            XCTFail("Proxy redirects must not silently switch transports")
+        } catch {
+            XCTAssertTrue(sourceErrorMessage(error).contains("跨 HTTP/HTTPS 跳转"), sourceErrorMessage(error))
+        }
     }
 
-    @MainActor func testWebViewUsesIsolatedSourceProxy() async throws {
+    @MainActor func testWebViewRejectsProxyWithoutFallingBackDirectly() async throws {
         let target = "http://readerproxy.invalid/source-proxy-test"
         let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:8765"])
-        let page = try await SourceWebLoader.load(request, timeout: 15)
-        XCTAssertTrue(page.text.contains("proxy-routed:readerproxy.invalid"), page.text)
+        do {
+            _ = try await SourceWebLoader.load(request, timeout: 5)
+            XCTFail("WebView must never silently bypass an unsupported source proxy")
+        } catch {
+            XCTAssertTrue(sourceErrorMessage(error).contains("网页渲染暂不支持该代理"), sourceErrorMessage(error))
+        }
         let direct = try SourceHTTP.request("http://127.0.0.1:8765/web-script", base: "http://127.0.0.1:8765")
         let directPage = try await SourceWebLoader.load(direct, timeout: 15, delay: 0.6)
         XCTAssertTrue(directPage.text.contains("网页脚本正文"), directPage.text)

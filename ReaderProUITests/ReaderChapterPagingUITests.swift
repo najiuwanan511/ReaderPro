@@ -75,13 +75,57 @@ final class ReaderChapterPagingUITests: XCTestCase {
         XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let more = app.buttons["更多操作"]
-        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(more.frame.height, 40, "阅读菜单按钮不能被裁切，需保留可触摸区域")
+        XCTAssertTrue(more.isHittable, "阅读菜单按钮必须可点击")
+        more.tap()
         app.buttons["切换书源"].tap()
         XCTAssertTrue(app.navigationBars["换源"].waitForExistence(timeout: 10))
         app.buttons["搜索"].tap()
         let result = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 30)); result.tap()
         XCTAssertTrue(page(app, containing: "第2章第1段").waitForExistence(timeout: 30), "换源后应加载对应章节，而非回到第一章或停在未加载状态")
+    }
+
+    func testLegacyAndCharacterBookmarksRestoreAfterOnlineLoad() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=0", "--reader-start-second", "--reader-bookmark-fixture"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let more = app.buttons["更多操作"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        app.buttons["查看书签"].tap()
+        let old = app.buttons.containing(.staticText, identifier: "旧网络书签").firstMatch
+        XCTAssertTrue(old.waitForExistence(timeout: 10)); old.tap()
+        XCTAssertTrue(page(app, containing: "第一章分页内容").waitForExistence(timeout: 30))
+        XCTAssertTrue(app.staticTexts["第 3 页"].waitForExistence(timeout: 15), "旧版页码书签必须在网络章节完成加载后定位")
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["下一章"].waitForExistence(timeout: 10)); app.buttons["下一章"].tap()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 15))
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        app.buttons["查看书签"].tap()
+        let current = app.buttons.containing(.staticText, identifier: "新网络书签").firstMatch
+        XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
+        XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 30), "字符书签应回到同一正文位置")
+    }
+
+    func testCharacterBookmarkScrollsToItsPositionAfterOnlineLoad() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=2", "--reader-start-second", "--reader-bookmark-fixture", "--reader-scroll-position-fixture"]
+        app.launch()
+        XCTAssertTrue(app.textViews["readerFullText"].waitForExistence(timeout: 20))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let more = app.buttons["更多操作"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        app.buttons["查看书签"].tap()
+        let bookmark = app.buttons.containing(.staticText, identifier: "新网络书签").firstMatch
+        XCTAssertTrue(bookmark.waitForExistence(timeout: 10)); bookmark.tap()
+        let visible = app.staticTexts["readerVisibleScrollOffset"]
+        let scrolled = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (Int(visible.label) ?? 0) > 1000
+        }, object: visible)
+        XCTAssertEqual(XCTWaiter.wait(for: [scrolled], timeout: 30), .completed, "滚动模式应回到书签对应的正文位置")
     }
 
     func testScrollContinuesBetweenChaptersAtBothEnds() {
