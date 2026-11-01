@@ -230,9 +230,10 @@ struct MangaView: View {
         guard let src = store.sourceForBook(b) else { loadError = "书源已删除，无法拉取"; return }
         loadingChapter = true; loadError = ""
         let chIndex = chapter
+        let nextURL = b.chapters.indices.contains(chIndex + 1) ? b.chapters[chIndex + 1].url : nil
         Task {
             do {
-                let imgs = try await src.fetchChapterImages(ch)
+                let imgs = try await src.fetchChapterImages(ch, nextChapterUrl: nextURL)
                 await MainActor.run {
                     if var nb = store.books.first(where: { $0.id == bookId }), chIndex < nb.chapters.count {
                         nb.chapters[chIndex].imageUrls = imgs

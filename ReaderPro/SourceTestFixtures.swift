@@ -112,7 +112,13 @@ struct SourceFixtureRoot: View {
             catch { status = "测试恢复失败：\(error.localizedDescription)" }
         }
         _persistenceStatus = State(initialValue: status)
-        _store = StateObject(wrappedValue: BookStore())
+        let fixtureStore = BookStore()
+        // The boundary fixture deliberately exercises every page mode and
+        // persists progress. Other UI fixtures expect the normal page reader.
+        if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {
+            fixtureStore.pageTurn = 1
+        }
+        _store = StateObject(wrappedValue: fixtureStore)
         if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {
             let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("source-validation.json")
             try? FileManager.default.removeItem(at: url)

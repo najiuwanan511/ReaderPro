@@ -24,6 +24,24 @@ func restoredReadingPosition(_ book: LocalBook) -> (chapter: Int, offset: Int) {
     return (chapter, chapter == book.chapterIndex ? max(0, book.charOffset) : 0)
 }
 
+private enum ReaderChapterLanding {
+    case start, end, offset(Int)
+}
+
+private struct ReaderScrollBounds: Equatable {
+    var top: CGFloat = 0
+    var bottom: CGFloat = .greatestFiniteMagnitude
+}
+
+private struct ReaderScrollBoundsKey: PreferenceKey {
+    static var defaultValue = ReaderScrollBounds()
+    static func reduce(value: inout ReaderScrollBounds, nextValue: () -> ReaderScrollBounds) {
+        let next = nextValue()
+        if next.top != 0 { value.top = next.top }
+        if next.bottom != .greatestFiniteMagnitude { value.bottom = next.bottom }
+    }
+}
+
 struct ReaderView: View {
     @ObservedObject var store: BookStore
     let bookId: String
@@ -55,6 +73,10 @@ struct ReaderView: View {
     @State private var errorText = ""
     @State private var chapterLoadTask: Task<Void, Never>?
     @State private var chapterLoadToken = UUID()
+    @State private var chapterLanding: ReaderChapterLanding = .start
+    @State private var pageDragStartIndex: Int?
+    @State private var scrollBounds = ReaderScrollBounds()
+    @State private var scrollDragStart: (top: Bool, bottom: Bool)?
     @State private var initialBrightness: CGFloat = 0.5
     @State private var initialIdleTimerDisabled = false
 
@@ -147,8 +169,8 @@ struct ReaderView: View {
             UIApplication.shared.isIdleTimerDisabled = enabled || initialIdleTimerDisabled
         }
         .onDisappear {
+            if !loading && chapter?.text.hasPrefix("__URL__") != true { saveProgress() }
             cancelChapterLoad()
-            saveProgress()
             let minutes = max(0, Int(Date().timeIntervalSince(readingStart) / 60))
             if minutes > 0, var b = store.books.first(where: { $0.id == bookId }) {
                 b.totalMinutes += minutes
@@ -195,6 +217,7 @@ struct ReaderView: View {
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
         .onChange(of: pageIndex) { _, v in saveProgress(page: v) }
+        .simultaneousGesture(boundarySwipe(width: size.width))
     }
 
     // 无动画：直接显示当前页
@@ -202,6 +225,7 @@ struct ReaderView: View {
     func noneReader(size: CGSize) -> some View {
         pageView(i: pageIndex, size: size)
             .frame(width: size.width, height: size.height)
+            .simultaneousGesture(boundarySwipe(width: size.width, allPages: true))
     }
 
     // 仿真翻页（pageCurl 卷曲动画）
@@ -214,18 +238,23 @@ struct ReaderView: View {
                 pageSize: pageSize,
                 background: theme.background,
                 startIndex: pageIndex,
+                hasPreviousChapter: chapterIndex > 0,
+                hasNextChapter: chapterIndex < (book?.chapters.count ?? 0) - 1,
                 onPageChange: { idx in
                     pageIndex = idx
                     saveProgress(page: idx)
+                },
+                onChapterBoundary: { forward in
+                    if forward { goNext() } else { goPrev() }
                 }
             )
             // 中间 1/3 点击弹菜单，左右交给系统翻页
             HStack(spacing: 0) {
-                Color.clear.frame(width: size.width / 3)
+                Color.clear.frame(width: size.width / 3).allowsHitTesting(false)
                 Color.clear.frame(width: size.width / 3)
                     .contentShape(Rectangle())
                     .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
-                Color.clear.frame(width: size.width / 3)
+                Color.clear.frame(width: size.width / 3).allowsHitTesting(false)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -257,6 +286,8 @@ struct ReaderView: View {
                 .onEnded { g in
                     if g.translation.width < -w * 0.25 {
                         goNext()
+                    } else if g.translation.width > w * 0.25 {
+                        goPrev()
                     }
                     withAnimation(.easeOut(duration: store.pageTurnSpeed)) { coverDrag = 0 }
                 }
@@ -266,8 +297,13 @@ struct ReaderView: View {
     // 滚动：整章连续滚动
     @ViewBuilder
     func scrollReader(size: CGSize) -> some View {
+        ScrollViewReader { reader in
         ScrollView {
             VStack(alignment: .leading, spacing: CGFloat(store.paragraphSpacing)) {
+                Color.clear.frame(height: 0).id("reader-scroll-top")
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: ReaderScrollBoundsKey.self, value: ReaderScrollBounds(top: geo.frame(in: .named("reader-scroll")).minY))
+                    })
                 if let c = chapter, store.showHeader {
                     Text(c.title)
                         .font(.system(size: CGFloat(store.fontSize + 3), weight: .bold))
@@ -278,11 +314,46 @@ struct ReaderView: View {
                     attributed: attributed,
                     width: max(size.width - CGFloat(store.pagePaddingH * 2), 100)
                 )
+                Color.clear.frame(height: 0).id("reader-scroll-bottom")
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: ReaderScrollBoundsKey.self, value: ReaderScrollBounds(bottom: geo.frame(in: .named("reader-scroll")).maxY))
+                    })
             }
             .padding(.horizontal, CGFloat(store.pagePaddingH))
             .padding(.vertical, CGFloat(store.pagePaddingV))
         }
+        .coordinateSpace(name: "reader-scroll")
+        .onPreferenceChange(ReaderScrollBoundsKey.self) { scrollBounds = $0 }
+        .simultaneousGesture(DragGesture(minimumDistance: 20)
+            .onChanged { _ in
+                if scrollDragStart == nil {
+                    let inset = CGFloat(store.pagePaddingV) + 3
+                    scrollDragStart = (scrollBounds.top >= inset - 6, scrollBounds.bottom <= size.height - inset + 6)
+                }
+            }
+            .onEnded { drag in
+                defer { scrollDragStart = nil }
+                guard let start = scrollDragStart, abs(drag.translation.height) > 60,
+                      abs(drag.translation.height) > abs(drag.translation.width) else { return }
+                if start.bottom && drag.translation.height < 0 && chapterIndex < (book?.chapters.count ?? 0) - 1 {
+                    openChapter(chapterIndex + 1)
+                } else if start.top && drag.translation.height > 0 && chapterIndex > 0 {
+                    openChapter(chapterIndex - 1, atEnd: true)
+                }
+            })
         .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
+        .onAppear {
+            if isEndLanding {
+                DispatchQueue.main.async { reader.scrollTo("reader-scroll-bottom", anchor: .bottom) }
+            }
+        }
+        .onChange(of: jumpToken) { _, _ in
+            reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top)
+        }
+        .onChange(of: loading) { _, active in
+            if !active { reader.scrollTo(isEndLanding ? "reader-scroll-bottom" : "reader-scroll-top", anchor: isEndLanding ? .bottom : .top) }
+        }
+        }
     }
 
     // 单页 + 点按三区（左翻上页 / 中弹菜单 / 右翻下页）
@@ -333,6 +404,24 @@ struct ReaderView: View {
 
     // MARK: 翻页
 
+    private var isEndLanding: Bool {
+        if case .end = chapterLanding { return true }
+        return false
+    }
+
+    private func boundarySwipe(width: CGFloat, allPages: Bool = false) -> some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { _ in if pageDragStartIndex == nil { pageDragStartIndex = pageIndex } }
+            .onEnded { drag in
+                defer { pageDragStartIndex = nil }
+                guard let start = pageDragStartIndex,
+                      abs(drag.translation.width) > max(50, width * 0.15),
+                      abs(drag.translation.width) > abs(drag.translation.height) else { return }
+                if drag.translation.width < 0 && (allPages || start >= pages.count - 1) { goNext() }
+                if drag.translation.width > 0 && (allPages || start == 0) { goPrev() }
+            }
+    }
+
     func goNext() {
         if pageIndex < pages.count - 1 {
             withAnimation(.easeOut(duration: store.pageTurnSpeed)) { pageIndex += 1 }
@@ -352,12 +441,23 @@ struct ReaderView: View {
     }
 
     func openChapter(_ i: Int, atStart: Bool = true, atEnd: Bool = false) {
-        guard let b = book else { return }
+        guard let b = book, !b.chapters.isEmpty else { return }
         chapterIndex = max(0, min(i, b.chapters.count - 1))
-        loadChapterIfNeeded()
-        rebuild(size: lastSize, keepOffset: nil)
-        pageIndex = atEnd ? max(pages.count - 1, 0) : 0
-        saveProgress(page: pageIndex)
+        chapterLanding = atEnd ? .end : .start
+        pageIndex = 0
+        if b.chapters[chapterIndex].text.hasPrefix("__URL__") {
+            // Do not paginate the URL placeholder or save the previous
+            // chapter's page offsets while the new chapter is downloading.
+            pages = []
+            attributed = NSAttributedString(string: "")
+            saveProgress(page: 0)
+            loadChapterIfNeeded()
+        } else {
+            cancelChapterLoad()
+            rebuild(size: lastSize, keepOffset: nil)
+            pageIndex = atEnd ? max(pages.count - 1, 0) : 0
+            saveProgress(page: pageIndex)
+        }
         jumpToken += 1
     }
 
@@ -385,8 +485,8 @@ struct ReaderView: View {
     }
 
     func rebuild(size: CGSize, keepOffset: Int?) {
-        guard let c = chapter else { return }
         lastSize = size
+        guard let c = chapter, !c.text.hasPrefix("__URL__") else { return }
         let text = NSAttributedString(string: store.purify(c.text), attributes: baseAttributes())
         attributed = text
         // Reserve the real overlay height. A fixed 20pt allowance is enough at
@@ -425,14 +525,17 @@ struct ReaderView: View {
         guard let b = book else { return }
         let restored = restoredReadingPosition(b)
         chapterIndex = restored.chapter
+        chapterLanding = .offset(restored.offset)
         initialBrightness = UIScreen.main.brightness
         initialIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
         UIApplication.shared.isIdleTimerDisabled = keepScreenAwake || initialIdleTimerDisabled
         applyBrightness()
-        loadChapterIfNeeded()
-        rebuild(size: size, keepOffset: restored.offset)
-        if store.pageTurn != 2 {
-            pageIndex = pageIndex(for: restored.offset)
+        if b.chapters.indices.contains(chapterIndex), b.chapters[chapterIndex].text.hasPrefix("__URL__") {
+            pages = []
+            attributed = NSAttributedString(string: "")
+            loadChapterIfNeeded()
+        } else {
+            rebuild(size: size, keepOffset: restored.offset)
         }
     }
 
@@ -453,7 +556,7 @@ struct ReaderView: View {
         b.paragraphIndex = p
         if pages.indices.contains(p) {
             b.charOffset = pages[p].location
-        }
+        } else { b.charOffset = 0 }
         if !b.chapters.isEmpty {
             let pageCount = max(pages.count, 1)
             let frac = Double(p) / Double(pageCount)
@@ -484,7 +587,7 @@ struct ReaderView: View {
         loading = true
         let idx = chapterIndex
         let token = chapterLoadToken
-        let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : b.chapters.first?.url
+        let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : nil
         chapterLoadTask = Task { @MainActor in
             defer {
                 if chapterLoadToken == token { loading = false; chapterLoadTask = nil }
@@ -497,7 +600,15 @@ struct ReaderView: View {
                       nb.chapters.indices.contains(idx), nb.chapters[idx].id == ch.id else { return }
                 nb.chapters[idx].text = content
                 store.updateBook(nb)
-                rebuild(size: lastSize, keepOffset: 0)
+                switch chapterLanding {
+                case .start: rebuild(size: lastSize, keepOffset: 0)
+                case .end:
+                    rebuild(size: lastSize, keepOffset: nil)
+                    pageIndex = max(pages.count - 1, 0)
+                case .offset(let offset): rebuild(size: lastSize, keepOffset: offset)
+                }
+                saveProgress(page: pageIndex)
+                jumpToken += 1
             } catch {
                 guard !Task.isCancelled, chapterLoadToken == token else { return }
                 errorText = sourceErrorMessage(error)
@@ -707,6 +818,7 @@ struct ReaderView: View {
                     if !editing && store.pageTurn == 4 { jumpToken += 1 }
                 }).disabled(store.pageTurn == 2 || pages.count < 2)
                     .accessibilityLabel("本章阅读进度")
+                    .accessibilityIdentifier("readerProgressSlider")
                 Button("下一章") { openChapter(chapterIndex + 1) }
                     .disabled(chapterIndex >= (book?.chapters.count ?? 0) - 1)
             }.font(.system(size: 13))

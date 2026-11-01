@@ -97,8 +97,9 @@ enum SourceValidation {
                 guard let first = chapters.first else { throw SourceFailure(stage: stage, message: "目录为空") }
                 ok(stage, "\(chapters.count) 章（遍历目录分页）")
                 stage = "正文"
+                let nextURL = chapters.dropFirst().first?.url ?? first.url
                 if source.isComic {
-                    let images = try await withTimeout(45) { try await source.fetchChapterImages(first) }
+                    let images = try await withTimeout(45) { try await source.fetchChapterImages(first, nextChapterUrl: nextURL) }
                     guard let address = images.first else { throw SourceFailure(stage: stage, message: "图片列表为空") }
                     let request = try SourceHTTP.request(address, base: first.url ?? book.url, headers: source.requestHeaders)
                     let (_, response) = try await SourceTLS.$allowsInvalidCertificates.withValue(SourceTLS.isAllowed(source.bookSourceUrl)) {
@@ -110,7 +111,6 @@ enum SourceValidation {
                     }
                     ok(stage, "首章 \(images.count) 张图片，首张响应正常")
                 } else {
-                    let nextURL = chapters.dropFirst().first?.url ?? first.url
                     let text = try await withTimeout(45) { try await source.fetchChapterContent(first, nextChapterUrl: nextURL) }
                     guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SourceFailure(stage: stage, message: "首章正文为空") }
                     ok(stage, "首章「\(first.title)」读取 \(text.count) 字")

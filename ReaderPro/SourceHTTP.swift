@@ -79,8 +79,28 @@ enum SourceHTTP {
         return [:]
     }
 
+    static func webViewDelay(_ options: [String: Any]) -> Double {
+        let value = options["webViewDelayTime"]
+        let milliseconds = (value as? NSNumber)?.doubleValue ?? (value as? String).flatMap { Double($0) } ?? 0
+        return milliseconds.isFinite ? max(0, milliseconds) / 1000 : 0
+    }
+
     static func expand(_ raw: String, base: String, key: String, page: Int) -> String {
         var value = LegadoSource.fillSearchTemplate(raw, key: key, page: page, sourceUrl: base)
+        // AnalyzeUrl replaces the page alternatives only after evaluating
+        // embedded {{...}} expressions. Empty first alternatives are common:
+        // /<,page/{{page}}> is / on page 1 and /page/2 on page 2.
+        // Keep the final alternative for all pages beyond those listed.
+        if let pattern = try? NSRegularExpression(pattern: #"<(.*?)>"#) {
+            let range = NSRange(value.startIndex..., in: value)
+            for match in pattern.matches(in: value, range: range).reversed() {
+                guard let whole = Range(match.range, in: value),
+                      let alternativesRange = Range(match.range(at: 1), in: value) else { continue }
+                let alternatives = String(value[alternativesRange]).components(separatedBy: ",")
+                let index = min(max(page, 1) - 1, alternatives.count - 1)
+                value.replaceSubrange(whole, with: alternatives[index].trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+        }
         let charset = (options(value).options["charset"] as? String ?? "utf-8").lowercased()
         if charset.hasPrefix("gb"), !key.isEmpty {
             let encoding = String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))
@@ -95,33 +115,70 @@ enum SourceHTTP {
     }
 
     static func request(_ raw: String, base: String, headers sourceHeaders: [String: String] = [:],
-                        key: String = "", page: Int = 1) throws -> URLRequest {
+                        key: String = "", page: Int = 1, alreadyExpanded: Bool = false,
+                        sourceTemplate: String? = nil) throws -> URLRequest {
         let fill: (String) -> String = { LegadoSource.fillSearchTemplate($0, key: key, page: page, sourceUrl: base) }
         // Numeric templates may be unquoted in options JSON ("page":{{page}}).
         // Expand before parsing; parsed body/header strings are already expanded.
-        let parsed = options(expand(raw, base: base, key: key, page: page))
-        let address = resolveUrl(parsed.url, base: base)
-        guard let url = URL(string: address), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil else {
+        let parsed = options(alreadyExpanded ? raw : expand(raw, base: base, key: key, page: page))
+        var address = resolveUrl(parsed.url, base: base)
+        guard let initialURL = URL(string: address), ["http", "https"].contains(initialURL.scheme?.lowercased() ?? ""), initialURL.host != nil else {
             throw SourceFailure(stage: "请求地址", message: "规则没有生成有效的 HTTP/HTTPS 地址", url: address)
         }
-        var req = URLRequest(url: url, timeoutInterval: 20)
+        var req = URLRequest(url: initialURL, timeoutInterval: 20)
         req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         // Use the originating page, never an unrelated source subscription site.
         if let baseURL = URL(string: base), baseURL.host != nil { req.setValue(base, forHTTPHeaderField: "Referer") }
         for (k, v) in sourceHeaders { req.setValue(fill(v), forHTTPHeaderField: k) }
         for (k, v) in headers(parsed.options["headers"] ?? parsed.options["header"]) { req.setValue(v, forHTTPHeaderField: k) }
+        // Legado executes URL option `js` after resolving the URL and merging
+        // headers. The script can inspect java.url and mutate java.headerMap
+        // before the actual request (e.g. retrieve and install a site cookie).
+        if let script = parsed.options["js"] as? String, !script.isEmpty {
+            let context = SourceJSURLContext(url: address, headers: req.allHTTPHeaderFields ?? [:])
+            let result = LegadoJS.run(script, input: address, baseUrl: base, sourceKey: key,
+                                      sourceUrl: LegadoJSCtx.sourceUrl.isEmpty ? base : LegadoJSCtx.sourceUrl,
+                                      header: context.headers, book: LegadoJSCtx.book, page: page,
+                                      expandTemplates: false, urlContext: context)
+            try LegadoJSCtx.failures?.check()
+            address = context.returnedValue ? result : context.url
+            guard let updated = URL(string: address), ["http", "https"].contains(updated.scheme?.lowercased() ?? ""), updated.host != nil else {
+                throw SourceFailure(stage: "请求地址", message: "地址脚本没有返回有效的 HTTP/HTTPS 地址", url: address)
+            }
+            req.url = updated
+            req.allHTTPHeaderFields = context.headers
+        }
         req.httpMethod = (parsed.options["method"] as? String ?? "GET").uppercased()
         if let body = parsed.options["body"] as? String {
-            let text = body
+            var text = body
+            // AnalyzeUrl sends a JSON body as JSON, with `key` as its original
+            // string. URL percent encoding belongs in a URL/form, not inside
+            // a JSON value. Preserve explicit JS-encoded values by repairing
+            // only a literal {{key}} in the original body template.
+            let originalBody = options(sourceTemplate ?? raw).options["body"] as? String ?? ""
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let charset = (parsed.options["charset"] as? String ?? "utf-8").lowercased()
-            let encoding = charset.hasPrefix("gb")
+            let jsonBody = (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")) &&
+                (try? JSONSerialization.jsonObject(with: Data(trimmed.utf8))) != nil
+            if jsonBody && originalBody.contains("{{key}}") && !key.isEmpty,
+               let encodedData = try? JSONEncoder().encode(key),
+               let quoted = String(data: encodedData, encoding: .utf8), quoted.count >= 2 {
+                let escapedKey = String(quoted.dropFirst().dropLast())
+                var percentKey = key.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? key
+                if charset.hasPrefix("gb"), let bytes = key.data(using: String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue)))) {
+                    let allowed = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~".utf8)
+                    percentKey = bytes.map { allowed.contains($0) ? String(UnicodeScalar($0)) : String(format: "%%%02X", $0) }.joined()
+                }
+                if percentKey != key { text = text.replacingOccurrences(of: percentKey, with: escapedKey) }
+            }
+            let encoding = !jsonBody && charset.hasPrefix("gb")
                 ? String.Encoding(rawValue: CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))) : .utf8
             guard let data = text.data(using: encoding) else {
                 throw SourceFailure(stage: "请求编码", message: "请求正文无法按 \(charset) 编码", url: address)
             }
             req.httpBody = data
             if req.value(forHTTPHeaderField: "Content-Type") == nil {
-                req.setValue("application/x-www-form-urlencoded; charset=\(charset)", forHTTPHeaderField: "Content-Type")
+                req.setValue(jsonBody ? "application/json; charset=utf-8" : "application/x-www-form-urlencoded; charset=\(charset)", forHTTPHeaderField: "Content-Type")
             }
         } else if let body = parsed.options["body"], JSONSerialization.isValidJSONObject(body) {
             req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -192,10 +249,10 @@ extension LegadoSource {
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {
         let expanded = SourceHTTP.expand(address, base: base ?? bookSourceUrl, key: key, page: page)
         if let inline = try SourceHTTP.inlinePage(expanded) { return inline }
-        let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page)
+        let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page, alreadyExpanded: true, sourceTemplate: address)
         let options = SourceHTTP.options(expanded).options
         if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {
-            return try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20))
+            return try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20), delay: SourceHTTP.webViewDelay(options))
         }
         return try await SourceHTTP.load(req, stage: stage, hexEncoded: !(options["type"] as? String ?? "").isEmpty)
     }

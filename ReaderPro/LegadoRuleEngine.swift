@@ -754,9 +754,21 @@ func regexExtract(_ text: String, _ pattern: String) -> [String] {
 }
 
 func applyRegexReplace(_ text: String, pattern: String, replacement: String) -> String {
-    guard let re = try? NSRegularExpression(pattern: pattern, options: []) else { return text }
+    guard let re = try? NSRegularExpression(pattern: pattern, options: []) else {
+        return text.replacingOccurrences(of: pattern, with: replacement)
+    }
     let range = NSRange(text.startIndex..., in: text)
     return re.stringByReplacingMatches(in: text, range: range, withTemplate: replacement)
+}
+
+// Legado's third ## segment (often written with a trailing ###) means
+// extract the first matching substring and replace within that substring.
+// It is not a normal replacement in the full input.
+func applyRegexFirstMatch(_ text: String, pattern: String, replacement: String) -> String {
+    guard let re = try? NSRegularExpression(pattern: pattern, options: []) else { return replacement }
+    let range = NSRange(text.startIndex..., in: text)
+    guard let match = re.firstMatch(in: text, range: range) else { return "" }
+    return re.replacementString(for: match, in: text, offset: 0, template: replacement)
 }
 
 func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
@@ -764,7 +776,11 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
     if pat.hasPrefix("##") { pat = String(pat.dropFirst(2)) }
     if pat.isEmpty { return text }
     if let split = pat.range(of: "##") {
-        return applyRegexReplace(text, pattern: String(pat[..<split.lowerBound]), replacement: String(pat[split.upperBound...]))
+        let pattern = String(pat[..<split.lowerBound])
+        let fields = String(pat[split.upperBound...]).components(separatedBy: "##")
+        let replacement = fields.first ?? ""
+        if fields.count > 1 { return applyRegexFirstMatch(text, pattern: pattern, replacement: replacement) }
+        return applyRegexReplace(text, pattern: pattern, replacement: replacement)
     }
     return applyRegexReplace(text, pattern: pat, replacement: "")
 }
@@ -932,17 +948,19 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
     // complete non-JS rule before separating its outer replacement fields.
     let templated = r.contains("{{")
     if templated { r = applyRuleNoReplace(htmlOrJson, r, base: base).first ?? "" }
-    var main = r; var replacePattern: String? = nil; var replaceWith = ""
+    var main = r; var replacePattern: String? = nil; var replaceWith = ""; var replaceFirst = false
     if let range = ruleReplacementStart(r) {
         main = String(r[..<range.lowerBound])
         let after = String(r[range.upperBound...])
         let fields = after.components(separatedBy: "##")
         replacePattern = fields.first
         replaceWith = fields.count > 1 ? fields[1] : ""
+        replaceFirst = fields.count > 2
     }
     let vals = templated ? [main] : (main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base))
     if let pat = replacePattern, !pat.isEmpty {
-        return vals.map { applyRegexReplace($0, pattern: pat, replacement: replaceWith) }
+        return vals.map { replaceFirst ? applyRegexFirstMatch($0, pattern: pat, replacement: replaceWith)
+                                       : applyRegexReplace($0, pattern: pat, replacement: replaceWith) }
     }
     return vals
 }
@@ -979,12 +997,90 @@ func applyContentRule(_ htmlOrJson: String, _ rule: String, base: String) -> [St
     return result.isEmpty ? [] : [result]
 }
 
+// nextContentUrl is a getStringList rule on Android: a selector followed by
+// JS passes the full list as `result`, even for a single or multi-digit value.
+// This differs from fields evaluated through getString.
+func applyContentNextPageRule(_ input: String, _ rule: String, base: String) -> [String] {
+    let text = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !text.isEmpty, !isJavaScriptRule(text) else { return applyRule(input, rule, base: base) }
+    var prefix: String?
+    var script: String?
+    if let open = text.range(of: "<js>"), let close = text[open.upperBound...].range(of: "</js>"),
+       text[close.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        prefix = String(text[..<open.lowerBound])
+        script = String(text[open.upperBound..<close.lowerBound])
+    } else if let marker = text.range(of: "@js:", options: .caseInsensitive) {
+        prefix = String(text[..<marker.lowerBound])
+        script = String(text[marker.upperBound...])
+    }
+    guard let prefix, let script, !prefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        return applyRule(input, rule, base: base)
+    }
+    let values = applyRule(input, prefix, base: base)
+    let result = LegadoJS.run(script, input: input, baseUrl: base, sourceKey: LegadoJSCtx.key,
+                              sourceUrl: LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book,
+                              originalContent: input, structuredResult: values)
+    return result.isEmpty ? [] : [result]
+}
+
 // MARK: - Explore categories
 
 struct ExploreCategory: Identifiable, Equatable {
     var id: String { title + "|" + url }
     var title: String
     var url: String
+}
+
+// Legado accepts either a single next-content link (follow it as a chain) or
+// several links on the first page (those links enumerate the remaining pages).
+// Keep the declared order and avoid loading a chapter twice, including when a
+// site's page selector also includes the current page or the next chapter.
+private struct SourceContentPageQueue {
+    private var pending: [String]
+    private var cursor = 0
+    private var queued: Set<String>
+    private var firstResponse = true
+    private var enumeratedPages = false
+    private let nextChapterURL: String?
+
+    init(_ initial: String, nextChapterURL: String? = nil) {
+        pending = [initial]
+        queued = [initial]
+        self.nextChapterURL = nextChapterURL
+    }
+
+    mutating func pop() -> String? {
+        guard cursor < pending.count else { return nil }
+        defer { cursor += 1 }
+        return pending[cursor]
+    }
+
+    mutating func appendLinks(_ values: [String], base: String) {
+        let boundary = nextChapterURL.map { SourceHTTP.options(resolveUrl($0, base: base)).url }
+        var links: [String] = []
+        // JavaScriptCore serializes an array returned by a source script to
+        // JSON. Legado's getStringList treats the members as separate links;
+        // feeding the JSON text itself to URL resolution loses every page.
+        let expanded = values.flatMap { value -> [String] in
+            guard let data = value.data(using: .utf8),
+                  let array = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+                return value.components(separatedBy: .newlines)
+            }
+            return array
+        }
+        for value in expanded {
+            let url = resolveUrl(value, base: base)
+            guard isSourceURL(url), SourceHTTP.options(url).url != SourceHTTP.options(base).url,
+                  SourceHTTP.options(url).url != boundary, !queued.contains(url), !links.contains(url) else { continue }
+            links.append(url)
+        }
+        if firstResponse {
+            enumeratedPages = links.count > 1
+            firstResponse = false
+        } else if enumeratedPages { return }
+        if !enumeratedPages { links = Array(links.prefix(1)) }
+        for link in links where queued.insert(link).inserted { pending.append(link) }
+    }
 }
 
 extension LegadoSource {
@@ -1332,12 +1428,14 @@ extension LegadoSource {
         guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.text }
         return try await withChapterRules(chapter) {
             guard !ruleContent.content.isEmpty else { throw SourceFailure(stage: "正文", message: "书源缺少正文规则") }
-            var next = chapter.url ?? String(chapter.text.dropFirst(7))
-            var visited = Set<String>(); var parts: [String] = []
-            while !next.isEmpty {
+            let initial = chapter.url ?? String(chapter.text.dropFirst(7))
+            var pages = SourceContentPageQueue(initial, nextChapterURL: nextChapterUrl)
+            var visited = Set<String>(); var parts: [String] = []; var loadedPages = 0
+            while let next = pages.pop(), !next.isEmpty {
                 try Task.checkCancellation()
-                guard visited.count < 100 else { throw SourceFailure(stage: "正文分页", message: "超过 100 页保护限制，未缓存不完整正文", url: next) }
-                guard visited.insert(next).inserted else { break }
+                guard visited.insert(next).inserted else { continue }
+                guard loadedPages < 100 else { throw SourceFailure(stage: "正文分页", message: "超过 100 页保护限制，未缓存不完整正文", url: next) }
+                loadedPages += 1
                 let response: SourcePage
                 do { response = try await loadPage(next, stage: "正文第 \(visited.count) 页") }
                 catch let failure as SourceFailure {
@@ -1348,15 +1446,15 @@ extension LegadoSource {
                     guard failure.message.hasPrefix("HTTP "), SourceScript.loadsOwnContent(ruleContent.content) else { throw failure }
                     response = SourcePage(text: "", url: SourceHTTP.options(next).url)
                 }
+                if response.url != SourceHTTP.options(next).url, !visited.insert(response.url).inserted { continue }
                 let raw = applyContentRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
                 let part = stripText(raw, preserveNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines)
                 try LegadoJSCtx.failures?.check()
                 guard !part.isEmpty else { throw SourceFailure(stage: "正文解析", message: "正文规则未匹配到内容，请检查规则、登录状态或验证码", url: response.url) }
                 parts.append(part)
-                next = resolveUrl(applyRuleFirst(response.text, ruleContent.nextContentUrl, base: response.url), base: response.url)
-                if let boundary = nextChapterUrl,
-                   SourceHTTP.options(next).url == SourceHTTP.options(resolveUrl(boundary, base: response.url)).url { break }
-                if next == response.url { break }
+                let links = applyContentNextPageRule(response.text, ruleContent.nextContentUrl, base: response.url)
+                try LegadoJSCtx.failures?.check()
+                pages.appendLinks(links, base: response.url)
             }
             var content = parts.joined(separator: "\n")
             if !ruleContent.replaceRegex.isEmpty { content = applyRuleReplace(content, replaceRegex: ruleContent.replaceRegex) }
@@ -1367,15 +1465,19 @@ extension LegadoSource {
         }
     }
 
-    func fetchChapterImages(_ chapter: BookChapter) async throws -> [String] {
+    func fetchChapterImages(_ chapter: BookChapter, nextChapterUrl: String? = nil) async throws -> [String] {
         guard chapter.text.hasPrefix("__URL__") || (chapter.text.isEmpty && chapter.url != nil) else { return chapter.imageUrls }
         return try await withChapterRules(chapter) {
-            var next = chapter.url ?? String(chapter.text.dropFirst(7))
-            var visited = Set<String>(); var seen = Set<String>(); var images: [String] = []
-            while !next.isEmpty {
-                guard visited.count < 100 else { throw SourceFailure(stage: "漫画分页", message: "超过 100 页保护限制", url: next) }
-                guard visited.insert(next).inserted else { break }
+            let initial = chapter.url ?? String(chapter.text.dropFirst(7))
+            var pages = SourceContentPageQueue(initial, nextChapterURL: nextChapterUrl)
+            var visited = Set<String>(); var seen = Set<String>(); var images: [String] = []; var loadedPages = 0
+            while let next = pages.pop(), !next.isEmpty {
+                try Task.checkCancellation()
+                guard visited.insert(next).inserted else { continue }
+                guard loadedPages < 100 else { throw SourceFailure(stage: "漫画分页", message: "超过 100 页保护限制", url: next) }
+                loadedPages += 1
                 let response = try await loadPage(next, stage: "漫画正文")
+                if response.url != SourceHTTP.options(next).url, !visited.insert(response.url).inserted { continue }
                 let rule = ruleContent.imageUrl.isEmpty ? ruleContent.content : ruleContent.imageUrl
                 let extracted = applyContentRule(response.text, rule, base: response.url)
                 let addresses = extracted.flatMap { value in
@@ -1383,8 +1485,9 @@ extension LegadoSource {
                 }.map { resolveUrl($0, base: response.url) }.filter { isSourceURL($0) }
                 guard !addresses.isEmpty else { throw SourceFailure(stage: "漫画解析", message: "图片规则未匹配，不使用页面广告图片冒充正文", url: response.url) }
                 for url in addresses where seen.insert(url).inserted { images.append(url) }
-                next = resolveUrl(applyRuleFirst(response.text, ruleContent.nextContentUrl, base: response.url), base: response.url)
-                if next == response.url { break }
+                let links = applyContentNextPageRule(response.text, ruleContent.nextContentUrl, base: response.url)
+                try LegadoJSCtx.failures?.check()
+                pages.appendLinks(links, base: response.url)
             }
             return images
         }

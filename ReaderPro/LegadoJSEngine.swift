@@ -2,6 +2,25 @@ import Foundation
 import JavaScriptCore
 import CryptoKit
 
+// Mutable per-request state exposed to an AnalyzeUrl options `js` script.
+// It is confined to the synchronous JavaScriptCore evaluation for one URL.
+final class SourceJSURLContext {
+    var url: String
+    var headers: [String: String]
+    var returnedValue = false
+    init(url: String, headers: [String: String]) { self.url = url; self.headers = headers }
+    func setHeader(_ name: String, _ value: String) {
+        for existing in Array(headers.keys) where existing.caseInsensitiveCompare(name) == .orderedSame { headers.removeValue(forKey: existing) }
+        headers[name] = value
+    }
+    func header(_ name: String) -> String {
+        headers.first(where: { $0.key.caseInsensitiveCompare(name) == .orderedSame })?.value ?? ""
+    }
+    func removeHeader(_ name: String) {
+        for existing in Array(headers.keys) where existing.caseInsensitiveCompare(name) == .orderedSame { headers.removeValue(forKey: existing) }
+    }
+}
+
 // MARK: - Legado JS 书源引擎（JavaScriptCore）
 // 对标阅读(Legado/legado-E)的 @js: / <js> 规则执行环境。
 // 之前的引擎把一切 @js:/<js> 规则直接 return []，导致大量书源"搜得到但看不了"
@@ -50,7 +69,8 @@ final class LegadoJS {
                     sourceKey: String, sourceUrl: String,
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
                     book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil,
-                    structuredResult: Any? = nil, expandTemplates: Bool = true) -> String {
+                    structuredResult: Any? = nil, expandTemplates: Bool = true,
+                    urlContext: SourceJSURLContext? = nil) -> String {
         if Task.isCancelled || (LegadoJSCtx.deadline.map { $0 <= Date() } ?? false) {
             LegadoJSCtx.failures?.add(Task.isCancelled ? "书源脚本已取消" : "书源脚本执行超时")
             return ""
@@ -62,7 +82,7 @@ final class LegadoJS {
             runInPool(js, input: input, baseUrl: baseUrl, sourceKey: sourceKey, sourceUrl: sourceUrl,
                       loginInfo: loginInfo, header: header, book: book, page: page,
                       originalContent: originalContent, structuredResult: structuredResult,
-                      expandTemplates: expandTemplates)
+                      expandTemplates: expandTemplates, urlContext: urlContext)
         }
     }
 
@@ -70,7 +90,8 @@ final class LegadoJS {
                                   sourceKey: String, sourceUrl: String,
                                   loginInfo: [String: String], header: [String: String],
                                   book: BookCtx?, page: Int, originalContent: String?,
-                                  structuredResult: Any?, expandTemplates: Bool) -> String {
+                                  structuredResult: Any?, expandTemplates: Bool,
+                                  urlContext: SourceJSURLContext?) -> String {
         let script = SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
                                               page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
@@ -117,6 +138,17 @@ final class LegadoJS {
         java.setObject(LegadoJS.md5Block, forKeyedSubscript: "md5Encode" as NSString)
         java.setObject(LegadoJS.md5_16Block, forKeyedSubscript: "md5Encode16" as NSString)
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
+        if let urlContext {
+            java.setObject(urlContext.url, forKeyedSubscript: "url" as NSString)
+            let map = JSValue(newObjectIn: ctx)!
+            let get: @convention(block) (String) -> String = { urlContext.header($0) }
+            let put: @convention(block) (String, String) -> Void = { urlContext.setHeader($0, $1) }
+            let remove: @convention(block) (String) -> Void = { urlContext.removeHeader($0) }
+            map.setObject(get, forKeyedSubscript: "get" as NSString)
+            map.setObject(put, forKeyedSubscript: "put" as NSString)
+            map.setObject(remove, forKeyedSubscript: "remove" as NSString)
+            java.setObject(map, forKeyedSubscript: "headerMap" as NSString)
+        }
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "urlEncode" as NSString)
         java.setObject(LegadoJS.urlEncodeBlock, forKeyedSubscript: "encodeURI" as NSString)
         var content = originalContent ?? input
@@ -143,7 +175,7 @@ final class LegadoJS {
 
         let request: @convention(block) (String, String, String, String, Double, Bool) -> [String: Any] = { address, method, body, headersJSON, timeout, follow in
             do {
-                let headers = LegadoJSCtx.headers.merging(SourceHTTP.headers(headersJSON)) { _, value in value }
+                let headers = (urlContext?.headers ?? LegadoJSCtx.headers).merging(SourceHTTP.headers(headersJSON)) { _, value in value }
                 return try SourceJSBridge.request(address, base: baseUrl, headers: headers,
                                                    method: method, body: body,
                                                    timeout: timeout > 0 ? timeout / 1000 : 20, followRedirects: follow)
@@ -372,6 +404,10 @@ final class LegadoJS {
         guard exception.isEmpty else {
             LegadoJSCtx.failures?.add(exception)
             return ""
+        }
+        if let urlContext, let updated = java.objectForKeyedSubscript("url"), !updated.isUndefined, !updated.isNull {
+            urlContext.url = updated.toString() ?? urlContext.url
+            if let ret { urlContext.returnedValue = !ret.isUndefined && !ret.isNull }
         }
         func string(_ value: JSValue?) -> String? {
             guard let value, !value.isNull, !value.isUndefined else { return nil }

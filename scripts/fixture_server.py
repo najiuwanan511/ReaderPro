@@ -126,6 +126,8 @@ class Handler(BaseHTTPRequestHandler):
             nxt = str(page + 1 if page < 6 else 1)
             body = f'<section id="chapters"><p><a href="../chapter/{page}">第{page}章</a></p><p><a href="../chapter/1">第1章</a></p></section><a class="next" href="{nxt}">下一页</a>'
             body += '<select>' + ''.join(f'<option value="{i}">{i}</option>' for i in range(1, 7)) + '</select>'
+        elif path == '/reader-boundary/long':
+            body = '<article id="content">' + ('第一章分页内容。' * 1200) + '第一章末尾标记</article>'
         elif path.startswith('/book/1/chapter/'):
             chapter = int(path.rsplit('/', 1)[1])
             page = int(parse_qs(urlsplit(self.path).query).get('page', ['1'])[0])

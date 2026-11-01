@@ -21,7 +21,7 @@ enum SourceJSBridge {
                                              key: LegadoJSCtx.key)
         let options = SourceHTTP.options(address).options
         if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {
-            let page = try web(request, script: options["webJs"] as? String ?? "")
+            let page = try web(request, script: options["webJs"] as? String ?? "", delay: SourceHTTP.webViewDelay(options))
             return ["text": page.text, "url": page.url, "status": 200, "headers": [String: String]()]
         }
         if !method.isEmpty { request.httpMethod = method }

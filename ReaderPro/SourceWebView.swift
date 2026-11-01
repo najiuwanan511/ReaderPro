@@ -10,10 +10,11 @@ import Security
     private var timer: Task<Void, Never>?
     private var polling: Task<Void, Never>?
     private var script = ""
+    private var delay: Double = 0
     private var startedPolling = false
     private var allowsInvalidCertificates = false
 
-    static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20) async throws -> SourcePage {
+    static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0) async throws -> SourcePage {
         // Each WKWebView can launch a separate WebKit process. Keeping only
         // two active reduces peak memory when many book sources are searched.
         while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -23,7 +24,7 @@ import Security
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 active[loader.id] = loader
-                loader.continuation = continuation; loader.script = script
+                loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
                 config.websiteDataStore = loader.allowsInvalidCertificates ? .nonPersistent() : .default()
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
@@ -52,7 +53,7 @@ import Security
         guard !startedPolling else { return }; startedPolling = true
         polling = Task {
             // Give asynchronous page scripts a chance to populate the DOM.
-            try? await Task.sleep(nanoseconds: 350_000_000)
+            try? await Task.sleep(nanoseconds: UInt64(max(0.35, min(delay, 3600)) * 1_000_000_000))
             while !Task.isCancelled, continuation != nil {
                 do {
                     let value = try await webView.evaluateJavaScript(script.isEmpty ? "document.documentElement.outerHTML" : script)
@@ -100,12 +101,12 @@ extension SourceJSBridge {
         func set(_ result: Result<SourcePage, Error>) { lock.lock(); value = result; lock.unlock() }
         func get() -> Result<SourcePage, Error>? { lock.lock(); defer { lock.unlock() }; return value }
     }
-    static func web(_ request: URLRequest, html: String? = nil, script: String = "") throws -> SourcePage {
+    static func web(_ request: URLRequest, html: String? = nil, script: String = "", delay: Double = 0) throws -> SourcePage {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "脚本兼容性", message: "WebView 脚本必须在后台书源任务中执行") }
         let box = WebBox()
         let timeout = max(0.1, min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20))
         let task = Task { @MainActor in
-            do { box.set(.success(try await SourceWebLoader.load(request, html: html, script: script, timeout: timeout))) }
+            do { box.set(.success(try await SourceWebLoader.load(request, html: html, script: script, timeout: timeout, delay: delay))) }
             catch { box.set(.failure(error)) }
         }
         let deadline = Date().addingTimeInterval(timeout + 1)

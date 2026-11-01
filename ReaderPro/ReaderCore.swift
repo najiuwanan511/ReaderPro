@@ -124,6 +124,9 @@ struct FullTextReader: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UITextView {
         let tv = makeReaderTextView(attributed: attributed, size: CGSize(width: width, height: 1))
+        tv.isAccessibilityElement = true
+        tv.accessibilityIdentifier = "readerFullText"
+        tv.accessibilityLabel = attributed.string
         tv.backgroundColor = .clear
         tv.isEditable = false
         tv.isSelectable = false
@@ -138,6 +141,7 @@ struct FullTextReader: UIViewRepresentable {
 
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.attributedText = attributed
+        tv.accessibilityLabel = attributed.string
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
@@ -275,6 +279,8 @@ final class PageHostController: UIViewController {
             tv.isSelectable = false
             tv.isScrollEnabled = false
             tv.isUserInteractionEnabled = false
+            tv.isAccessibilityElement = true
+            tv.accessibilityIdentifier = "readerPage"
             tv.textContainerInset = .zero
             tv.textContainer.widthTracksTextView = false
             tv.textContainer.heightTracksTextView = false
@@ -283,6 +289,7 @@ final class PageHostController: UIViewController {
         view.backgroundColor = background
         textView?.textContainer.size = size
         textView?.attributedText = attributed
+        textView?.accessibilityLabel = attributed.string
         view.setNeedsLayout()
     }
 }
@@ -293,7 +300,10 @@ struct CurlPageController: UIViewControllerRepresentable {
     let pageSize: CGSize
     let background: UIColor
     var startIndex: Int
+    var hasPreviousChapter: Bool
+    var hasNextChapter: Bool
     var onPageChange: (Int) -> Void
+    var onChapterBoundary: (Bool) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -323,9 +333,15 @@ struct CurlPageController: UIViewControllerRepresentable {
         init(_ p: CurlPageController) { parent = p }
 
         func pageVC(for index: Int) -> PageHostController? {
-            guard parent.pages.indices.contains(index) else { return nil }
-            let range = parent.pages[index]
-            let sub = parent.attributed.attributedSubstring(from: range)
+            let sub: NSAttributedString
+            if parent.pages.indices.contains(index) {
+                let range = parent.pages[index]
+                sub = parent.attributed.attributedSubstring(from: range)
+            } else if index == -1 && parent.hasPreviousChapter {
+                sub = NSAttributedString(string: "正在打开上一章…")
+            } else if index == parent.pages.count && parent.hasNextChapter {
+                sub = NSAttributedString(string: "正在打开下一章…")
+            } else { return nil }
             let host = PageHostController()
             host.configure(attributed: sub, size: parent.pageSize, background: parent.background, index: index)
             return host
@@ -344,18 +360,20 @@ struct CurlPageController: UIViewControllerRepresentable {
         }
 
         func pageViewController(_ pvc: UIPageViewController, viewControllerBefore vc: UIViewController) -> UIViewController? {
-            guard let host = vc as? PageHostController else { return nil }
+            guard let host = vc as? PageHostController, host.index >= 0 else { return nil }
             return pageVC(for: host.index - 1)
         }
 
         func pageViewController(_ pvc: UIPageViewController, viewControllerAfter vc: UIViewController) -> UIViewController? {
-            guard let host = vc as? PageHostController else { return nil }
+            guard let host = vc as? PageHostController, host.index < parent.pages.count else { return nil }
             return pageVC(for: host.index + 1)
         }
 
         func pageViewController(_ pvc: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
             guard completed, let host = pvc.viewControllers?.first as? PageHostController else { return }
-            parent.onPageChange(host.index)
+            if host.index < 0 { parent.onChapterBoundary(false) }
+            else if host.index >= parent.pages.count { parent.onChapterBoundary(true) }
+            else { parent.onPageChange(host.index) }
         }
     }
 }

@@ -19,7 +19,9 @@ struct ReaderProApp: App {
 
     @ViewBuilder private var rootView: some View {
         #if DEBUG || READERPRO_TESTING
-        if ProcessInfo.processInfo.arguments.contains("--source-ui-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--reader-boundary-fixture") {
+            ReaderBoundaryFixtureRoot()
+        } else if ProcessInfo.processInfo.arguments.contains("--source-ui-fixture") {
             SourceFixtureRoot()
         } else { ContentView() }
         #else

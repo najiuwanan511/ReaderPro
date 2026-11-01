@@ -59,6 +59,57 @@ enum SourceCrypto {
         return signed as Data
     }
 
+    // Legado's AsymmetricCrypto accepts RSA keys in Java's PKCS#8/SPKI
+    // encodings, and uses the public key by default even for decrypt().
+    // Some real sources encrypt chapter text with the private key, so public
+    // decryption must perform the RSA public operation and validate PKCS#1
+    // type-1 padding rather than asking Security for private-key decryption.
+    static func rsaTransform(_ data: Data, key: Data, algorithm: String, decrypt: Bool, usePublicKey: Bool) throws -> Data {
+        let normalized = algorithm.uppercased().replacingOccurrences(of: "-", with: "")
+        guard ["RSA", "RSA/ECB/PKCS1PADDING", "RSA/NONE/PKCS1PADDING"].contains(normalized) else {
+            throw SourceFailure(stage: "脚本兼容性", message: "不支持的 RSA 加密模式：" + algorithm)
+        }
+        let secKey = try rsaKey(key, isPrivate: !usePublicKey)
+        let blockSize = SecKeyGetBlockSize(secKey)
+        guard blockSize > 11 else { throw SourceFailure(stage: "脚本解密", message: "RSA 密钥长度无效") }
+        let inputBlock = decrypt ? blockSize : blockSize - 11
+        if decrypt && data.count % blockSize != 0 {
+            throw SourceFailure(stage: "脚本解密", message: "RSA 密文长度不完整")
+        }
+        var result = Data()
+        for offset in stride(from: 0, to: data.count, by: inputBlock) {
+            let chunk = data.subdata(in: offset..<min(offset + inputBlock, data.count))
+            var error: Unmanaged<CFError>?
+            let transformed: CFData?
+            if decrypt && usePublicKey {
+                transformed = SecKeyCreateEncryptedData(secKey, .rsaEncryptionRaw, chunk as CFData, &error)
+            } else if decrypt {
+                transformed = SecKeyCreateDecryptedData(secKey, .rsaEncryptionPKCS1, chunk as CFData, &error)
+            } else if usePublicKey {
+                transformed = SecKeyCreateEncryptedData(secKey, .rsaEncryptionPKCS1, chunk as CFData, &error)
+            } else {
+                // PKCS#1 v1.5 private-key encryption is the type-1 operation.
+                let padding = blockSize - chunk.count - 3
+                var encoded = Data([0, 1]); encoded.append(Data(repeating: 0xff, count: padding))
+                encoded.append(0); encoded.append(chunk)
+                transformed = SecKeyCreateSignature(secKey, .rsaSignatureRaw, encoded as CFData, &error)
+            }
+            guard let output = transformed as Data? else {
+                throw SourceFailure(stage: "脚本解密", message: error.map { ($0.takeRetainedValue() as Error).localizedDescription } ?? "RSA 操作失败")
+            }
+            if decrypt && usePublicKey {
+                let bytes = [UInt8](output)
+                guard bytes.count == blockSize, bytes[0] == 0, bytes[1] == 1,
+                      let separator = bytes[2...].firstIndex(of: 0), separator >= 10,
+                      bytes[2..<separator].allSatisfy({ $0 == 0xff }) else {
+                    throw SourceFailure(stage: "脚本解密", message: "RSA PKCS#1 填充无效")
+                }
+                result.append(contentsOf: bytes[(separator + 1)...])
+            } else { result.append(output) }
+        }
+        return result
+    }
+
     static func bytes(_ value: JSValue) -> Data {
         if value.isArray { return Data((value.toArray() ?? []).compactMap { ($0 as? NSNumber).map { UInt8(truncating: $0) } }) }
         return Data((value.toString() ?? "").utf8)
@@ -176,7 +227,47 @@ enum SourceCrypto {
             }
         }
         java.setObject(sign, forKeyedSubscript: "_rsaSign" as NSString)
+        let asymmetric: @convention(block) (JSValue, JSValue, String, Bool, Bool, String) -> JSValue? = { input, key, algorithm, decrypt, usePublicKey, output in
+            do {
+                let raw: Data
+                if decrypt && !input.isArray {
+                    let text = input.toString() ?? ""
+                    guard let decoded = hex(text) ?? base64(text) else { throw SourceFailure(stage: "脚本解密", message: "RSA 密文不是有效的 Hex 或 Base64") }
+                    raw = decoded
+                } else { raw = bytes(input) }
+                let result = try rsaTransform(raw, key: bytes(key), algorithm: algorithm, decrypt: decrypt, usePublicKey: usePublicKey)
+                let current = JSContext.current()
+                switch output {
+                case "string": return JSValue(object: String(decoding: result, as: UTF8.self), in: current)
+                case "base64": return JSValue(object: result.base64EncodedString(), in: current)
+                case "hex": return JSValue(object: result.map { String(format: "%02x", $0) }.joined(), in: current)
+                default: return JSValue(object: result.map(Int.init), in: current)
+                }
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return nil
+            }
+        }
+        java.setObject(asymmetric, forKeyedSubscript: "_rsaCrypt" as NSString)
         context.evaluateScript(#"""
+        java.createAsymmetricCrypto = function(algorithm) {
+            var publicKey = null, privateKey = null;
+            function run(value, usePublicKey, decrypt, output) {
+                var usePublic = usePublicKey === undefined ? true : usePublicKey === true;
+                var key = usePublic ? publicKey : privateKey;
+                if (key == null) throw Error('RSA key is not configured');
+                return java._rsaCrypt(value, key, algorithm, decrypt, usePublic, output);
+            }
+            return {
+                setPublicKey:function(key){publicKey=key;return this;},
+                setPrivateKey:function(key){privateKey=key;return this;},
+                decrypt:function(value,usePublicKey){return run(value,usePublicKey,true,'bytes');},
+                decryptStr:function(value,usePublicKey){return run(value,usePublicKey,true,'string');},
+                encrypt:function(value,usePublicKey){return run(value,usePublicKey,false,'bytes');},
+                encryptBase64:function(value,usePublicKey){return run(value,usePublicKey,false,'base64');},
+                encryptHex:function(value,usePublicKey){return run(value,usePublicKey,false,'hex');}
+            };
+        };
         java.createSymmetricCrypto = function(algorithm, key, iv) {
             return {
                 decrypt:function(value){return java._crypt(value,algorithm,key,iv,true,'bytes');},

@@ -82,4 +82,39 @@ final class JavaCryptoTests: XCTestCase {
             try failures.check()
         }
     }
+
+    func testLegadoRSAPublicDecryptAndPrivateDecryptAcrossBlocks() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "rsa-vector", withExtension: "json"))
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: String])
+        let publicKey = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(fixture["publicSPKI"])))
+        let privateKey = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(fixture["privatePKCS8"])))
+        let encrypted = try XCTUnwrap(Data(base64Encoded: XCTUnwrap(fixture["privateEncryptPKCS1"])))
+        let expected = try XCTUnwrap(fixture["privateEncryptMessage"])
+        let decoded = try SourceCrypto.rsaTransform(encrypted + encrypted, key: publicKey, algorithm: "RSA", decrypt: true, usePublicKey: true)
+        XCTAssertEqual(String(data: decoded, encoding: .utf8), expected + expected)
+        XCTAssertEqual(try SourceCrypto.rsaTransform(Data(expected.utf8), key: privateKey, algorithm: "RSA", decrypt: false, usePublicKey: false), encrypted)
+        XCTAssertThrowsError(try SourceCrypto.rsaTransform(Data(encrypted.dropLast()), key: publicKey, algorithm: "RSA", decrypt: true, usePublicKey: true))
+        let message = Data(String(repeating: "abc", count: 100).utf8)
+        let ciphertext = try SourceCrypto.rsaTransform(message, key: publicKey, algorithm: "RSA/ECB/PKCS1Padding", decrypt: false, usePublicKey: true)
+        XCTAssertEqual(try SourceCrypto.rsaTransform(ciphertext, key: privateKey, algorithm: "RSA", decrypt: true, usePublicKey: false), message)
+        let failures = RuleFailures()
+        try LegadoJSCtx.$failures.withValue(failures) {
+            // The latest user's 乐读 source uses this exact Legado API shape.
+            let script = #"""
+            var f=JSON.parse(result);
+            var key=java.base64DecodeToByteArray(f.publicSPKI);
+            var body=java.base64DecodeToByteArray(f.privateEncryptPKCS1);
+            java.createAsymmetricCrypto('RSA').setPublicKey(key).decryptStr(body);
+            """#
+            let output = LegadoJS.run(script, input: String(decoding: try JSONSerialization.data(withJSONObject: fixture), as: UTF8.self), baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
+            XCTAssertEqual(output, expected)
+            let roundTrip = LegadoJS.run(#"""
+            var f=JSON.parse(result);
+            var c=java.createAsymmetricCrypto('RSA').setPublicKey(java.base64DecodeToByteArray(f.publicSPKI)).setPrivateKey(java.base64DecodeToByteArray(f.privatePKCS8));
+            c.decryptStr(c.encrypt('explicit private key', true), null);
+            """#, input: String(decoding: try JSONSerialization.data(withJSONObject: fixture), as: UTF8.self), baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
+            XCTAssertEqual(roundTrip, "explicit private key")
+            try failures.check()
+        }
+    }
 }
