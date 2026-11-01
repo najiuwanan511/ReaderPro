@@ -123,9 +123,9 @@ struct SourceBookDetailView: View {
     private var existingBook: LocalBook? {
         store.books.first { $0.title == selected.title && $0.author == selected.author && $0.sourceUrl == selected.sourceUrl && $0.sourceName == selected.sourceName }
     }
-    private var chapterIndices: [Int] {
-        let indices = chapters.indices.filter { chapterQuery.isEmpty || chapters[$0].title.localizedCaseInsensitiveContains(chapterQuery) }
-        return reversed ? Array(indices.reversed()) : indices
+    private var chapterEntries: [(offset: Int, element: BookChapter)] {
+        let entries = chapters.enumerated().filter { chapterQuery.isEmpty || $0.element.title.localizedCaseInsensitiveContains(chapterQuery) }
+        return reversed ? Array(entries.reversed()) : entries
     }
 
     var body: some View {
@@ -137,7 +137,7 @@ struct SourceBookDetailView: View {
                         if choices.count > 1 {
                             Picker("书源", selection: $sourceIndex) {
                                 ForEach(choices.indices, id: \.self) { i in Text(choices[i].sourceName).tag(i) }
-                            }.tint(AppTheme.accent)
+                            }.tint(AppTheme.accent).accessibilityIdentifier("detailSourcePicker")
                         } else {
                             Label(displayBook.sourceName, systemImage: "network").font(.subheadline).foregroundStyle(.secondary)
                         }
@@ -162,14 +162,18 @@ struct SourceBookDetailView: View {
                             Button("重新加载") { Task { await load() } }
                         }
                     }.padding(16)
-                    ForEach(chapterIndices, id: \.self) { index in
-                        Button { openChapter(index) } label: {
+                    // Lazy rows can outlive the array used to create them while
+                    // a retry or source switch clears/replaces the directory.
+                    // Capture the chapter itself so rendering an old row never
+                    // subscripts the newly changed array.
+                    ForEach(chapterEntries, id: \.offset) { entry in
+                        Button { openChapter(entry.offset, expectedChapterID: entry.element.id) } label: {
                             HStack {
-                                Text(chapters[index].title).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(2)
+                                Text(entry.element.title).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(2)
                                 Spacer()
-                                if existingBook?.chapterIndex == index { Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(AppTheme.accent) }
+                                if existingBook?.chapterIndex == entry.offset { Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(AppTheme.accent) }
                             }.padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.plain).accessibilityIdentifier("chapter-\(index)")
+                        }.buttonStyle(.plain).accessibilityIdentifier("chapter-\(entry.offset)")
                         Divider().padding(.leading, 16)
                     }
                 }
@@ -247,12 +251,16 @@ struct SourceBookDetailView: View {
             if !old.imageUrls.isEmpty { return old }
             return chapter
         }
-        book.chapterIndex = min(book.chapterIndex, max(0, chapters.count - 1))
+        book.chapterIndex = max(0, min(book.chapterIndex, chapters.count - 1))
         return book
     }
 
-    private func openChapter(_ index: Int?) {
+    private func openChapter(_ index: Int?, expectedChapterID: String? = nil) {
         guard !chapters.isEmpty else { return }
+        if let index {
+            guard chapters.indices.contains(index),
+                  expectedChapterID == nil || chapters[index].id == expectedChapterID else { return }
+        }
         var book = makeBook()
         if let index { book.chapterIndex = index; book.charOffset = 0; book.paragraphIndex = 0 }
         store.updateBook(book); readingBook = book

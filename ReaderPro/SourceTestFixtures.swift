@@ -1,4 +1,4 @@
-#if DEBUG
+#if DEBUG || READERPRO_TESTING
 import SwiftUI
 
 // Compiled out of the Release IPA. Tests run the production views/engine with
@@ -58,6 +58,9 @@ struct SourceFixtureRoot: View {
     }
     var body: some View {
         TabView {
+            if ProcessInfo.processInfo.arguments.contains("--source-stress-fixture") {
+                BookshelfView(store: store).tabItem { Label("书架", systemImage: "books.vertical") }
+            }
             NavigationStack { SourceManagementView(store: store) }.tabItem { Label("管理", systemImage: "list.bullet") }
             DiscoveryView(store: store).tabItem { Label("发现", systemImage: "safari") }
             NavigationStack { SourceView(store: store) }.tabItem { Label("搜索", systemImage: "magnifyingglass") }
@@ -67,6 +70,26 @@ struct SourceFixtureRoot: View {
             var failed = source; failed.id = "fixture-failed"; failed.bookSourceName = "失败测试书源"; failed.searchUrl = "/denied"; failed.exploreUrl = ""; failed.enabled = false
             var partial = SourceTestFixtures.json(); partial.id = "fixture-partial"; partial.bookSourceName = "无结果测试书源"; partial.searchUrl = "/json/noresults"; partial.enabled = false
             store.books = []; store.sources = [source, failed, partial]
+            if ProcessInfo.processInfo.arguments.contains("--source-switch-fixture") {
+                var alternate = source
+                alternate.id = "fixture-alternate"; alternate.bookSourceName = "备用测试书源"
+                alternate.ruleToc.nextTocUrl = ""
+                store.sources.insert(alternate, at: 1)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--source-stress-fixture") {
+                store.sources = (0..<16).map { index in
+                    var stress = SourceTestFixtures.json()
+                    stress.id = "stress-\(index)"
+                    stress.bookSourceName = "压力源\(index)"
+                    stress.searchUrl = "/json/many-books?batch=\(index)"
+                    return stress
+                }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--user-pack-ui-fixture") {
+                if let raw = try? await fetchText(urlString: SourceTestFixtures.base + "/packs/user") {
+                    store.sources = importSourcesDetailed(raw).sources
+                }
+            }
         }
     }
 }

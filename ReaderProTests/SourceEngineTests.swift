@@ -1,6 +1,16 @@
 import XCTest
 import UIKit
+import Combine
 @testable import ReaderPro
+
+private actor SearchConcurrencyProbe {
+    private var active = 0
+    private var maximum = 0
+    private var completed = 0
+    func start() { active += 1; maximum = max(maximum, active) }
+    func finish() { active -= 1; completed += 1 }
+    func snapshot() -> (Int, Int, Int) { (active, maximum, completed) }
+}
 
 final class SourceEngineTests: XCTestCase {
     let base = SourceTestFixtures.base
@@ -598,6 +608,39 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(controller.completed, 1)
         XCTAssertEqual(controller.total, 1)
         XCTAssertEqual(controller.keyword, "新搜索")
+    }
+
+    @MainActor func testLargeSearchPublishesOneBatchAndKeepsAlternativeBooks() async throws {
+        var source = SourceTestFixtures.json()
+        source.searchUrl = "/json/many-books"
+        let controller = SourceSearchController()
+        var publishedCounts: [Int] = []
+        let subscription = controller.$results.sink { publishedCounts.append($0.count) }
+        defer { subscription.cancel() }
+        controller.start([source], key: "批量")
+        let deadline = Date().addingTimeInterval(15)
+        while controller.searching && Date() < deadline { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertFalse(controller.searching, "Large result did not finish in time")
+        XCTAssertEqual(controller.completed, 1)
+        XCTAssertEqual(controller.allResults.count, 401)
+        XCTAssertEqual(controller.results.count, 400)
+        XCTAssertEqual(publishedCounts.filter { $0 > 0 }, [400], "Publish one complete update per source, not one UI update per row")
+    }
+
+    func testDefaultSearchConcurrencyBoundsSimultaneousRequests() async throws {
+        var sources: [LegadoSource] = []
+        for _ in 0..<12 {
+            var source = SourceTestFixtures.json()
+            source.id = UUID().uuidString; source.searchUrl = "/slow-search"
+            sources.append(source)
+        }
+        let probe = SearchConcurrencyProbe()
+        await streamSourceSearch(sources, key: "测试", willSearch: { _ in await probe.start() }) { _ in await probe.finish() }
+        let (active, maximum, completed) = await probe.snapshot()
+        XCTAssertEqual(active, 0)
+        XCTAssertEqual(completed, sources.count)
+        XCTAssertLessThanOrEqual(maximum, 8)
+        XCTAssertGreaterThan(maximum, 1, "Fast sources should still run concurrently")
     }
 
     func testRealDOMCSSXPathAndLegadoSelectors() {

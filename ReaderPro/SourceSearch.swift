@@ -10,7 +10,7 @@ struct SourceSearchUpdate: Sendable {
 
 // Refill a slot as soon as it finishes. A slow source must never hold back
 // results or prevent the next source from starting.
-func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = 16, timeout: Double = 25,
+func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = 8, timeout: Double = 25,
                         willSearch: (@Sendable (LegadoSource) async -> Void)? = nil,
                         update: @escaping @Sendable (SourceSearchUpdate) async -> Void) async {
     let searchable = sources.filter { !$0.searchUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -71,7 +71,11 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
         completed += 1
         if !result.error.isEmpty { errors.append(result.sourceName + "：" + result.error) }
         allResults.append(contentsOf: result.books)
-        for book in result.books where seen.insert(dedupeKey(book)).inserted { results.append(book) }
+        // A single source can return hundreds of books. Publishing each append
+        // causes SwiftUI to diff and copy the growing result list for every
+        // row, multiplying main-thread work and transient memory use.
+        let added = result.books.filter { seen.insert(dedupeKey($0)).inserted }
+        if !added.isEmpty { results.append(contentsOf: added) }
     }
 
     func cancel() {

@@ -14,7 +14,9 @@ import Security
     private var allowsInvalidCertificates = false
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20) async throws -> SourcePage {
-        while active.count >= 4 { try await Task.sleep(nanoseconds: 50_000_000) }
+        // Each WKWebView can launch a separate WebKit process. Keeping only
+        // two active reduces peak memory when many book sources are searched.
+        while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
         let loader = SourceWebLoader()
         loader.allowsInvalidCertificates = SourceTLS.allowsInvalidCertificates
         return try await withTaskCancellationHandler {

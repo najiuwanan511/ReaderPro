@@ -75,4 +75,76 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(book.waitForExistence(timeout: 20)); book.tap()
         XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 15))
     }
+
+    func testSwitchingSourcesReplacesVisibleDirectorySafely() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-switch-fixture"]
+        app.launch()
+        app.tabBars.buttons["搜索"].tap()
+        let search = app.textFields["bookSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("测试")
+        app.buttons["submitBookSearch"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "搜索完成")).firstMatch.waitForExistence(timeout: 25))
+        let book = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap()
+        let picker = app.buttons["detailSourcePicker"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 15))
+        for _ in 0..<2 {
+            picker.tap(); app.buttons["回归测试书源"].tap()
+            XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 15))
+            picker.tap(); app.buttons["备用测试书源"].tap()
+            XCTAssertTrue(app.staticTexts["目录 · 1 章"].waitForExistence(timeout: 15))
+        }
+        app.swipeUp()
+        XCTAssertTrue(app.buttons["chapter-0"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["chapter-5"].exists)
+    }
+
+    func testLargeSearchResultsAndBookshelfRemainResponsive() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-stress-fixture"]
+        app.launch()
+        app.tabBars.buttons["搜索"].tap()
+        let search = app.textFields["bookSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 15)); search.tap(); search.typeText("stress")
+        app.buttons["submitBookSearch"].tap()
+        let completed = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "搜索完成")).firstMatch
+        XCTAssertTrue(completed.waitForExistence(timeout: 120), "All 16 sources must finish without terminating the app")
+        XCTAssertTrue(completed.label.contains("6400"), completed.label)
+        let book = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "批量书籍")).firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap()
+        XCTAssertTrue(app.staticTexts["目录 · 1 章"].waitForExistence(timeout: 20))
+        app.buttons["关闭"].tap()
+
+        app.tabBars.buttons["书架"].tap()
+        app.swipeDown()
+        let shelfSearch = app.searchFields.firstMatch
+        XCTAssertTrue(shelfSearch.waitForExistence(timeout: 10)); shelfSearch.tap(); shelfSearch.typeText("stress")
+        let submit = app.buttons.containing(NSPredicate(format: "label CONTAINS %@", "在书源中搜")).firstMatch
+        XCTAssertTrue(submit.waitForExistence(timeout: 10)); submit.tap()
+        let results = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "源搜索结果 6400 本")).firstMatch
+        XCTAssertTrue(results.waitForExistence(timeout: 120), "Bookshelf must render the large result set without terminating")
+        app.swipeUp()
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    func testSearchWithRealUserPackCanBeCancelled() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--user-pack-ui-fixture"]
+        app.launch()
+        app.tabBars.buttons["搜索"].tap()
+        XCTAssertTrue(app.staticTexts["1466 个已导入"].waitForExistence(timeout: 40))
+        let search = app.textFields["bookSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10)); search.tap(); search.typeText("test")
+        app.buttons["submitBookSearch"].tap()
+        let cancel = app.buttons["cancelBookSearch"]
+        XCTAssertTrue(cancel.waitForExistence(timeout: 15))
+        Thread.sleep(forTimeInterval: 12) // Keep the actual multi-source workers and result view active.
+        XCTAssertEqual(app.state, .runningForeground)
+        cancel.tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "已停止")).firstMatch.waitForExistence(timeout: 10))
+    }
 }

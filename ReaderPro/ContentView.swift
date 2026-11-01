@@ -148,9 +148,15 @@ struct BookshelfView: View {
                         }
                         if !shelfSearch.keyword.isEmpty {
                             Text("源搜索结果 \(shelfSearch.results.count) 本").font(.caption).foregroundStyle(.secondary)
-                            ForEach(shelfSearch.results) { result in
-                                Button { shelfResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
-                                Divider()
+                            // Searches across a large source pack can return
+                            // thousands of books. Create covers only as rows
+                            // approach the visible region instead of eagerly
+                            // constructing every row inside this ScrollView.
+                            LazyVStack {
+                                ForEach(shelfSearch.results) { result in
+                                    Button { shelfResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
+                                    Divider()
+                                }
                             }
                             if shelfSearch.results.isEmpty && !shelfSearch.searching {
                                 Text("这个关键词在启用源里没搜到书：换个书名/作者，或者去设置 → 书源管理确认源已启用。").font(.footnote).foregroundStyle(.secondary)
@@ -159,6 +165,7 @@ struct BookshelfView: View {
                     }.padding(.horizontal)
                 }
             }
+            .onDisappear { if shelfSearch.searching { shelfSearch.cancel() } }
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
             .readerNavigationStyle()

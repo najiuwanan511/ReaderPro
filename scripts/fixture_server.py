@@ -109,7 +109,16 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/json/search':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'data': [{'name': 'JSON测试', 'url': '/json/book'}]}, ensure_ascii=False)
-        elif path == '/json/book':
+        elif path == '/json/many-books':
+            mime = 'application/json; charset=utf-8'
+            # Include a duplicate title to verify both deduplication and
+            # preservation of alternative sources in a large response.
+            batch = parse_qs(urlsplit(self.path).query).get('batch', [''])[0]
+            prefix = f'{batch}-' if batch else ''
+            entries = [{'name': f'批量书籍{prefix}{i}', 'url': f'/json/book/{i}'} for i in range(400)]
+            entries.append({'name': f'批量书籍{prefix}0', 'url': '/json/book/duplicate'})
+            body = json.dumps({'data': entries}, ensure_ascii=False)
+        elif path == '/json/book' or path.startswith('/json/book/'):
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'name': 'JSON测试', 'toc': '/json/toc'}, ensure_ascii=False)
         elif path == '/json/toc':
