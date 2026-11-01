@@ -34,18 +34,23 @@ enum SourceJSBridge {
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(max(0.1, timeout)))
         request.timeoutInterval = max(0.1, deadline.timeIntervalSinceNow)
         let box = ResponseBox()
+        let completed = DispatchSemaphore(value: 0)
         let lease = try SourceTLS.lease(for: request, followRedirects: followRedirects)
         defer { lease.finish() }
         let task = lease.session.dataTask(with: request) { data, response, error in
             if let error { box.set(.failure(error)) }
             else if let data, let response { box.set(.success((data, response))) }
             else { box.set(.failure(URLError(.badServerResponse))) }
+            completed.signal()
         }
         task.resume()
         while box.get() == nil {
             if Task.isCancelled { task.cancel(); throw CancellationError() }
             if Date() >= deadline { task.cancel(); throw URLError(.timedOut) }
-            Thread.sleep(forTimeInterval: 0.02)
+            // Wake immediately for a completed request; timed waits retain
+            // bounded cancellation/deadline checks while avoiding an extra
+            // 20 ms delay on every synchronous ajax in a list script.
+            _ = completed.wait(timeout: .now() + .milliseconds(20))
         }
         let (data, response) = try box.get()!.get()
         let http = response as? HTTPURLResponse
