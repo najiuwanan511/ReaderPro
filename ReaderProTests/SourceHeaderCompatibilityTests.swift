@@ -187,27 +187,34 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         }
     }
 
-    func testAuthenticatedHTTPSProxyDoesNotLeakCredentials() async throws {
+    private func verifyAuthenticatedHTTPSProxy(port: Int) async throws {
         let target = "https://readerproxy.invalid/source-proxy-https-test"
         let request = try SourceHTTP.request(target, base: target,
-            headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
-        let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
-            try await SourceHTTP.load(request, stage: "HTTPS 认证代理测试")
+            headers: ["proxy": "http://127.0.0.1:\(port)@fixture-user@fixture-pass"])
+        if #available(iOS 18.0, *) {
+            let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
+                try await SourceHTTP.load(request, stage: "HTTPS 认证代理测试")
+            }
+            // The TLS fixture responds 400 if credentials reach the target.
+            XCTAssertEqual(page.text, "https-proxy-routed")
+        } else {
+            do {
+                _ = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
+                    try await SourceHTTP.load(request, stage: "HTTPS 认证代理测试")
+                }
+                XCTFail("iOS 17 unexpectedly authenticated; re-evaluate this known limitation")
+            } catch {
+                let description = sourceErrorMessage(error)
+                XCTAssertTrue(description.contains("iOS 17 未能完成 HTTP 代理认证"), description)
+                XCTAssertTrue(description.contains("NSPOSIXErrorDomain 80"), description)
+                XCTAssertFalse(description.contains("fixture-pass"), description)
+            }
         }
-        XCTAssertEqual(page.text, "https-proxy-routed")
     }
 
-    func testAuthenticatedHTTPSProxyWithPersistentHTTP11Challenge() async throws {
-        let target = "https://readerproxy.invalid/source-proxy-https-test"
-        let request = try SourceHTTP.request(target, base: target,
-            headers: ["proxy": "http://127.0.0.1:8770@fixture-user@fixture-pass"])
-        let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
-            try await SourceHTTP.load(request, stage: "HTTP/1.1 认证代理测试")
-        }
-        // The TLS fixture returns HTTP 400 if Proxy-Authorization or the
-        // source's proxy setting reaches the destination.
-        XCTAssertEqual(page.text, "https-proxy-routed")
-    }
+    func testAuthenticatedHTTPSProxyDoesNotLeakCredentials() async throws { try await verifyAuthenticatedHTTPSProxy(port: 8768) }
+
+    func testAuthenticatedHTTPSProxyWithPersistentHTTP11Challenge() async throws { try await verifyAuthenticatedHTTPSProxy(port: 8770) }
 
     func testProxyAuthenticationErrorPreservesSystemContext() throws {
         let target = "https://readerproxy.invalid/source-proxy-https-test"
