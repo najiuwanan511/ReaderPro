@@ -3,6 +3,8 @@ import SwiftUI
 struct DiscoveryView: View {
     @ObservedObject var store: BookStore
     @State private var searchText = ""
+    @State private var showSourceSearch = false
+    @FocusState private var sourceSearchFocused: Bool
     @State private var filterMode = 0
     @State private var exploreTarget: ExploreTarget?
 
@@ -47,14 +49,32 @@ struct DiscoveryView: View {
             .background(AppTheme.surface)
             .navigationTitle("发现")
             .readerNavigationStyle()
-            .searchable(text: $searchText, prompt: "筛选书源 / 分组")
             .safeAreaInset(edge: .top, spacing: 0) {
-                ReaderTabStrip(titles: ["全部", "快速", "通常", "正版"], selection: $filterMode)
+                VStack(spacing: 0) {
+                    if showSourceSearch {
+                        HStack {
+                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                            TextField("搜索发现书源 / 分组", text: $searchText)
+                                .focused($sourceSearchFocused)
+                                .submitLabel(.search)
+                                .accessibilityIdentifier("discoverySourceSearch")
+                            Button("取消") {
+                                searchText = ""
+                                showSourceSearch = false
+                                sourceSearchFocused = false
+                            }
+                        }.padding(.horizontal, 16).padding(.vertical, 10)
+                    }
+                    ReaderTabStrip(titles: ["全部", "快速", "通常", "正版"], selection: $filterMode)
+                }.background(AppTheme.surface)
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    NavigationLink { SourceView(store: store) } label: { Image(systemName: "magnifyingglass") }
-                        .accessibilityLabel("搜索书籍")
+                    Button {
+                        showSourceSearch = true
+                        sourceSearchFocused = true
+                    } label: { Image(systemName: "magnifyingglass") }
+                        .accessibilityLabel("搜索发现书源")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SourceManagementView(store: store) } label: { Image(systemName: "slider.horizontal.3") }
@@ -151,6 +171,7 @@ struct ExploreListView: View {
     @State private var errorText = ""
     @State private var selectedResult: SourceBook?
     @State private var grid = false
+    @State private var confirmLegacyCertificate = false
 
     var body: some View {
         Group {
@@ -159,6 +180,9 @@ struct ExploreListView: View {
                 VStack(spacing: 12) {
                     Text(errorText).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     Button("重试") { Task { await load() } }
+                    if errorText.contains("TLS 连接失败") && !SourceTLS.isAllowed(source.bookSourceUrl) {
+                        Button("旧站点证书兼容后重试") { confirmLegacyCertificate = true }
+                    }
                 }.padding()
             } else if results.isEmpty {
                 Text("这个分类暂时没有书籍，请尝试其他分类或书源。").font(.footnote).foregroundStyle(.secondary).padding()
@@ -186,6 +210,15 @@ struct ExploreListView: View {
                 .accessibilityLabel(grid ? "列表布局" : "网格布局")
         }
         .task { await load() }
+        .alert("信任此书源的旧证书？", isPresented: $confirmLegacyCertificate) {
+            Button("开启并重试") {
+                SourceTLS.setAllowed(true, for: source.bookSourceUrl)
+                Task { await load() }
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("开启后此书源的 HTTPS 连接将跳过证书校验，可能暴露传输内容。仅对信任的书源开启；可在书源详情中关闭。若服务器协议本身不兼容，开启后仍可能无法连接。")
+        }
         .sheet(item: $selectedResult) { SourceBookDetailView(store: store, result: $0) }
     }
 

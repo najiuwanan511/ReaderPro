@@ -8,7 +8,7 @@ on:
 jobs:
   release-regression:
     runs-on: macos-15
-    timeout-minutes: 50
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Prepare iOS 17.0 simulator and fixtures
@@ -40,7 +40,10 @@ jobs:
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProUITests/SourceFlowUITests \
+            -only-testing:ReaderProUITests/ReaderSettingsUITests \
+            -only-testing:ReaderProUITests/RssSourceUITests \
             -only-testing:ReaderProTests/JSConcurrencyStressTests \
+            -only-testing:ReaderProTests/RssSourceTests \
             -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \

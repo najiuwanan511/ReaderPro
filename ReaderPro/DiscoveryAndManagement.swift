@@ -586,7 +586,7 @@ struct RssSourceManagementView: View {
         List {
             Section("订阅源列表（共 \(store.rssSources.count) 个）") {
                 if store.rssSources.isEmpty {
-                    Text("还没有订阅源。订阅源是「源仓库导航书签」——导入后点右上的浏览器图标即可进源仓库找书源；带规则的源是 RSS 订阅源。")
+                    Text("还没有订阅源。可导入阅读订阅源 JSON，或在订阅页面添加 RSS/Atom 地址。")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
                 ForEach(store.rssSources) { src in
@@ -628,7 +628,7 @@ struct RssSourceManagementView: View {
                     Button("导入") {
                         let result = importRssSourcesDetailed(pasteText)
                         if result.sources.isEmpty { pasteError = "解析失败：请确认是 rssSource 订阅源 JSON（sourceName/sourceUrl 字段）" }
-                        else { store.rssSources.append(contentsOf: result.sources); store.save(); showPaste = false; pasteText = "" }
+                        else { store.rssSources = mergeRssSources(store.rssSources, incoming: result.sources); store.save(); showPaste = false; pasteText = "" }
                     }
                     Spacer()
                 }.padding().navigationTitle("粘贴导入").toolbar { Button("关闭") { showPaste = false } }
@@ -647,7 +647,7 @@ struct RssSourceManagementView: View {
                                 await MainActor.run {
                                     networkLoading = false
                                     if arr.isEmpty { networkError = "这个链接里没有解析到订阅源" }
-                                    else { store.rssSources.append(contentsOf: arr); store.save(); showNetwork = false; networkURL = "" }
+                                    else { store.rssSources = mergeRssSources(store.rssSources, incoming: arr); store.save(); showNetwork = false; networkURL = "" }
                                 }
                             } catch {
                                 await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }

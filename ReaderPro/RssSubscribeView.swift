@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import WebKit
 
 // MARK: - RSS 文章与解析（标准 RSS 2.0 / Atom）
 
@@ -50,6 +51,10 @@ final class RssParser: NSObject, XMLParserDelegate {
         if inContent { curContent += string }
     }
 
+    func parser(_ parser: XMLParser, foundCDATA CDATABlock: Data) {
+        if let text = String(data: CDATABlock, encoding: .utf8) { self.parser(parser, foundCharacters: text) }
+    }
+
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName qName: String?) {
         switch elementName {
         case "item", "entry":
@@ -75,7 +80,7 @@ func parseRssXML(_ data: Data) -> [RssArticle] {
     return p.articles
 }
 
-// MARK: - 订阅 tab（对标阅读Sigma「订阅」：RSS 阅读）
+// MARK: - 订阅
 
 struct RssSubscribeView: View {
     @ObservedObject var store: BookStore
@@ -83,23 +88,21 @@ struct RssSubscribeView: View {
     @State private var addURL = ""
     @State private var addName = ""
     @State private var showAdd = false
+    @State private var addLoading = false
+    @State private var addError = ""
     @State private var feedSource: RssSource?
 
-    var feeds: [RssSource] { store.rssSources }
+    var feeds: [RssSource] { store.rssSources.filter { $0.enabled } }
 
     var body: some View {
         NavigationStack {
             List {
                 if feeds.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("还没有订阅源。订阅源可以是一个 RSS/Atom 地址，也可以是 Legado rssSource JSON。").font(.footnote).foregroundStyle(.secondary)
-                        Text("点右上角 + 直接加一个 RSS 地址，或去管理页导入订阅源包。").font(.footnote).foregroundStyle(.secondary)
-                    }
+                    Text("还没有启用的订阅源。可添加 RSS/Atom 地址，或导入阅读的订阅源 JSON 链接。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 ForEach(feeds) { src in
-                    Button {
-                        feedSource = src
-                    } label: {
+                    Button { feedSource = src } label: {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(src.sourceName.isEmpty ? src.sourceUrl : src.sourceName).font(.headline).lineLimit(1)
@@ -110,8 +113,9 @@ struct RssSubscribeView: View {
                         }
                     }
                 }
-                .onDelete { idx in
-                    for i in idx.sorted(by: >) { if i < store.rssSources.count { store.rssSources.remove(at: i) } }
+                .onDelete { offsets in
+                    let ids = Set(offsets.map { feeds[$0].id })
+                    store.rssSources.removeAll { ids.contains($0.id) }
                     store.save()
                 }
             }
@@ -122,7 +126,9 @@ struct RssSubscribeView: View {
             .background(AppTheme.surface)
             .toolbar {
                 Button { showAdd = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("添加订阅")
                 Button { showManage = true } label: { Image(systemName: "slider.horizontal.3") }
+                    .accessibilityLabel("订阅源管理")
             }
             .sheet(isPresented: $showManage) {
                 NavigationStack { RssSourceManagementView(store: store) }
@@ -130,101 +136,215 @@ struct RssSubscribeView: View {
             .sheet(isPresented: $showAdd) {
                 NavigationStack {
                     Form {
-                        Section("添加 RSS 订阅") {
-                            TextField("订阅名称（可选）", text: $addName)
-                            TextField("RSS/Atom 地址", text: $addURL).autocapitalization(.none).keyboardType(.URL)
+                        Section("添加订阅或导入订阅源") {
+                            TextField("名称（普通 RSS 可选）", text: $addName)
+                            TextField("RSS/Atom 或阅读订阅源 JSON 链接", text: $addURL)
+                                .autocapitalization(.none).keyboardType(.URL)
+                                .textInputAutocapitalization(.never).accessibilityIdentifier("rssImportURL")
+                            if !addError.isEmpty { Text(addError).foregroundStyle(.red).font(.footnote) }
                         }
-                        Button("添加") {
-                            let url = addURL.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !url.isEmpty else { return }
-                            var src = RssSource()
-                            src.sourceName = addName.isEmpty ? url : addName
-                            src.sourceUrl = url
-                            src.singleUrl = false
-                            store.rssSources.append(src); store.save()
-                            addName = ""; addURL = ""; showAdd = false
-                        }.disabled(addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button(addLoading ? "正在识别…" : "添加 / 导入") { addSubscription() }
+                            .disabled(addLoading || addURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                     .navigationTitle("添加订阅")
                     .toolbar { Button("关闭") { showAdd = false } }
                 }
             }
             .sheet(item: $feedSource) { src in
-                NavigationStack { FeedReaderView(store: store, source: src) }
+                NavigationStack {
+                    if src.singleUrl { BrowserView(initialURL: src.sourceUrl) }
+                    else { FeedReaderView(source: src) }
+                }
+            }
+        }
+    }
+
+    @MainActor private func addSubscription() {
+        let url = addURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = addName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let parsed = URL(string: url), ["http", "https"].contains(parsed.scheme?.lowercased() ?? ""), parsed.host != nil else {
+            addError = "请输入完整的 HTTP 或 HTTPS 链接。"; return
+        }
+        addLoading = true; addError = ""
+        Task {
+            do {
+                // Detail pages on the source repository need conversion to their JSON API.
+                let candidates = yckceoRssJSONCandidates(url) + [url]
+                var imported: [RssSource] = []
+                var feedData: Data?
+                var lastError: Error?
+                for candidate in candidates {
+                    do {
+                        let data = try await fetchBytes(candidate)
+                        let decoded = decodeTextData(data)
+                        let sources = importRssSourcesDetailed(decoded).sources
+                        if !sources.isEmpty { imported = sources; break }
+                        if !parseRssXML(data).isEmpty || decoded.range(of: "<(rss|feed|rdf:RDF)\\b", options: [.regularExpression, .caseInsensitive]) != nil {
+                            feedData = data; break
+                        }
+                    } catch { lastError = error }
+                }
+                if !imported.isEmpty {
+                    // Remove an old mistaken raw JSON-link entry created by older versions.
+                    store.rssSources.removeAll { $0.sourceUrl == url && !imported.contains(where: { $0.sourceUrl == url }) && $0.ruleArticles.isEmpty }
+                    store.rssSources = mergeRssSources(store.rssSources, incoming: imported)
+                } else if feedData != nil {
+                    var src = RssSource(); src.sourceName = name.isEmpty ? url : name
+                    src.sourceUrl = url; src.singleUrl = false
+                    store.rssSources = mergeRssSources(store.rssSources, incoming: [src])
+                } else {
+                    addError = lastError.map { "获取失败：" + sourceErrorMessage($0) } ?? "未识别到 RSS/Atom 或阅读订阅源 JSON，请检查链接。"
+                    addLoading = false; return
+                }
+                store.save(); addLoading = false; addName = ""; addURL = ""; showAdd = false
             }
         }
     }
 }
 
-// MARK: - 订阅源文章列表 + 阅读
-
+// The source can contain several categories; selecting one runs its own URL and rules.
 struct FeedReaderView: View {
-    @ObservedObject var store: BookStore
     let source: RssSource
-    @State private var articles: [RssArticle] = []
-    @State private var loading = false
-    @State private var errText = ""
-    @State private var selected: RssArticle?
+    @State private var categories: [ExploreCategory] = []
+    @State private var error = ""
+    @State private var loading = true
 
     var body: some View {
         Group {
-            if loading {
-                ProgressView("正在拉取订阅…")
-            } else if !errText.isEmpty {
-                VStack(spacing: 8) {
-                    Text(errText).font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                    Button("重试") { load() }
-                }.padding()
-            } else if articles.isEmpty {
-                Text("没有解析到文章。这个地址可能不是标准 RSS/Atom，或用浏览器打开订阅源网站。").font(.footnote).foregroundStyle(.secondary).padding()
+            if loading { ProgressView("正在加载分类…") }
+            else if !error.isEmpty {
+                VStack { Text(error).font(.footnote).multilineTextAlignment(.center); Button("重试") { Task { await load() } } }.padding()
+            } else if categories.count == 1, let category = categories.first {
+                FeedArticlesView(source: source, category: category)
             } else {
-                List(articles) { a in
-                    Button { selected = a } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(a.title).font(.headline).lineLimit(2)
-                            if !a.pubDate.isEmpty { Text(a.pubDate).font(.caption2).foregroundStyle(.secondary) }
-                            if !a.summary.isEmpty { Text(stripHTML(a.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
-                        }
-                    }
+                List(Array(categories.enumerated()), id: \.offset) { entry in
+                    NavigationLink(entry.element.title) { FeedArticlesView(source: source, category: entry.element) }
                 }
             }
         }
         .navigationTitle(source.sourceName.isEmpty ? "订阅阅读" : source.sourceName)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { if articles.isEmpty { load() } }
-        .sheet(item: $selected) { a in
-            NavigationStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(a.title).font(.title2).bold()
-                        if !a.pubDate.isEmpty { Text(a.pubDate).font(.caption).foregroundStyle(.secondary) }
-                        Divider()
-                        Text(stripHTML(a.content.isEmpty ? a.summary : a.content)).font(.body).lineSpacing(6)
-                    }.padding()
+        .task { await load() }
+    }
+
+    @MainActor private func load() async {
+        loading = true; error = ""
+        do { categories = try await source.categories(); loading = false }
+        catch { loading = false; self.error = "分类加载失败：" + sourceErrorMessage(error) }
+    }
+}
+
+struct FeedArticlesView: View {
+    let source: RssSource
+    let category: ExploreCategory
+    @State private var articles: [RssArticle] = []
+    @State private var nextURL: String?
+    @State private var page = 1
+    @State private var loading = false
+    @State private var error = ""
+    @State private var selected: RssArticle?
+
+    var body: some View {
+        Group {
+            if loading && articles.isEmpty { ProgressView("正在拉取订阅…") }
+            else if !error.isEmpty && articles.isEmpty {
+                VStack { Text(error).font(.footnote).multilineTextAlignment(.center); Button("重试") { Task { await load() } } }.padding()
+            } else if articles.isEmpty { Text("没有解析到文章，请检查订阅规则或站点状态。").font(.footnote).padding() }
+            else {
+                List {
+                    ForEach(articles) { article in
+                        Button { selected = article } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(article.title).font(.headline).lineLimit(2)
+                                if !article.pubDate.isEmpty { Text(article.pubDate).font(.caption2).foregroundStyle(.secondary) }
+                                if !article.summary.isEmpty { Text(stripHTML(article.summary)).font(.caption).foregroundStyle(.secondary).lineLimit(3) }
+                            }
+                        }
+                    }
+                    if nextURL != nil {
+                        Button(loading ? "正在加载…" : "加载更多") { Task { await loadMore() } }.disabled(loading)
+                    }
+                    if !error.isEmpty { Text(error).font(.footnote).foregroundStyle(.secondary) }
                 }
-                .navigationTitle("文章")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { Button("关闭") { selected = nil } }
+            }
+        }
+        .navigationTitle(category.title == "全部" ? source.sourceName : category.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .sheet(item: $selected) { article in
+            NavigationStack {
+                if source.isRssRuleSource && source.ruleContent.isEmpty && source.type == 0 && !article.link.isEmpty {
+                    BrowserView(initialURL: article.link)
+                } else { FeedArticleView(source: source, article: article) }
             }
         }
     }
 
-    func load() {
-        loading = true; errText = ""; articles = []
-        let url = source.sourceUrl
-        Task {
+    @MainActor private func load() async {
+        loading = true; error = ""; page = 1
+        do {
+            let result = try await source.articles(at: category.url)
+            articles = result.articles; nextURL = result.nextURL; loading = false
+        } catch { loading = false; self.error = "拉取失败：" + sourceErrorMessage(error) }
+    }
+    @MainActor private func loadMore() async {
+        guard let url = nextURL else { return }
+        loading = true; error = ""
+        do {
+            let result = try await source.articles(at: url, page: page + 1)
+            articles.append(contentsOf: result.articles); page += 1; nextURL = result.nextURL; loading = false
+        } catch { loading = false; self.error = "加载更多失败：" + sourceErrorMessage(error) }
+    }
+}
+
+struct FeedArticleView: View {
+    let source: RssSource
+    let article: RssArticle
+    @State private var content = ""
+    @State private var loading = true
+    @State private var error = ""
+
+    var body: some View {
+        Group {
+            if loading { ProgressView("正在加载正文…") }
+            else if !error.isEmpty { Text(error).font(.footnote).padding() }
+            else if content.isEmpty && !article.link.isEmpty && source.type == 0 { BrowserView(initialURL: article.link) }
+            else { FeedHTMLView(html: content.isEmpty ? article.link : content, baseURL: article.link, type: source.type) }
+        }
+        .navigationTitle(article.title).navigationBarTitleDisplayMode(.inline)
+        .task {
             do {
-                let data = try await fetchBytes(url)
-                let parsed = parseRssXML(data)
-                await MainActor.run {
-                    articles = parsed; loading = false
-                    if parsed.isEmpty { errText = "没有解析到文章（可能不是 RSS/Atom，或需要登录）" }
-                }
-            } catch {
-                await MainActor.run { loading = false; errText = "拉取失败：\(error.localizedDescription)" }
+                if source.type != 0 && source.ruleContent.isEmpty { content = article.link }
+                else { content = try await source.articleContent(article) }
+                loading = false
             }
+            catch { self.error = "正文加载失败：" + sourceErrorMessage(error); loading = false }
         }
     }
+}
+
+struct FeedHTMLView: UIViewRepresentable {
+    let html: String
+    let baseURL: String
+    let type: Int
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration(); config.allowsInlineMediaPlayback = true
+        let view = WKWebView(frame: .zero, configuration: config)
+        let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+        var rendered = html
+        if (type == 1 || type == 2), let url = URL(string: trimmed),
+           ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
+            let safeURL = trimmed.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "\"", with: "&quot;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+            rendered = type == 1
+                ? "<meta name='viewport' content='width=device-width'><img style='max-width:100%' src=\"\(safeURL)\">"
+                : "<meta name='viewport' content='width=device-width'><video style='max-width:100%' controls playsinline src=\"\(safeURL)\"></video>"
+        }
+        view.loadHTMLString(rendered, baseURL: URL(string: baseURL))
+        return view
+    }
+    func updateUIView(_ view: WKWebView, context: Context) {}
 }
 
 // 与书源请求共用 Cookie、超时和系统证书校验。
@@ -234,8 +354,6 @@ func fetchBytes(_ urlString: String) async throws -> Data {
     req.timeoutInterval = 60
     req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
     let (data, resp) = try await SourceHTTP.session.data(for: req)
-    if let http = resp as? HTTPURLResponse, http.statusCode >= 400 {
-        throw URLError(.badServerResponse)
-    }
+    if let http = resp as? HTTPURLResponse, http.statusCode >= 400 { throw URLError(.badServerResponse) }
     return data
 }

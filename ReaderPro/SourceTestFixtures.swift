@@ -132,6 +132,9 @@ struct SourceFixtureRoot: View {
             if ProcessInfo.processInfo.arguments.contains("--source-stress-fixture") {
                 BookshelfView(store: store).tabItem { Label("书架", systemImage: "books.vertical") }
             }
+            if ProcessInfo.processInfo.arguments.contains("--rss-ui-fixture") {
+                RssSubscribeView(store: store).tabItem { Label("订阅", systemImage: "bookmark") }
+            }
             NavigationStack { SourceManagementView(store: store) }.tabItem { Label("管理", systemImage: "list.bullet") }
             DiscoveryView(store: store).tabItem { Label("发现", systemImage: "safari") }
             NavigationStack { SourceView(store: store) }.tabItem { Label("搜索", systemImage: "magnifyingglass") }
@@ -144,6 +147,7 @@ struct SourceFixtureRoot: View {
             var failed = source; failed.id = "fixture-failed"; failed.bookSourceName = "失败测试书源"; failed.searchUrl = "/denied"; failed.exploreUrl = ""; failed.enabled = false
             var partial = SourceTestFixtures.json(); partial.id = "fixture-partial"; partial.bookSourceName = "无结果测试书源"; partial.searchUrl = "/json/noresults"; partial.enabled = false
             store.books = []; store.sources = [source, failed, partial]
+            if ProcessInfo.processInfo.arguments.contains("--rss-ui-fixture") { store.rssSources = [] }
             if ProcessInfo.processInfo.arguments.contains("--source-switch-fixture") {
                 var alternate = source
                 alternate.id = "fixture-alternate"; alternate.bookSourceName = "备用测试书源"

@@ -56,6 +56,15 @@ struct ReaderView: View {
     @State private var chapterLoadTask: Task<Void, Never>?
     @State private var chapterLoadToken = UUID()
     @State private var initialBrightness: CGFloat = 0.5
+    @State private var initialIdleTimerDisabled = false
+
+    // These are reader behaviour preferences, distinct from the appearance
+    // controls in the interface panel. AppStorage keeps them across launches.
+    @AppStorage("reader.hideStatusBar") private var hideStatusBar = false
+    @AppStorage("reader.keepScreenAwake") private var keepScreenAwake = false
+    @AppStorage("reader.justifyText") private var justifyText = true
+    @AppStorage("reader.letterSpacing") private var letterSpacing = 0.0
+    @AppStorage("reader.paragraphIndent") private var paragraphIndent = 0.0
 
     // 仿真翻页跳转令牌（目录/书签/换章时强制重建 pageCurl）
     @State private var jumpToken = 0
@@ -94,7 +103,7 @@ struct ReaderView: View {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(Int(size.width))|\(Int(size.height))"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))"
     }
 
     var body: some View {
@@ -132,7 +141,11 @@ struct ReaderView: View {
         .background(Color(uiColor: theme.background).ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
+        .statusBarHidden(hideStatusBar && !showMenu)
         .preferredColorScheme(themeBrightness())
+        .onChange(of: keepScreenAwake) { _, enabled in
+            UIApplication.shared.isIdleTimerDisabled = enabled || initialIdleTimerDisabled
+        }
         .onDisappear {
             cancelChapterLoad()
             saveProgress()
@@ -144,6 +157,7 @@ struct ReaderView: View {
             speech.stop()
             autoTimer?.invalidate()
             UIScreen.main.brightness = initialBrightness
+            UIApplication.shared.isIdleTimerDisabled = initialIdleTimerDisabled
         }
         .sheet(isPresented: $showCatalog) { catalogSheet }
         .sheet(isPresented: $showSearch) { searchSheet }
@@ -353,12 +367,14 @@ struct ReaderView: View {
         let para = NSMutableParagraphStyle()
         para.lineSpacing = CGFloat(store.lineSpacing)
         para.paragraphSpacing = CGFloat(store.paragraphSpacing)
-        para.alignment = .justified
+        para.alignment = justifyText ? .justified : .natural
+        para.firstLineHeadIndent = CGFloat(paragraphIndent * store.fontSize)
         para.lineBreakMode = .byCharWrapping
         para.hyphenationFactor = 0
         var attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: theme.text,
             .paragraphStyle: para,
+            .kern: letterSpacing,
         ]
         if store.fontName.isEmpty {
             attrs[.font] = UIFont.systemFont(ofSize: CGFloat(store.fontSize))
@@ -410,6 +426,8 @@ struct ReaderView: View {
         let restored = restoredReadingPosition(b)
         chapterIndex = restored.chapter
         initialBrightness = UIScreen.main.brightness
+        initialIdleTimerDisabled = UIApplication.shared.isIdleTimerDisabled
+        UIApplication.shared.isIdleTimerDisabled = keepScreenAwake || initialIdleTimerDisabled
         applyBrightness()
         loadChapterIfNeeded()
         rebuild(size: size, keepOffset: restored.offset)
@@ -531,18 +549,18 @@ struct ReaderView: View {
     }
 
     func cycleTheme() {
-        let t = theme
-        var w: CGFloat = 0; var a: CGFloat = 0
-        t.background.getWhite(&w, alpha: &a)
-        store.theme = w < 0.5 ? 0 : 5
+        store.theme = isDarkReaderTheme() ? 0 : 5
         store.save()
     }
 
+    func isDarkReaderTheme() -> Bool {
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        guard theme.background.getRed(&red, green: &green, blue: &blue, alpha: &alpha) else { return false }
+        return 0.2126 * red + 0.7152 * green + 0.0722 * blue < 0.5
+    }
+
     func themeBrightness() -> ColorScheme? {
-        let t = theme
-        var w: CGFloat = 0; var a: CGFloat = 0
-        t.background.getWhite(&w, alpha: &a)
-        return w < 0.5 ? .dark : .light
+        isDarkReaderTheme() ? .dark : .light
     }
 
     // MARK: 自动翻页
@@ -732,9 +750,13 @@ struct ReaderView: View {
                             ForEach(allFonts) { font in Text(font.display).tag(font.name) }
                         }.labelsHidden().onChange(of: store.fontName) { _, _ in store.save() }
                     }
-                    styleSlider("字号", value: $store.fontSize, range: 12...32)
+                    styleSlider("字号", value: $store.fontSize, range: 12...45)
+                    styleSlider("字距", value: $letterSpacing, range: 0...8)
                     styleSlider("行距", value: $store.lineSpacing, range: 0...24)
                     styleSlider("段距", value: $store.paragraphSpacing, range: 0...40)
+                    styleSlider("缩进", value: $paragraphIndent, range: 0...4)
+                    styleSlider("左右边距", value: $store.pagePaddingH, range: 8...48)
+                    styleSlider("上下边距", value: $store.pagePaddingV, range: 8...48)
                     HStack(spacing: 6) {
                         ForEach([0, 1, 4, 2, 3], id: \.self) { mode in
                             Button {
@@ -774,7 +796,7 @@ struct ReaderView: View {
 
     func styleSlider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>) -> some View {
         HStack(spacing: 12) {
-            Text(title).font(.system(size: 14)).frame(width: 32)
+            Text(title).font(.system(size: 14)).frame(width: 60, alignment: .leading)
             Button { value.wrappedValue = max(range.lowerBound, value.wrappedValue - 1); store.save() } label: {
                 Image(systemName: "minus").frame(width: 30, height: 30)
             }.accessibilityLabel("减少" + title)
@@ -986,63 +1008,37 @@ struct ReaderView: View {
     var settingsSheet: some View {
         NavigationStack {
             Form {
-                Section("背景") {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 14) {
-                            ForEach(readerThemes) { t in
-                                VStack(spacing: 4) {
-                                    Circle()
-                                        .fill(Color(uiColor: t.background))
-                                        .frame(width: 42, height: 42)
-                                        .overlay(Circle().stroke(store.theme == t.id ? Color.accentColor : Color.clear, lineWidth: 2))
-                                    Text(t.name).font(.caption2)
-                                }
-                                .onTapGesture { store.theme = t.id; store.save() }
-                            }
-                        }
-                        .padding(.vertical, 4)
-                    }
-                }
-                Section("字体") {
-                    Picker("字体", selection: $store.fontName) {
-                        ForEach(allFonts) { f in Text(f.display).tag(f.name) }
-                    }
-                    .onChange(of: store.fontName) { _, _ in store.save() }
-                }
-                Section("排版") {
-                    sliderRow("字号", value: $store.fontSize, range: 12...32, step: 1)
-                    sliderRow("行距", value: $store.lineSpacing, range: 0...24, step: 1)
-                    sliderRow("段距", value: $store.paragraphSpacing, range: 0...40, step: 1)
-                    sliderRow("左右边距", value: $store.pagePaddingH, range: 8...48, step: 1)
-                    sliderRow("上下边距", value: $store.pagePaddingV, range: 8...48, step: 1)
-                    Picker("翻页动画", selection: $store.pageTurn) {
-                        Text("覆盖").tag(0); Text("平移").tag(1); Text("滚动").tag(2); Text("无").tag(3); Text("仿真").tag(4)
-                    }
-                    .pickerStyle(.segmented)
-                    .onChange(of: store.pageTurn) { _, _ in store.save() }
-                    sliderRow("翻页速度", value: $store.pageTurnSpeed, range: 0.1...0.8, step: 0.05)
-                }
-                Section("显示") {
+                Section("阅读行为") {
+                    Toggle("阅读时保持屏幕常亮", isOn: $keepScreenAwake)
+                    Toggle("阅读时隐藏状态栏", isOn: $hideStatusBar)
+                    Toggle("正文两端对齐", isOn: $justifyText)
                     Toggle("页眉（章节名）", isOn: $store.showHeader)
                         .onChange(of: store.showHeader) { _, _ in store.save() }
                     Toggle("页脚（页码）", isOn: $store.showFooter)
                         .onChange(of: store.showFooter) { _, _ in store.save() }
-                    HStack {
-                        Text("亮度")
-                        Spacer()
-                        if store.brightness < 0 {
-                            Button("跟随系统") { store.brightness = 0.5; store.save(); applyBrightness() }
-                        } else {
-                            Slider(value: $store.brightness, in: 0.05...1.0)
-                                .onChange(of: store.brightness) { _, _ in store.save(); applyBrightness() }
-                            Button("跟随系统") { store.brightness = -1; store.save(); applyBrightness() }
+                }
+                Section("屏幕亮度") {
+                    Toggle("跟随系统亮度", isOn: Binding(
+                        get: { store.brightness < 0 },
+                        set: { followsSystem in
+                            store.brightness = followsSystem ? -1 : Double(UIScreen.main.brightness)
+                            store.save(); applyBrightness()
                         }
+                    ))
+                    if store.brightness >= 0 {
+                        Slider(value: $store.brightness, in: 0.05...1.0)
+                            .onChange(of: store.brightness) { _, _ in store.save(); applyBrightness() }
+                            .accessibilityLabel("阅读亮度")
                     }
+                }
+                Section("翻页") {
+                    sliderRow("翻页速度", value: $store.pageTurnSpeed, range: 0.1...0.8, step: 0.05)
                 }
                 Section("自动翻页") {
                     Toggle("自动翻页", isOn: Binding(get: { autoPageEnabled }, set: { toggleAutoPage($0) }))
                     if autoPageEnabled {
                         sliderRow("间隔（秒）", value: $autoPageInterval, range: 3...60, step: 1)
+                            .onChange(of: autoPageInterval) { _, _ in toggleAutoPage(true) }
                     }
                 }
                 Section("朗读") {

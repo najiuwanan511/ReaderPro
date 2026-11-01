@@ -32,6 +32,20 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/packs/user':
             mime = 'application/json; charset=utf-8'
             body = Path('build/source-pack-1325.json').read_text(encoding='utf-8')
+        elif path == '/packs/rss203':
+            mime = 'application/json; charset=utf-8'
+            body = Path('build/rss-pack-203.json').read_text(encoding='utf-8')
+        elif path == '/rss/list':
+            if self.headers.get('X-Fixture') != 'RSS':
+                status, body = 403, 'missing RSS header'
+            else:
+                body = '<article><a class="title" href="/rss/article">样本文章</a><span class="date">今天</span></article><a class="next" href="/rss/list2">下一页</a>'
+        elif path == '/rss/list2':
+            body = '<article><a class="title" href="/rss/article">第二页文章</a></article>'
+        elif path == '/rss/article':
+            body = '<main><div class="content"><p>订阅测试正文</p></div></main>'
+        elif path == '/rss/atom':
+            mime, body = 'application/atom+xml; charset=utf-8', '<?xml version="1.0"?><feed><entry><title>Atom 样本</title><link href="/rss/article"/><content><![CDATA[<p>内容</p>]]></content></entry></feed>'
         elif path == '/packs/chuangshi':
             mime = 'application/json; charset=utf-8'
             entries = json.loads(Path('build/source-pack-1325.json').read_text(encoding='utf-8'))
@@ -45,6 +59,12 @@ class Handler(BaseHTTPRequestHandler):
             body = self.headers.get('Cookie', '')
         elif path == '/bridge-library':
             body = "function remoteCategory() { return '远程分类'; }"
+        elif path == '/bridge-library-first':
+            body = "var libraryOrder='first'; function Map(key){return key+'-value';}"
+        elif path == '/bridge-library-second':
+            body = "libraryOrder+='-second'; function categories(){return Map('proxy')+'|'+libraryOrder;}"
+        elif path == '/comic-multiple-scripts':
+            body = '<script>var analytics=true;</script><script>var pages=["https://cdn.imagedeliveries.com/sample/one.webp","https://cdn.imagedeliveries.com/sample/two.jpg"];</script><script>var more=true;</script>'
         elif path == '/bridge-post':
             body = self.rfile.read(int(self.headers.get('Content-Length', 0))).decode()
         elif path == '/bridge-redirect':

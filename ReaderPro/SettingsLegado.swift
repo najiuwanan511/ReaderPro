@@ -182,7 +182,7 @@ struct ReadSettingsView: View {
             Section {
                 VStack(spacing: 2) {
                     HStack { Text("字号").foregroundStyle(.primary); Spacer(); Text("\(Int(store.fontSize))").foregroundStyle(.secondary) }
-                    Slider(value: $store.fontSize, in: 12...32, step: 1) { _ in store.save() }
+                    Slider(value: $store.fontSize, in: 12...45, step: 1) { _ in store.save() }
                 }.padding(.vertical, 4)
                 VStack(spacing: 2) {
                     HStack { Text("行距").foregroundStyle(.primary); Spacer(); Text("\(Int(store.lineSpacing))").foregroundStyle(.secondary) }
@@ -190,7 +190,7 @@ struct ReadSettingsView: View {
                 }.padding(.vertical, 4)
                 VStack(spacing: 2) {
                     HStack { Text("段距").foregroundStyle(.primary); Spacer(); Text("\(Int(store.paragraphSpacing))").foregroundStyle(.secondary) }
-                    Slider(value: $store.paragraphSpacing, in: 0...30, step: 1) { _ in store.save() }
+                    Slider(value: $store.paragraphSpacing, in: 0...40, step: 1) { _ in store.save() }
                 }.padding(.vertical, 4)
             } header: { SettingSectionHeader(title: "排版") }
 

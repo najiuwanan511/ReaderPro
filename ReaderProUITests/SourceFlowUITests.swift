@@ -82,6 +82,25 @@ final class SourceFlowUITests: XCTestCase {
         }
     }
 
+    func testDiscoverySearchFiltersOnlyDiscoverableSources() {
+        let app = XCUIApplication()
+        continueAfterFailure = false
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-switch-fixture"]
+        app.launch()
+        app.tabBars.buttons["发现"].tap()
+        XCTAssertTrue(app.buttons["回归测试书源"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["备用测试书源"].exists)
+        app.buttons["搜索发现书源"].tap()
+        let search = app.textFields["discoverySourceSearch"]
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.tap(); search.typeText("备用")
+        XCTAssertTrue(app.buttons["备用测试书源"].exists)
+        XCTAssertFalse(app.buttons["回归测试书源"].exists)
+        XCTAssertFalse(app.textFields["bookSearch"].exists)
+        app.buttons["取消"].tap()
+        XCTAssertTrue(app.buttons["回归测试书源"].waitForExistence(timeout: 5))
+    }
+
     func testSearchOpensDirectory() {
         let app = launch()
         app.tabBars.buttons["搜索"].tap()

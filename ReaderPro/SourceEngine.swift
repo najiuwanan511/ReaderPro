@@ -573,6 +573,10 @@ struct RssSource: Identifiable, Codable, Equatable {
     var lastUpdateTime: Int64 = 0
     // 列表 / 正文规则（真正的 RSS 规则源才有值）
     var sortUrl: String = ""
+    var header: String = ""
+    var jsLib: String = ""
+    var loginUrl: String = ""
+    var type: Int = 0
     var ruleArticles: String = ""
     var ruleNextPage: String = ""
     var ruleTitle: String = ""
@@ -583,7 +587,7 @@ struct RssSource: Identifiable, Codable, Equatable {
     var ruleContent: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceName, sourceUrl, sourceIcon, sourceGroup, sourceComment, enabled, articleStyle, customOrder, enableJs, enabledCookieJar, loadWithBaseUrl, singleUrl, lastUpdateTime, sortUrl, ruleArticles, ruleNextPage, ruleTitle, rulePubDate, ruleDescription, ruleImage, ruleLink, ruleContent
+        case id, sourceName, sourceUrl, sourceIcon, sourceGroup, sourceComment, enabled, articleStyle, customOrder, enableJs, enabledCookieJar, loadWithBaseUrl, singleUrl, lastUpdateTime, sortUrl, header, jsLib, loginUrl, type, ruleArticles, ruleNextPage, ruleTitle, rulePubDate, ruleDescription, ruleImage, ruleLink, ruleContent
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -597,9 +601,13 @@ struct RssSource: Identifiable, Codable, Equatable {
         enableJs = c.tolerantBool(.enableJs, defaultValue: true)
         enabledCookieJar = c.tolerantBool(.enabledCookieJar, defaultValue: true)
         loadWithBaseUrl = c.tolerantBool(.loadWithBaseUrl, defaultValue: true)
-        singleUrl = c.tolerantBool(.singleUrl, defaultValue: true)
+        singleUrl = c.tolerantBool(.singleUrl, defaultValue: false)
         lastUpdateTime = Int64(c.tolerantInt(.lastUpdateTime))
         sortUrl = c.tolerantString(.sortUrl)
+        header = c.tolerantString(.header)
+        if header.isEmpty, let map = try? c.decode([String: String].self, forKey: .header),
+           let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
+        jsLib = c.tolerantString(.jsLib); loginUrl = c.tolerantString(.loginUrl); type = c.tolerantInt(.type)
         ruleArticles = c.tolerantString(.ruleArticles); ruleNextPage = c.tolerantString(.ruleNextPage)
         ruleTitle = c.tolerantString(.ruleTitle); rulePubDate = c.tolerantString(.rulePubDate)
         ruleDescription = c.tolerantString(.ruleDescription); ruleImage = c.tolerantString(.ruleImage)
@@ -612,7 +620,9 @@ struct RssSource: Identifiable, Codable, Equatable {
         try c.encode(enabled, forKey: .enabled); try c.encode(articleStyle, forKey: .articleStyle); try c.encode(customOrder, forKey: .customOrder)
         try c.encode(enableJs, forKey: .enableJs); try c.encode(enabledCookieJar, forKey: .enabledCookieJar); try c.encode(loadWithBaseUrl, forKey: .loadWithBaseUrl)
         try c.encode(singleUrl, forKey: .singleUrl); try c.encode(lastUpdateTime, forKey: .lastUpdateTime)
-        try c.encode(sortUrl, forKey: .sortUrl); try c.encode(ruleArticles, forKey: .ruleArticles); try c.encode(ruleNextPage, forKey: .ruleNextPage)
+        try c.encode(sortUrl, forKey: .sortUrl); try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib)
+        try c.encode(loginUrl, forKey: .loginUrl); try c.encode(type, forKey: .type)
+        try c.encode(ruleArticles, forKey: .ruleArticles); try c.encode(ruleNextPage, forKey: .ruleNextPage)
         try c.encode(ruleTitle, forKey: .ruleTitle); try c.encode(rulePubDate, forKey: .rulePubDate); try c.encode(ruleDescription, forKey: .ruleDescription)
         try c.encode(ruleImage, forKey: .ruleImage); try c.encode(ruleLink, forKey: .ruleLink); try c.encode(ruleContent, forKey: .ruleContent)
     }
@@ -648,7 +658,7 @@ func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
     }
     var seen = Set<String>(); var deduped: [RssSource] = []
     for s in out {
-        let k = s.sourceName + "|" + s.sourceUrl
+        let k = s.sourceUrl.isEmpty ? s.sourceName : s.sourceUrl
         if seen.contains(k) { continue }
         seen.insert(k); deduped.append(s)
     }

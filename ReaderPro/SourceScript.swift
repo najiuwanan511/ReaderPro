@@ -1,6 +1,30 @@
 import Foundation
 
 enum SourceScript {
+    // Legado accepts either JavaScript itself or an ordered JSON object whose
+    // string values are remote library URLs. Preserve declaration order: a
+    // later library may depend on globals installed by an earlier one.
+    static func remoteLibraryURLs(_ library: String) -> [String]? {
+        let trimmed = library.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
+        let pattern = #"(\"(?:\\.|[^\"\\])*\")\s*:\s*\"(?:\\.|[^\"\\])*\""#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let ns = trimmed as NSString
+        var seen = Set<String>()
+        var keys: [String] = []
+        for match in regex.matches(in: trimmed, range: NSRange(location: 0, length: ns.length)) {
+            let encodedKey = ns.substring(with: match.range(at: 1))
+            guard let keyData = encodedKey.data(using: .utf8),
+                  let key = try? JSONDecoder().decode(String.self, from: keyData), seen.insert(key).inserted else { continue }
+            keys.append(key)
+        }
+        return keys.compactMap { object[$0] }.filter {
+            guard let scheme = URLComponents(string: $0)?.scheme?.lowercased() else { return false }
+            return scheme == "http" || scheme == "https"
+        }
+    }
+
     private struct Token {
         var text: String
         var range: Range<String.Index>

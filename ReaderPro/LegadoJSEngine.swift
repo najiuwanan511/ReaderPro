@@ -329,23 +329,39 @@ final class LegadoJS {
         // 例如 exploreUrl 的 @js:...;JSON.stringify(s)，正文规则的 @js:...;result。
         // 之前把 evaluateScript 的返回值丢弃了、只读 result 变量，导致
         // JSON.stringify(...) 这种「靠返回值」的规则全部拿不到结果（发现/搜索/正文全空）。
-        var library = LegadoJSCtx.library
+        let library = LegadoJSCtx.library.trimmingCharacters(in: .whitespacesAndNewlines)
         if !library.isEmpty {
-            if library.hasPrefix("http://") || library.hasPrefix("https://") {
-                do {
-                    library = try SourceJSBridge.request(library, base: sourceUrl, headers: header)["text"] as? String ?? ""
-                } catch {
-                    LegadoJSCtx.failures?.add("远程 jsLib：" + sourceErrorMessage(error)); return ""
-                }
+            let mappedURLs = SourceScript.remoteLibraryURLs(library)
+            let scripts: [String]
+            if let mappedURLs {
+                scripts = mappedURLs
+            } else {
+                scripts = [library]
             }
-            library = SourceScript.adaptingJavaCalls(library)
-            ctx.evaluateScript(library)
-            if exception.contains("Cannot declare a let variable twice") {
-                let repaired = SourceScript.repairingParameterRedeclarations(library)
-                if repaired != library {
-                    exception = ""; ctx.exception = nil
-                    ctx.evaluateScript(repaired)
+            for item in scripts {
+                var source = item
+                if item.hasPrefix("http://") || item.hasPrefix("https://") {
+                    do {
+                        let response = try SourceJSBridge.request(item, base: sourceUrl, headers: header)
+                        let status = response["status"] as? Int ?? 0
+                        guard (200..<300).contains(status) else {
+                            LegadoJSCtx.failures?.add("远程 jsLib：HTTP \(status)（\(item)）"); return ""
+                        }
+                        source = response["text"] as? String ?? ""
+                    } catch {
+                        LegadoJSCtx.failures?.add("远程 jsLib：" + sourceErrorMessage(error)); return ""
+                    }
                 }
+                source = SourceScript.adaptingJavaCalls(source)
+                ctx.evaluateScript(source)
+                if exception.contains("Cannot declare a let variable twice") {
+                    let repaired = SourceScript.repairingParameterRedeclarations(source)
+                    if repaired != source {
+                        exception = ""; ctx.exception = nil
+                        ctx.evaluateScript(repaired)
+                    }
+                }
+                guard exception.isEmpty else { LegadoJSCtx.failures?.add("远程 jsLib：" + exception); return "" }
             }
         }
         let ret = ctx.evaluateScript(script)

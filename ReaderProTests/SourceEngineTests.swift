@@ -288,6 +288,58 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(remote, "远程分类")
     }
 
+    func testJSONLibraryMapLoadsRemoteScriptsInOrderAndReportsHTTPFailure() async throws {
+        // The 1329 G站漫画 source uses this JSON alias-to-URL format, rather
+        // than an inline library; Map is a function defined by that library.
+        let original = #"{"G站漫画":"https://qyyuapi.com/sy/js/G站漫画/jsLib.js"}"#
+        XCTAssertEqual(SourceScript.remoteLibraryURLs(original), ["https://qyyuapi.com/sy/js/G站漫画/jsLib.js"])
+        XCTAssertEqual(SourceScript.remoteLibraryURLs(#"{"a\":b":"https://example.org/escaped.js"}"#), ["https://example.org/escaped.js"])
+        let libraries = #"{"first":"\#(base)/bridge-library-first","ignored":"not a URL","second":"\#(base)/bridge-library-second"}"#
+        let result = await Task.detached { [base] in
+            let failures = RuleFailures()
+            return LegadoJSCtx.$failures.withValue(failures) {
+                let value = LegadoJSCtx.$library.withValue(libraries) {
+                    LegadoJS.run("categories()", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+                }
+                do { try failures.check(); return (value, "") }
+                catch { return (value, sourceErrorMessage(error)) }
+            }
+        }.value
+        XCTAssertEqual(result.0, "proxy-value|first-second")
+        XCTAssertTrue(result.1.isEmpty, result.1)
+        let failed = await Task.detached { [base] in
+            let failures = RuleFailures()
+            return LegadoJSCtx.$failures.withValue(failures) {
+                let library = #"{"blocked":"\#(base)/denied"}"#
+                _ = LegadoJSCtx.$library.withValue(library) {
+                    LegadoJS.run("Map('x')", input: "", baseUrl: base, sourceKey: "", sourceUrl: base)
+                }
+                do { try failures.check(); return "no error" }
+                catch { return sourceErrorMessage(error) }
+            }
+        }.value
+        XCTAssertTrue(failed.contains("HTTP 403"), failed)
+    }
+
+    func testComicContentRunsJSOnceOnJoinedXPathMatches() async throws {
+        // Real 1329 Nhentai source rule: its image URLs occur in only one of
+        // several script tags. Android's getString joins the XPath results.
+        var source = SourceTestFixtures.json()
+        source.ruleContent.content = #"""
+        //script@js:
+        result.match(/https:\/\/cdn\.imagedeliveries\.com\/[a-zA-Z0-9\/_-]+?\.(webp|png|jpg|jpeg)/g)
+        .map(x=>'<img src="'+x+'">').join("\n")
+        """#
+        source.ruleContent.imageUrl = ""
+        let address = base + "/comic-multiple-scripts"
+        let chapter = BookChapter(id: address, title: "sample", text: "__URL__" + address, url: address)
+        let images = try await source.fetchChapterImages(chapter)
+        XCTAssertEqual(images, [
+            "https://cdn.imagedeliveries.com/sample/one.webp",
+            "https://cdn.imagedeliveries.com/sample/two.jpg"
+        ])
+    }
+
     func testJavaRuleElementsPreserveDOMAndJSONTypes() throws {
         let html = #"<ul><li data-id="2"><a href="/two">二</a></li><li data-id="1"><a href="/one">一</a></li></ul>"#
         let result = LegadoJS.run(#"""

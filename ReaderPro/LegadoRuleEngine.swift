@@ -958,6 +958,27 @@ func applyRuleFirst(_ htmlOrJson: String, _ rule: String, base: String) -> Strin
     return joined
 }
 
+// Content is a string rule in Legado: a selector preceding @js receives all
+// matched values joined by newlines, not one independent JS call per node.
+// This matters for comic pages whose unrelated <script> nodes precede the one
+// containing image URLs: applying .match(...).map(...) to each node fails on
+// the first nonmatching script even though the page has valid images.
+func applyContentRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
+    let trimmed = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !isJavaScriptRule(trimmed), !trimmed.contains("<js>"),
+          let marker = trimmed.range(of: "@js:", options: .caseInsensitive) else {
+        return applyRule(htmlOrJson, rule, base: base)
+    }
+    let prefix = String(trimmed[..<marker.lowerBound])
+    let values = applyRule(htmlOrJson, prefix, base: base)
+    guard !values.isEmpty else { return [] }
+    let result = LegadoJS.run(String(trimmed[marker.upperBound...]), input: values.joined(separator: "\n"),
+                              baseUrl: base, sourceKey: LegadoJSCtx.key,
+                              sourceUrl: LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book,
+                              originalContent: htmlOrJson)
+    return result.isEmpty ? [] : [result]
+}
+
 // MARK: - Explore categories
 
 struct ExploreCategory: Identifiable, Equatable {
@@ -1327,7 +1348,7 @@ extension LegadoSource {
                     guard failure.message.hasPrefix("HTTP "), SourceScript.loadsOwnContent(ruleContent.content) else { throw failure }
                     response = SourcePage(text: "", url: SourceHTTP.options(next).url)
                 }
-                let raw = applyRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
+                let raw = applyContentRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
                 let part = stripText(raw, preserveNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines)
                 try LegadoJSCtx.failures?.check()
                 guard !part.isEmpty else { throw SourceFailure(stage: "正文解析", message: "正文规则未匹配到内容，请检查规则、登录状态或验证码", url: response.url) }
@@ -1356,7 +1377,7 @@ extension LegadoSource {
                 guard visited.insert(next).inserted else { break }
                 let response = try await loadPage(next, stage: "漫画正文")
                 let rule = ruleContent.imageUrl.isEmpty ? ruleContent.content : ruleContent.imageUrl
-                let extracted = applyRule(response.text, rule, base: response.url)
+                let extracted = applyContentRule(response.text, rule, base: response.url)
                 let addresses = extracted.flatMap { value in
                     value.contains("<img") ? cssExtractAll(value, "img@src") : [value]
                 }.map { resolveUrl($0, base: response.url) }.filter { isSourceURL($0) }
