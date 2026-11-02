@@ -348,7 +348,7 @@ struct ExploreListView: View {
         } message: {
             Text("开启后此书源的 HTTPS 连接将跳过证书校验，可能暴露传输内容。仅对信任的书源开启；可在书源详情中关闭。若服务器协议本身不兼容，开启后仍可能无法连接。")
         }
-        .sheet(item: $selectedResult) { SourceBookDetailView(store: store, result: $0) }
+        .fullScreenCover(item: $selectedResult) { SourceBookDetailView(store: store, result: $0) }
     }
 
     @ViewBuilder private var moreControls: some View {

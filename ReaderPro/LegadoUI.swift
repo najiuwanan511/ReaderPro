@@ -155,8 +155,15 @@ struct SourceBookDetailView: View {
                 chapters = []; info = nil; loading = true; chapterQuery = ""
             }
             .task(id: selected.id) { await load() }
-            .navigationDestination(item: $readingBook) { book in
-                if book.isComicKind { MangaView(store: store, bookId: book.id) }
+        }
+        // Present above the detail container. A pushed reader inside a sheet
+        // inherits its top gap and the detail screen's bottom action inset.
+        .fullScreenCover(item: $readingBook) { book in
+            NavigationStack {
+                if book.isComicKind {
+                    MangaView(store: store, bookId: book.id)
+                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("返回目录") { readingBook = nil } } }
+                }
                 else { ReaderView(store: store, bookId: book.id) }
             }
         }

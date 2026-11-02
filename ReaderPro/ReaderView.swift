@@ -143,6 +143,8 @@ struct ReaderView: View {
                 }
             }
             .frame(width: size.width, height: size.height)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("readerViewport")
             .onAppear {
                 lastSize = size
                 readingStart = Date()
@@ -872,7 +874,7 @@ struct ReaderView: View {
             Button { dismiss() } label: {
                 Image(systemName: "chevron.left").font(.system(size: 18, weight: .medium))
                     .frame(width: 44, height: 44).contentShape(Rectangle())
-            }
+            }.accessibilityLabel("返回")
             VStack(alignment: .leading, spacing: 2) {
                 Text(book?.title ?? "").font(.headline).lineLimit(1)
                 if let c = chapter, store.showHeader {

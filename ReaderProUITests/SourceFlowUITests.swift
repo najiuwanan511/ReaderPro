@@ -58,11 +58,49 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(chapter.waitForExistence(timeout: 5)); chapter.tap()
         let page = app.textViews["readerPage"]
         XCTAssertTrue(page.waitForExistence(timeout: 15))
+        assertReaderUsesFullScreen(app)
         XCTAssertTrue(page.label.contains("第1章第1段"), page.label)
         XCTAssertTrue(page.label.contains("第1章第7段"), "Must load all seven content pages before displaying the short fixture chapter")
         Thread.sleep(forTimeInterval: 1) // Wait for the presentation and TextKit drawing before visual evidence.
         let body = XCTAttachment(screenshot: page.screenshot()); body.name = "正文像素"; body.lifetime = .keepAlways; add(body)
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "分类到目录直接阅读"; attachment.lifetime = .keepAlways; add(attachment)
+    }
+
+    func testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory() {
+        let app = launch()
+        app.tabBars.buttons["发现"].tap()
+        app.buttons["回归测试书源"].tap()
+        let category = app.buttons["分类"]
+        XCTAssertTrue(category.waitForExistence(timeout: 15)); category.tap()
+        let book = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 15)); book.tap()
+        XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 15))
+        let start = app.buttons["开始阅读"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5)); start.tap()
+        let page = app.textViews["readerPage"]
+        XCTAssertTrue(page.waitForExistence(timeout: 15))
+        XCTAssertTrue(page.label.contains("第1章第1段"))
+        assertReaderUsesFullScreen(app)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "发现开始阅读全屏无弹窗留白"; screenshot.lifetime = .keepAlways; add(screenshot)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let back = app.buttons["返回"]
+        XCTAssertTrue(back.waitForExistence(timeout: 10)); back.tap()
+        XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 10))
+        app.buttons["关闭"].tap()
+        XCTAssertTrue(app.navigationBars["分类"].waitForExistence(timeout: 10))
+    }
+
+    private func assertReaderUsesFullScreen(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let viewport = app.otherElements["readerViewport"]
+        XCTAssertTrue(viewport.waitForExistence(timeout: 5), file: file, line: line)
+        let screen = app.frame
+        // Allow the device's status/sensor area, but no sheet's exposed top
+        // strip or inherited detail navigation/action bars above the body.
+        XCTAssertLessThan(viewport.frame.minY - screen.minY, 70, file: file, line: line)
+        XCTAssertGreaterThan(viewport.frame.height, screen.height - 120, file: file, line: line)
+        XCTAssertFalse(app.buttons["加入书架"].exists, file: file, line: line)
+        XCTAssertFalse(app.navigationBars["书籍详情"].exists, file: file, line: line)
     }
 
     func testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable() {
@@ -113,6 +151,9 @@ final class SourceFlowUITests: XCTestCase {
         let book = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 20)); book.tap()
         XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 15))
+        app.buttons["开始阅读"].tap()
+        XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 15))
+        assertReaderUsesFullScreen(app)
     }
 
     func testSwitchingSourcesReplacesVisibleDirectorySafely() {
