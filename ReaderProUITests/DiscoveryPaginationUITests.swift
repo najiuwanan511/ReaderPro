@@ -52,7 +52,10 @@ final class DiscoveryPaginationUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["更新次数1"].waitForExistence(timeout: 15))
         app.buttons["explore-button-4"].tap()
         XCTAssertTrue(app.staticTexts["更新次数2"].waitForExistence(timeout: 15))
-        app.buttons["refreshExploreCategories"].tap()
+        // Match the original source-header long-press refresh entry.
+        source.press(forDuration: 1)
+        let refresh = app.buttons["刷新发现分类"]
+        XCTAssertTrue(refresh.waitForExistence(timeout: 10)); refresh.tap()
         XCTAssertTrue(app.buttons["打开其他"].waitForExistence(timeout: 15))
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "发现分类控件与分区"; shot.lifetime = .keepAlways; add(shot)
         app.buttons["打开其他"].tap()

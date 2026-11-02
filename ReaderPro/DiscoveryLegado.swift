@@ -116,8 +116,8 @@ struct SourceExploreCard: View {
                 HStack(spacing: 8) {
                     Text(source.bookSourceName).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)
                     Spacer()
-                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .medium))
-                        .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
+                        .rotationEffect(.degrees(expanded ? 90 : 0)).foregroundStyle(.secondary)
                 }.padding(.horizontal, 10).padding(.vertical, 6).frame(minHeight: 36)
                     .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 6)).contentShape(Rectangle())
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
@@ -162,13 +162,8 @@ struct SourceExploreCard: View {
                         .id("\(entry.offset)|\(entry.element.title)|\(entry.element.type)")
                         .layoutValue(key: ExploreStyleKey.self, value: entry.element.style)
                 }
-            }.padding(.horizontal, 11).padding(.top, 11).padding(.bottom, 6)
+            }.padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
             if !actionError.isEmpty { Text(actionError).font(.caption).foregroundStyle(.red).padding(.horizontal, 16) }
-            HStack {
-                Spacer()
-                Button { retry += 1 } label: { Label("刷新分类", systemImage: "arrow.clockwise") }.font(.caption)
-                    .accessibilityIdentifier("refreshExploreCategories")
-            }.padding(.horizontal, 16).padding(.vertical, 6)
         }
     }
 }
@@ -191,6 +186,7 @@ private struct ExploreCategoryControl: View {
         _value = State(initialValue: ExploreInfo.value(source.bookSourceUrl, category.title))
     }
     private var name: String { category.displayTitle ?? category.title }
+    private var stretches: Bool { category.style.alignSelf == "stretch" || category.style.alignSelf == "auto" }
     private var alignment: Alignment {
         switch category.style.justifySelf { case "flex_start": return .leading; case "flex_end": return .trailing; default: return .center }
     }
@@ -219,7 +215,7 @@ private struct ExploreCategoryControl: View {
         switch category.type {
         case "text":
             TextField(name, text: $value).textInputAutocapitalization(.never).autocorrectionDisabled()
-                .multilineTextAlignment(textAlignment).frame(minWidth: 96)
+                .multilineTextAlignment(textAlignment).frame(minWidth: 96, maxHeight: stretches ? .infinity : nil)
                 .padding(.horizontal, 12).padding(.vertical, 6)
                 .background(AppTheme.surfaceMuted, in: Capsule())
                 .accessibilityIdentifier("explore-input-\(index)")
@@ -257,7 +253,7 @@ private struct ExploreCategoryControl: View {
         }
     }
     private func pill(_ text: String) -> some View {
-        Text(text).lineLimit(1).frame(maxWidth: .infinity, alignment: alignment)
+        Text(text).lineLimit(1).frame(maxWidth: .infinity, maxHeight: stretches ? .infinity : nil, alignment: alignment)
             .padding(.horizontal, 12).padding(.vertical, 4)
             .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 16))
     }
