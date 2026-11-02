@@ -97,6 +97,10 @@ final class SourceFlowUITests: XCTestCase {
     }
 
     func testReaderReplacementEntryEditsSavesAndRestoresRawContent() {
+        // iOS 17's menu accessibility animation monitoring can spend several
+        // minutes waiting for idle after a valid tap (see run 41468048090).
+        // Keep every UI/content assertion and allow the complete round trip.
+        executionTimeAllowance = 600
         let app = openPipelineNovel()
         let page = app.textViews["readerPage"]
         XCTAssertTrue(page.label.contains("完整正文"))
