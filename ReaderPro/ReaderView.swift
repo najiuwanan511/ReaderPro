@@ -851,23 +851,22 @@ struct ReaderView: View {
     // MARK: 菜单
 
     var menuOverlay: some View {
-        VStack(spacing: 0) {
-            topBar
-                .overlay(alignment: .topTrailing) {
-                    if showMoreMenu {
-                        moreActions
-                            .padding(.top, 64)
-                            .padding(.trailing, 8)
+        ZStack(alignment: .topTrailing) {
+            VStack(spacing: 0) {
+                topBar
+                Spacer()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if showMoreMenu { showMoreMenu = false }
+                        else { withAnimation(.easeInOut(duration: 0.15)) { showMenu = false } }
                     }
-                }
-                .zIndex(1)
-            Spacer()
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if showMoreMenu { showMoreMenu = false }
-                    else { withAnimation(.easeInOut(duration: 0.15)) { showMenu = false } }
-                }
-            bottomBar
+                bottomBar
+            }
+            if showMoreMenu {
+                moreActions
+                    .padding(.top, 64)
+                    .padding(.trailing, 8)
+            }
         }
         .transition(.opacity)
     }
