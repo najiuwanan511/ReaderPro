@@ -22,6 +22,7 @@ struct SourceManagementView: View {
     @State private var networkError = ""
     @State private var networkLoading = false
     @State private var networkResult = ""
+    @State private var networkHasRssSources = false
     @State private var showQR = false
     @State private var qrResult = ""
     @State private var qrError = ""
@@ -228,13 +229,11 @@ struct SourceManagementView: View {
                     if !pasteStatus.isEmpty { Text(pasteStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
                     Button("导入") {
                         pasteError = ""; pasteStatus = ""
-                        let result = importSourcesDetailed(pasteText)
-                        if result.sources.isEmpty { pasteError = "解析失败：请确认是单个或数组 Legado 书源 JSON，或一个订阅链接" }
+                        let result = importSourceDocument(pasteText)
+                        if result.isEmpty { pasteError = "解析失败：请粘贴 Legado 书源或订阅源 JSON；网络链接请使用网络导入。" }
                         else {
-                            let merge = store.mergeSources(result.sources)
                             pasteText = ""
-                            pasteStatus = "解析到 \(result.sources.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
-                            if result.skipped > 0 { pasteStatus += "，跳过 \(result.skipped) 个格式不对的条目" }
+                            pasteStatus = store.mergeImportedSources(result)
                         }
                     }
                     Spacer()
@@ -244,29 +243,33 @@ struct SourceManagementView: View {
         .sheet(isPresented: $showNetwork) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("https://… 书源订阅链接", text: $networkURL).textFieldStyle(.roundedBorder).autocapitalization(.none)
+                    TextField("https://… 书源或订阅源链接", text: $networkURL)
+                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .accessibilityIdentifier("sourceNetworkImportURL")
                     if !networkError.isEmpty { Text(networkError).foregroundStyle(.red).font(.footnote) }
                     Button(networkLoading ? "拉取中…" : "拉取并导入") {
-                        networkLoading = true; networkError = ""; networkResult = ""
+                        networkLoading = true; networkError = ""; networkResult = ""; networkHasRssSources = false
                         Task {
                             do {
                                 let result = try await importSourcePacksFromURL(networkURL)
-                                let arr = result.sources
                                 await MainActor.run {
                                     networkLoading = false
-                                    if arr.isEmpty { networkError = "这个链接里没有解析到书源" }
-                                    else {
-                                        let merge = store.mergeSources(arr)
-                                        networkResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
-                                        networkURL = ""
-                                    }
+                                    networkResult = store.mergeImportedSources(result)
+                                    networkHasRssSources = !result.rssSources.isEmpty
+                                    networkURL = ""
                                 }
                             } catch {
                                 await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }
                             }
                         }
                     }.disabled(networkLoading || networkURL.isEmpty)
-                    if !networkResult.isEmpty { Text(networkResult).font(.footnote).foregroundStyle(AppTheme.accentDeep) }
+                    if !networkResult.isEmpty {
+                        Text(networkResult).font(.footnote).foregroundStyle(AppTheme.accentDeep)
+                            .accessibilityIdentifier("sourceNetworkImportResult")
+                        if networkHasRssSources {
+                            NavigationLink("查看订阅源") { RssSourceManagementView(store: store) }
+                        }
+                    }
                     Text("大合集（上千个书源）要从 CDN 下载十几 MB，可能需要几十秒，请耐心等待，不要重复点击。")
                         .font(.caption2).foregroundStyle(.secondary)
                     Spacer()
@@ -291,19 +294,18 @@ struct SourceManagementView: View {
     private func importSourceFile(_ url: URL) {
         importingFile = true
         Task {
-            let message = await Task.detached(priority: .userInitiated) { () -> ImportResult? in
+            let message = await Task.detached(priority: .userInitiated) { () -> SourcePackImportResult? in
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 guard let data = try? Data(contentsOf: url) else { return nil }
-                return importSourcesDetailed(decodeTextData(data))
+                return importSourceDocument(decodeTextData(data))
             }.value
             await MainActor.run {
                 importingFile = false
-                if let result = message, !result.sources.isEmpty {
-                    let merge = store.mergeSources(result.sources)
-                    fileImportMessage = "解析到 \(result.sources.count) 个书源：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)，跳过 \(result.skipped)。"
+                if let result = message, !result.isEmpty {
+                    fileImportMessage = store.mergeImportedSources(result)
                 } else {
-                    fileImportMessage = "未能读取书源，请选择包含 Legado 书源 JSON 的文件。"
+                    fileImportMessage = "未能读取书源或订阅源，请选择包含 Legado JSON 的文件。"
                 }
                 showFileResult = true
             }
@@ -369,23 +371,18 @@ struct SourceManagementView: View {
             Task {
                 do {
                     let result = try await importSourcePacksFromURL(trimmed)
-                    let arr = result.sources
                     await MainActor.run {
-                        if arr.isEmpty { qrError = "这个链接里没有解析到书源" } else {
-                            let merge = store.mergeSources(arr)
-                            qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
-                        }
+                        qrResult = store.mergeImportedSources(result)
                     }
                 } catch {
                     await MainActor.run { qrError = "拉取失败：\(error.localizedDescription)" }
                 }
             }
         } else {
-            let arr = importSourcesFromText(trimmed)
-            if arr.isEmpty { qrError = "这个二维码不是书源 JSON 或链接" }
+            let result = importSourceDocument(trimmed)
+            if result.isEmpty { qrError = "这个二维码不是书源、订阅源 JSON 或链接" }
             else {
-                let merge = store.mergeSources(arr)
-                qrResult = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
+                qrResult = store.mergeImportedSources(result)
             }
         }
     }

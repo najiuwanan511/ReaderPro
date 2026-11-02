@@ -588,6 +588,26 @@ class BookStore: ObservableObject {
     }
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
 
+    /// All import entry points route each schema to its own persisted collection.
+    func mergeImportedSources(_ document: SourcePackImportResult) -> String {
+        var lines: [String] = []
+        if !document.sources.isEmpty {
+            let result = mergeSources(document.sources)
+            lines.append("解析到 \(document.sources.count) 个书源：新增 \(result.added)，更新 \(result.updated)，重复 \(result.duplicates)")
+        }
+        if !document.rssSources.isEmpty {
+            let existing = Set(rssSources.map(rssSourceIdentityKey))
+            let added = document.rssSources.filter { !existing.contains(rssSourceIdentityKey($0)) }.count
+            rssSources = mergeRssSources(rssSources, incoming: document.rssSources)
+            save()
+            lines.append("已识别 \(document.rssSources.count) 个订阅源：新增 \(added)，更新 \(document.rssSources.count - added)。")
+            lines.append("已保存到「订阅源管理」，可在「订阅」中查看。")
+        }
+        if document.fetchedPacks > 0 || !document.failures.isEmpty { lines.append(document.diagnostics) }
+        else if document.skipped > 0 { lines.append("跳过 \(document.skipped) 个格式不对的条目") }
+        return lines.joined(separator: "\n")
+    }
+
     /// Merge by Legado's full source URL. Re-importing a pack updates
     /// its rules instead of creating hundreds of duplicate rows.
     @discardableResult

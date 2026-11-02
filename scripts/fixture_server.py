@@ -200,6 +200,34 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/packs/rss203':
             mime = 'application/json; charset=utf-8'
             body = Path('build/rss-pack-203.json').read_text(encoding='utf-8')
+        elif path == '/packs/rss-routing':
+            token = parse_qs(parsed.query)['token'][0]
+            mime = 'application/json; charset=utf-8'
+            # These destinations must never be fetched while importing rules.
+            trap = f'http://127.0.0.1:8765/rss-import-trap/{token}'
+            rss = {'sourceName': '导航订阅', 'sourceUrl': trap, 'singleUrl': True,
+                   'header': json.dumps({'url': trap}),
+                   'jsLib': json.dumps({'url': trap})}
+            body = json.dumps({'data': {'items': [rss, dict(rss),
+                {'sourceName': '规则订阅', 'sourceUrl': trap + '/articles', 'singleUrl': False,
+                 'sortUrl': '推荐::' + trap, 'ruleArticles': 'article', 'ruleTitle': 'a@text'}]}})
+        elif path == '/packs/book-and-rss':
+            token = parse_qs(parsed.query)['token'][0]
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'data': [
+                {'bookSourceName': '混合书源', 'bookSourceUrl': 'https://mixed.invalid',
+                 'ruleSearch': {'bookList': '@js:' + json.dumps({'sourceName': '不是订阅', 'sourceUrl': '/denied'})}},
+                {'name': '订阅子合集', 'sourceUrl': '/packs/rss-routing?token=' + token}]})
+        elif path.startswith('/rss-import-trap/'):
+            parts = path.split('/')
+            key = 'rss-import-' + parts[2]
+            mime = 'application/json; charset=utf-8'
+            with bridge_stress_lock:
+                if len(parts) == 4 and parts[3] == 'count':
+                    body = json.dumps({'count': bridge_stress_counts.get(key, 0)})
+                else:
+                    bridge_stress_counts[key] = bridge_stress_counts.get(key, 0) + 1
+                    body = json.dumps({'bookSourceName': '误抓订阅网页', 'bookSourceUrl': 'https://must-not-import.invalid'})
         elif path == '/rss/list':
             if self.headers.get('X-Fixture') != 'RSS':
                 status, body = 403, 'missing RSS header'

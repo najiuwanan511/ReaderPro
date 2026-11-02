@@ -464,7 +464,7 @@ struct SourceView: View {
         .sheet(isPresented: $showImport) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("粘贴 Legado JSON 书源：单个对象、整个数组、订阅链接都可以；数组里个别格式不对的条目会跳过，不会整批失败。导入的书源默认全部启用。").font(.footnote).foregroundStyle(.secondary)
+                    Text("粘贴 Legado 书源、订阅源 JSON 或网络链接。自动识别类型，订阅源保存到「订阅源管理」，可在「订阅」中查看。").font(.footnote).foregroundStyle(.secondary)
                     TextEditor(text: $importText).border(Color.gray.opacity(0.3))
                     if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
                     if !importStatus.isEmpty { Text(importStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
@@ -501,31 +501,22 @@ struct SourceView: View {
             Task {
                 do {
                     let result = try await importSourcePacksFromURL(trimmed)
-                    let arr = result.sources
                     await MainActor.run {
-                        if arr.isEmpty { importError = "这个链接里没有解析到书源：请确认它是返回 Legado 书源 JSON 的直链（GitHub blob 页已自动转 raw，仍失败就换 raw 链接）" }
-                        else {
-                            let enabled = arr.map { var x = $0; x.enabled = true; return x }
-                            let merge = store.mergeSources(enabled)
-                            importText = ""
-                            importStatus = "解析到 \(arr.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)\n" + result.diagnostics
-                        }
+                        importText = ""
+                        importStatus = store.mergeImportedSources(result)
                     }
                 } catch {
-                    await MainActor.run { importError = "拉取失败：\(error.localizedDescription)" }
+                    await MainActor.run { importStatus = ""; importError = "拉取失败：\(error.localizedDescription)" }
                 }
             }
             return
         }
-        let result = importSourcesDetailed(importText)
-        if result.sources.isEmpty {
-            importError = "这个内容解析失败：请粘贴单个 Legado 书源 JSON、书源数组，或者一个订阅链接；不是 JSON 的文本、只有网址的页面、带 HTML 的页面都会被自动提取 JSON，仍失败就是内容本身不是书源"
+        let result = importSourceDocument(importText)
+        if result.isEmpty {
+            importError = "解析失败：请粘贴 Legado 书源、订阅源 JSON 或网络链接。"
         } else {
-            let enabled = result.sources.map { var x = $0; x.enabled = true; return x }
-            let merge = store.mergeSources(enabled)
             importText = ""
-            importStatus = "解析到 \(enabled.count) 个：新增 \(merge.added)，更新 \(merge.updated)，重复 \(merge.duplicates)"
-            if result.skipped > 0 { importStatus += "，跳过 \(result.skipped) 个格式不对的条目" }
+            importStatus = store.mergeImportedSources(result)
         }
     }
 }

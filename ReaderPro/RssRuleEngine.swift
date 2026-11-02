@@ -105,7 +105,7 @@ struct RssArticlePage {
 func mergeRssSources(_ existing: [RssSource], incoming: [RssSource]) -> [RssSource] {
     var result = existing
     for var source in incoming {
-        if let index = result.firstIndex(where: { !$0.sourceUrl.isEmpty && $0.sourceUrl == source.sourceUrl }) {
+        if let index = result.firstIndex(where: { rssSourceIdentityKey($0) == rssSourceIdentityKey(source) }) {
             source.id = result[index].id
             source.enabled = result[index].enabled
             result[index] = source

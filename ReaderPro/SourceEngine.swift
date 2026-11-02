@@ -296,6 +296,7 @@ private func collectSourceDictionaries(_ value: Any, depth: Int = 0,
             }
             return
         }
+        if isRssSourceDictionary(dict) { return }
         for nested in dict.values {
             collectSourceDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped)
         }
@@ -499,13 +500,21 @@ func yckceoJSONCandidates(_ urlString: String) -> [String] {
     return [replaced, alt]
 }
 
+private func isRssSourceDictionary(_ dict: [String: Any]) -> Bool {
+    guard dict["bookSourceName"] == nil, dict["bookSourceUrl"] == nil else { return false }
+    // A collection descriptor may use sourceUrl too. Only RSS identity/rule
+    // fields identify a subscription; a bare URL still points to a child pack.
+    return dict["sourceUrl"] != nil && (dict["sourceName"] != nil ||
+        ["ruleArticles", "ruleContent", "singleUrl", "sortUrl", "ruleTitle", "ruleLink"].contains { dict[$0] != nil })
+}
+
 private func collectSourcePackLinks(_ value: Any, baseURL: String,
                                     links: inout [String], depth: Int = 0) {
     guard depth < 8 else { return }
     if let dict = value as? [String: Any] {
         let isSource = dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil
-        // Rule URLs inside a real source are not subscription links.
-        if isSource { return }
+        // Subscription website/category/article URLs are data, never child packs.
+        if isSource || isRssSourceDictionary(dict) { return }
         if !isSource {
             for key in ["url", "sourceUrl", "link", "src", "href"] {
                 guard let raw = dict[key] as? String, !raw.isEmpty else { continue }
@@ -532,10 +541,12 @@ private func collectSourcePackLinks(_ value: Any, baseURL: String,
 struct SourcePackImportResult {
     struct Failure { let url: String; let reason: String }
     var sources: [LegadoSource] = []
+    var rssSources: [RssSource] = []
     var skipped = 0
     var duplicateSources = 0
     var fetchedPacks = 0
     var failures: [Failure] = []
+    var isEmpty: Bool { sources.isEmpty && rssSources.isEmpty }
     var diagnostics: String {
         var lines = ["已读取 \(fetchedPacks) 个文件，格式异常 \(skipped) 条，跨文件重复 \(duplicateSources) 条"]
         if !failures.isEmpty {
@@ -546,9 +557,17 @@ struct SourcePackImportResult {
     }
 }
 
+func importSourceDocument(_ text: String) -> SourcePackImportResult {
+    let books = importSourcesDetailed(text)
+    let rss = importRssSourcesDetailed(text)
+    return SourcePackImportResult(sources: books.sources, rssSources: rss.sources,
+                                  skipped: books.skipped + rss.skipped)
+}
+
 private struct SourcePackPage {
     let url: String
     var sources: [LegadoSource] = []
+    var rssSources: [RssSource] = []
     var links: [String] = []
     var skipped = 0
     var error: String?
@@ -556,7 +575,7 @@ private struct SourcePackPage {
 
 private func fetchSourcePack(_ address: String) async throws -> SourcePackPage {
     let page = try await SourceHTTP.load(SourceHTTP.request(normalizeSourceURL(address), base: address), stage: "书源导入")
-    let result = importSourcesDetailed(page.text)
+    let result = importSourceDocument(page.text)
     var links: [String] = []
     for text in [extractJSONSubstring(page.text), extractJSONSubstring(unescapeHTMLJSON(page.text))] {
         if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
@@ -564,17 +583,17 @@ private func fetchSourcePack(_ address: String) async throws -> SourcePackPage {
             break
         }
     }
-    if result.sources.isEmpty && links.isEmpty, let redirect = extractRedirectJSONURL(from: page.text) { links.append(redirect) }
-    if result.sources.isEmpty && links.isEmpty {
-        throw SourceFailure(stage: "书源导入", message: "没有找到有效书源或子合集链接", url: page.url)
+    if result.isEmpty && links.isEmpty, let redirect = extractRedirectJSONURL(from: page.text) { links.append(redirect) }
+    if result.isEmpty && links.isEmpty {
+        throw SourceFailure(stage: "书源导入", message: "没有找到有效书源、订阅源或子合集链接", url: page.url)
     }
-    return SourcePackPage(url: page.url, sources: result.sources, links: links, skipped: result.skipped)
+    return SourcePackPage(url: page.url, sources: result.sources, rssSources: result.rssSources, links: links, skipped: result.skipped)
 }
 
 func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImportResult {
     var first: SourcePackPage?
     var lastError: Error?
-    for candidate in yckceoJSONCandidates(urlString) + [normalizeSourceURL(urlString)] {
+    for candidate in yckceoJSONCandidates(urlString) + yckceoRssJSONCandidates(urlString) + [normalizeSourceURL(urlString)] {
         do { first = try await fetchSourcePack(candidate); break }
         catch { if Task.isCancelled { throw CancellationError() }; lastError = error }
     }
@@ -583,11 +602,16 @@ func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImp
     var queue: [String] = []
     var visited = Set([normalizeSourceURL(urlString), first.url])
     var seenSources = Set<String>()
+    var seenRssSources = Set<String>()
     func absorb(_ page: SourcePackPage) {
         if let error = page.error { result.failures.append(.init(url: page.url, reason: error)); return }
         result.fetchedPacks += 1; result.skipped += page.skipped
         for source in page.sources {
             if seenSources.insert(sourceIdentityKey(source)).inserted { result.sources.append(source) }
+            else { result.duplicateSources += 1 }
+        }
+        for source in page.rssSources {
+            if seenRssSources.insert(rssSourceIdentityKey(source)).inserted { result.rssSources.append(source) }
             else { result.duplicateSources += 1 }
         }
         for raw in page.links {
@@ -620,7 +644,7 @@ func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImp
         for page in pages { absorb(page) }
     }
     try Task.checkCancellation()
-    guard !result.sources.isEmpty else { throw SourceFailure(stage: "书源导入", message: result.diagnostics, url: urlString) }
+    guard !result.isEmpty else { throw SourceFailure(stage: "书源导入", message: result.diagnostics, url: urlString) }
     return result
 }
 
@@ -709,6 +733,35 @@ struct RssSource: Identifiable, Codable, Equatable {
 
 struct RssImportResult { var sources: [RssSource]; var skipped: Int }
 
+func rssSourceIdentityKey(_ source: RssSource) -> String {
+    source.sourceUrl.isEmpty ? "name:" + source.sourceName : source.sourceUrl
+}
+
+private func collectRssDictionaries(_ value: Any, depth: Int = 0,
+                                    sources: inout [RssSource], skipped: inout Int) {
+    guard depth < 10 else { return }
+    if let dict = value as? [String: Any] {
+        if dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil { return }
+        if isRssSourceDictionary(dict) {
+            if let data = try? JSONSerialization.data(withJSONObject: dict),
+               let source = try? JSONDecoder().decode(RssSource.self, from: data),
+               !source.sourceUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                sources.append(source)
+            } else { skipped += 1 }
+            return
+        }
+        for nested in dict.values { collectRssDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped) }
+    } else if let array = value as? [Any] {
+        for nested in array { collectRssDictionaries(nested, depth: depth + 1, sources: &sources, skipped: &skipped) }
+    } else if let text = value as? String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (trimmed.hasPrefix("{") || trimmed.hasPrefix("[")), let data = trimmed.data(using: .utf8),
+           let root = try? JSONSerialization.jsonObject(with: data) {
+            collectRssDictionaries(root, depth: depth + 1, sources: &sources, skipped: &skipped)
+        }
+    }
+}
+
 func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
     // Decode valid JSON first: unescaping &quot; inside rule strings corrupts JSON.
     let direct = extractJSONSubstring(rawText)
@@ -718,24 +771,12 @@ func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
           let root = try? JSONSerialization.jsonObject(with: data) else {
         return RssImportResult(sources: [], skipped: 0)
     }
-    var dicts: [[String: Any]] = []
-    if let arr = root as? [Any] {
-        dicts = arr.compactMap { $0 as? [String: Any] }
-    } else if let obj = root as? [String: Any] {
-        if let arr = obj["rssSources"] as? [Any] { dicts = arr.compactMap { $0 as? [String: Any] } }
-        else if obj["sourceName"] != nil || obj["sourceUrl"] != nil { dicts = [obj] }
-    }
     var out: [RssSource] = []
     var skipped = 0
-    for dict in dicts {
-        guard let d = try? JSONSerialization.data(withJSONObject: dict),
-              let s = try? JSONDecoder().decode(RssSource.self, from: d),
-              !s.sourceName.isEmpty || !s.sourceUrl.isEmpty else { skipped += 1; continue }
-        out.append(s)
-    }
+    collectRssDictionaries(root, sources: &out, skipped: &skipped)
     var seen = Set<String>(); var deduped: [RssSource] = []
     for s in out {
-        let k = s.sourceUrl.isEmpty ? s.sourceName : s.sourceUrl
+        let k = rssSourceIdentityKey(s)
         if seen.contains(k) { continue }
         seen.insert(k); deduped.append(s)
     }
@@ -760,14 +801,13 @@ func yckceoRssJSONCandidates(_ urlString: String) -> [String] {
 }
 
 func importRssSourcesFromURL(_ urlString: String) async throws -> [RssSource] {
-    var candidates: [String] = []
-    for c in yckceoRssJSONCandidates(urlString) where !candidates.contains(c) { candidates.append(c) }
-    candidates.append(normalizeSourceURL(urlString))
-    for candidate in candidates {
-        if let text = try? await fetchText(urlString: candidate) {
-            let result = importRssSourcesDetailed(text)
-            if !result.sources.isEmpty { return result.sources }
-        }
+    let result = try await importSourcePacksFromURL(urlString)
+    guard !result.rssSources.isEmpty else {
+        throw SourceFailure(stage: "订阅源导入", message: "链接中是书源，请从书源管理导入。", url: urlString)
     }
-    return []
+    // Never hide missing child files behind a success count.
+    guard result.failures.isEmpty else {
+        throw SourceFailure(stage: "订阅源导入", message: result.diagnostics, url: urlString)
+    }
+    return result.rssSources
 }

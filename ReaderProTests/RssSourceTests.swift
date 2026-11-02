@@ -2,6 +2,63 @@ import XCTest
 @testable import ReaderPro
 
 final class RssSourceTests: XCTestCase {
+    func testBookNetworkImporterRecognizes203WithoutExpandingItsWebsites() async throws {
+        let result = try await importSourcePacksFromURL(SourceTestFixtures.base + "/packs/rss203")
+        XCTAssertTrue(result.sources.isEmpty, "订阅源不能混进书源列表")
+        XCTAssertEqual(result.rssSources.count, 71)
+        XCTAssertEqual(result.fetchedPacks, 1, "只下载合集 JSON，不能抓取订阅网站")
+        XCTAssertEqual(result.skipped, 0)
+        XCTAssertTrue(result.failures.isEmpty, result.diagnostics)
+        await MainActor.run {
+            let store = BookStore()
+            let oldBooks = store.sources, oldRss = store.rssSources
+            defer { store.sources = oldBooks; store.rssSources = oldRss; store.save() }
+            store.rssSources = []
+            let message = store.mergeImportedSources(result)
+            XCTAssertTrue(message.contains("71 个订阅源"))
+            XCTAssertTrue(message.contains("订阅源管理"))
+            XCTAssertEqual(store.sources, oldBooks)
+            XCTAssertEqual(store.rssSources.count, 71)
+            let ids = store.rssSources.map(\.id)
+            store.rssSources[0].enabled = false
+            _ = store.mergeImportedSources(result)
+            XCTAssertEqual(store.rssSources.count, 71)
+            XCTAssertEqual(store.rssSources.map(\.id), ids)
+            XCTAssertFalse(store.rssSources[0].enabled)
+            let reloaded = BookStore()
+            XCTAssertEqual(reloaded.rssSources, store.rssSources)
+            XCTAssertEqual(reloaded.sources, oldBooks)
+        }
+    }
+
+    func testMixedBookAndRSSChildCollectionsNeverFetchSubscriptionURLs() async throws {
+        let token = UUID().uuidString
+        let result = try await importSourcePacksFromURL(SourceTestFixtures.base + "/packs/book-and-rss?token=" + token)
+        XCTAssertEqual(result.sources.map(\.bookSourceName), ["混合书源"])
+        XCTAssertEqual(result.rssSources.map(\.sourceName), ["导航订阅", "规则订阅"])
+        XCTAssertEqual(result.fetchedPacks, 2)
+        XCTAssertTrue(result.failures.isEmpty, result.diagnostics)
+        let count = try await fetchText(urlString: SourceTestFixtures.base + "/rss-import-trap/" + token + "/count")
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(count.utf8)) as? [String: Int])
+        XCTAssertEqual(object["count"], 0, "订阅站点、分类与脚本中的 URL 均不能作为子合集请求")
+    }
+
+    func testDocumentImportRoutesWrappedAndMixedJSONWithoutMisreadingLinkDescriptors() throws {
+        let rss: [String: Any] = ["sourceName": "示例订阅", "sourceUrl": "https://rss.invalid", "singleUrl": true,
+                                  "header": ["X-Value": "&quot;"], "ruleContent": "@js:result.replace(/&quot;/g,'x')"]
+        let book: [String: Any] = ["bookSourceName": "示例书源", "bookSourceUrl": "https://book.invalid"]
+        let contents = try JSONSerialization.data(withJSONObject: [rss, book, ["sourceUrl": "/child-pack"], rss,
+                                                                   ["sourceName": "坏订阅", "sourceUrl": NSNull()]])
+        let wrapped = try JSONSerialization.data(withJSONObject: ["data": ["items": String(decoding: contents, as: UTF8.self)]])
+        let result = importSourceDocument(String(decoding: wrapped, as: UTF8.self))
+        XCTAssertEqual(result.sources.map(\.bookSourceName), ["示例书源"])
+        XCTAssertEqual(result.rssSources.map(\.sourceName), ["示例订阅"])
+        XCTAssertEqual(result.skipped, 1)
+        XCTAssertTrue(result.rssSources[0].ruleContent.contains("&quot;"))
+        XCTAssertEqual(importSourceDocument(String(decoding: try JSONEncoder().encode(result.rssSources[0]), as: UTF8.self)).rssSources.count, 1)
+        XCTAssertTrue(importRssSourcesDetailed(#"{"sourceUrl":"https://pack.invalid/list.json"}"#).sources.isEmpty)
+    }
+
     func testImportActual203CollectionAndMergeWithoutDuplicates() async throws {
         // The fixture server supplies an unmodified CI-only download of the
         // exact user-provided collection; no third-party data ships in the app.
