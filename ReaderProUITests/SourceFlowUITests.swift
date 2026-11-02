@@ -108,9 +108,20 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(name.waitForExistence(timeout: 10)); name.tap(); name.typeText("阅读回归净化")
         let pattern = app.textViews["replacementRulePattern"]
         pattern.tap(); pattern.typeText("完整正文")
+        let hideKeyboard = app.buttons["收起键盘"]
+        XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5)); hideKeyboard.tap()
         let replacement = app.textViews["replacementRuleReplacement"]
-        if !replacement.isHittable { app.swipeUp() }
+        // A full-screen fling can skip the replacement row in a lazy Form.
+        // Dismiss the keyboard, then make bounded drags inside the editor.
+        let form = app.collectionViews["replacementRuleEditorForm"]
+        for _ in 0..<4 {
+            if replacement.exists && replacement.isHittable { break }
+            form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo: form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        }
+        XCTAssertTrue(replacement.exists && replacement.isHittable)
         replacement.tap(); replacement.typeText("净化正文")
+        XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5)); hideKeyboard.tap()
         app.buttons["全屏编辑"].tap(); app.buttons["替换内容"].tap()
         let fullEditor = app.textViews["replacementRuleFullEditor"]
         XCTAssertTrue(fullEditor.waitForExistence(timeout: 10))

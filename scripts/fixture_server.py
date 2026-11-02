@@ -312,7 +312,12 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/library/categories/fiction' or path == '/search':
             if self.headers.get('X-Fixture') != 'ReaderPro':
                 status, body = 403, 'missing source header'
-            elif path == '/search' and (self.command != 'POST' or self.rfile.read(int(self.headers.get('Content-Length', 0))).decode() != 'key=%E6%B5%8B%E8%AF%95&n=1'):
+            # Search accepts the normal keyword and the exact novel title used
+            # by automatic source switching. Still reject a wrong method,
+            # page, encoding or body instead of bypassing request validation.
+            elif path == '/search' and (self.command != 'POST' or self.rfile.read(int(self.headers.get('Content-Length', 0))).decode() not in (
+                    'key=%E6%B5%8B%E8%AF%95&n=1',
+                    'key=%E6%B5%8B%E8%AF%95%E5%B0%8F%E8%AF%B4&n=1')):
                 status, body = 400, 'wrong POST body or method'
             else:
                 body = '<main><ul class="books"><li><div><a class="name" href="/book/1/">测试小说</a><em>测试作者</em></div></li></ul></main>'

@@ -222,9 +222,17 @@ struct ReplaceRuleEditorView: View {
             }
             if !error.isEmpty { Text(error).foregroundStyle(.red) }
         }
+        .accessibilityIdentifier("replacementRuleEditorForm")
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle("编辑替换规则")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("收起键盘") {
+                    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                }
+            }
             ToolbarItem(placement: .topBarLeading) { Button("取消") { dismiss() } }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Menu {
