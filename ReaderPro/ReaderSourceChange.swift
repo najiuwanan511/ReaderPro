@@ -3,10 +3,12 @@ import SwiftUI
 struct ReaderSourceCandidate: Identifiable {
     var book: SourceBook
     var chapters: [BookChapter]?
+    var chapterCount: Int?
+    var latestChapter = ""
     var error = ""
     var id: String { [book.sourceUrl, book.sourceName, book.url].joined(separator: "\u{1f}") }
     var directorySummary: String {
-        if let chapters { return "目录 · \(chapters.count) 章" }
+        if let count = chapterCount ?? chapters?.count { return "目录 · \(count) 章" }
         return error.isEmpty ? "正在读取目录…" : "目录加载失败：\(error)"
     }
 }
@@ -22,13 +24,14 @@ struct ReaderSourceCandidate: Identifiable {
     private var tasks: [String: Task<Void, Never>] = [:]
     private var pending: [String] = []
     private var sources: [LegadoSource] = []
+    private var directoryCallbacks: [String: [(ReaderSourceCandidate) -> Void]] = [:]
 
     static func matches(_ found: SourceBook, title: String, author: String) -> Bool {
         func normalized(_ value: String) -> String {
             value.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
         }
         return normalized(found.title) == normalized(title)
-            && (author.isEmpty || found.author.isEmpty || normalized(found.author) == normalized(author))
+            && (author.isEmpty || normalized(found.author).contains(normalized(author)))
     }
 
     func start(sources: [LegadoSource], title: String, author: String) {
@@ -68,6 +71,12 @@ struct ReaderSourceCandidate: Identifiable {
         pump(run: generation)
     }
 
+    func withDirectory(_ row: ReaderSourceCandidate, action: @escaping (ReaderSourceCandidate) -> Void) {
+        if row.chapters?.isEmpty == false { action(row); return }
+        directoryCallbacks[row.id, default: []].append(action)
+        retry(row)
+    }
+
     private func pump(run: UUID) {
         while tasks.count < 3, !pending.isEmpty {
             let id = pending.removeFirst()
@@ -81,9 +90,19 @@ struct ReaderSourceCandidate: Identifiable {
                     guard generation == run, let index = rows.firstIndex(where: { $0.id == id }) else { return }
                     guard !chapters.isEmpty else { throw SourceFailure(stage: "目录", message: "没有返回章节") }
                     rows[index].book = info; rows[index].chapters = chapters
+                    rows[index].chapterCount = chapters.count; rows[index].latestChapter = chapters.last?.title ?? ""
+                    // Match Legado's directory cache budget. Keep row metadata
+                    // after eviction and fetch the full list again on demand.
+                    while rows.reduce(0, { $0 + ($1.chapters?.count ?? 0) }) > 30_000,
+                          let victim = rows.indices.first(where: { $0 != index && rows[$0].chapters != nil }) {
+                        rows[victim].chapters = nil
+                    }
+                    let ready = rows[index]
+                    directoryCallbacks.removeValue(forKey: id)?.forEach { $0(ready) }
                 } catch {
                     if generation == run, !Task.isCancelled, let index = rows.firstIndex(where: { $0.id == id }) {
                         rows[index].error = sourceErrorMessage(error)
+                        directoryCallbacks[id] = nil
                     }
                 }
                 if generation == run { tasks[id] = nil; pump(run: run) }
@@ -94,6 +113,7 @@ struct ReaderSourceCandidate: Identifiable {
     func cancel() {
         generation = UUID(); searchTask?.cancel(); searchTask = nil
         tasks.values.forEach { $0.cancel() }; tasks = [:]; pending = []; searching = false
+        directoryCallbacks = [:]
     }
 }
 
@@ -104,6 +124,8 @@ struct ReaderSourceCandidate: Identifiable {
     @StateObject private var model = ReaderSourceChangeModel()
     @State private var query = ""
     @State private var directory: ReaderSourceCandidate?
+    @State private var sourceFilter = ""
+    @AppStorage("reader.changeSourceCheckAuthor") private var checkAuthor = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -114,6 +136,7 @@ struct ReaderSourceCandidate: Identifiable {
                         .onSubmit { search() }.accessibilityIdentifier("changeSourceSearch")
                     Button(model.searching ? "停止" : "搜索") { if model.searching { model.cancel() } else { search() } }
                 }.padding()
+                TextField("筛选书源名称或网址", text: $sourceFilter).textFieldStyle(.roundedBorder).padding(.horizontal).padding(.bottom, 8)
                 HStack {
                     Text("已搜索 \(model.completed)/\(model.total) · 找到 \(model.rows.count) 个来源")
                     Spacer()
@@ -130,9 +153,9 @@ struct ReaderSourceCandidate: Identifiable {
                         }
                     }
                     Section("可切换来源") {
-                        ForEach(model.rows) { row in
+                        ForEach(model.rows.filter { sourceFilter.isEmpty || $0.book.sourceName.localizedCaseInsensitiveContains(sourceFilter) || $0.book.sourceUrl.localizedCaseInsensitiveContains(sourceFilter) }) { row in
                             HStack(spacing: 12) {
-                                Button { select(row, nil) } label: {
+                                Button { model.withDirectory(row) { select($0, nil) } } label: {
                                     VStack(alignment: .leading, spacing: 5) {
                                         HStack {
                                             Text(row.book.sourceName).font(.body)
@@ -140,12 +163,12 @@ struct ReaderSourceCandidate: Identifiable {
                                             Text(row.book.author).font(.caption).foregroundStyle(.secondary)
                                         }
                                         Text(row.directorySummary).font(.caption).foregroundStyle(row.error.isEmpty ? Color.secondary : Color.red)
-                                        if let last = row.chapters?.last { Text("最新：\(last.title)").font(.caption).foregroundStyle(.secondary).lineLimit(2) }
+                                        if !row.latestChapter.isEmpty { Text("最新：\(row.latestChapter)").font(.caption).foregroundStyle(.secondary).lineLimit(2) }
                                     }.contentShape(Rectangle())
-                                }.buttonStyle(.plain).disabled(row.chapters?.isEmpty != false)
+                                }.buttonStyle(.plain).disabled((row.chapterCount ?? row.chapters?.count ?? 0) == 0 || !row.error.isEmpty)
                                     .accessibilityIdentifier("changeSource-\(row.book.sourceName)")
-                                if row.chapters != nil {
-                                    Button("目录") { directory = row }.buttonStyle(.bordered)
+                                if (row.chapterCount ?? row.chapters?.count ?? 0) > 0 && row.error.isEmpty {
+                                    Button("目录") { model.withDirectory(row) { directory = $0 } }.buttonStyle(.bordered)
                                         .accessibilityLabel("查看\(row.book.sourceName)目录")
                                 } else if !row.error.isEmpty {
                                     Button("重试") { model.retry(row) }.buttonStyle(.bordered)
@@ -158,7 +181,16 @@ struct ReaderSourceCandidate: Identifiable {
             }
             .navigationTitle("换源")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Toggle("校验作者", isOn: $checkAuthor)
+                        Button("刷新列表") { search() }
+                    } label: { Image(systemName: "ellipsis") }.accessibilityLabel("换源更多操作")
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } }
+            }
+            .onChange(of: checkAuthor) { _, _ in search() }
             .task { query = current.title; search() }
             .onDisappear { model.cancel() }
             .sheet(item: $directory) { row in
@@ -174,5 +206,5 @@ struct ReaderSourceCandidate: Identifiable {
             }
         }
     }
-    private func search() { model.start(sources: store.enabledSources, title: query.trimmingCharacters(in: .whitespacesAndNewlines), author: current.author) }
+    private func search() { model.start(sources: store.enabledSources, title: query.trimmingCharacters(in: .whitespacesAndNewlines), author: checkAuthor ? current.author : "") }
 }

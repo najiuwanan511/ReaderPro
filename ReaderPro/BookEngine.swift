@@ -675,13 +675,19 @@ class BookStore: ObservableObject {
     @MainActor func downloadAllChapters(bookId: String, onProgress: @escaping (Int, Int) -> Void) async {
         guard let original = books.first(where: { $0.id == bookId }) else { return }
         let pending = original.chapters.indices.filter { original.chapters[$0].text.hasPrefix("__URL__") }
-        for (offset, index) in pending.enumerated() {
+        let cache = chapterCache
+        var completed = 0
+        for offset in stride(from: 0, to: pending.count, by: 8) {
             guard !Task.isCancelled,
                   let current = books.first(where: { $0.id == bookId }),
-                  current.sourceUrl == original.sourceUrl, current.sourceName == original.sourceName,
-                  current.chapters.indices.contains(index), current.chapters[index].id == original.chapters[index].id else { return }
-            _ = try? await chapterCache.content(bookID: bookId, index: index)
-            onProgress(offset + 1, pending.count)
+                  current.sourceUrl == original.sourceUrl, current.sourceName == original.sourceName else { return }
+            let batch = pending[offset..<min(offset + 8, pending.count)]
+            await withTaskGroup(of: Void.self) { group in
+                for index in batch {
+                    group.addTask { _ = try? await cache.content(bookID: bookId, index: index) }
+                }
+                for await _ in group { completed += 1; onProgress(completed, pending.count) }
+            }
         }
     }
 

@@ -124,6 +124,13 @@ import XCTest
         XCTAssertEqual(try rule.replacing("第12章"), "第<12>章")
     }
 
+    func testRegexProgressDeadlineStopsPathologicalRule() throws {
+        let rule = ReplaceRule(name: "超时测试", pattern: "^(a+)+$", replacement: "", timeoutMillisecond: 1)
+        let start = Date()
+        XCTAssertThrowsError(try rule.replacing(String(repeating: "a", count: 800) + "!"))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 5, "错误的净化规则不能长期阻塞阅读")
+    }
+
     func testTitleContentScopeExclusionAndPerBookToggle() throws {
         let files = savedFiles(); defer { restore(files) }
         let store = store(); var book = store.books[0]
@@ -166,5 +173,7 @@ import XCTest
         XCTAssertTrue(ReaderSourceChangeModel.matches(second, title: "测试 小说", author: "作者"))
         XCTAssertFalse(ReaderSourceChangeModel.matches(second, title: "测试小说续集", author: "作者"))
         XCTAssertFalse(ReaderSourceChangeModel.matches(second, title: "测试小说", author: "其他作者"))
+        second.author = "作者（连载）"
+        XCTAssertTrue(ReaderSourceChangeModel.matches(second, title: "测试小说", author: "作者"))
     }
 }
