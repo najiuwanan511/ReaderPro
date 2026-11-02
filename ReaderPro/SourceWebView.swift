@@ -43,12 +43,18 @@ import UIKit
                 // behind its root view, without intercepting input or exposing
                 // a second accessibility tree. Remove it on every exit path.
                 let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                #if READERPRO_TESTING
+                NSLog("WebDelayProbe scenes=%@ appState=%ld", scenes.map { String($0.activationState.rawValue) }.joined(separator: ","), UIApplication.shared.applicationState.rawValue)
+                #endif
                 let windows = scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
                 if let window = windows.first(where: \.isKeyWindow) ?? windows.first(where: { !$0.isHidden }) {
                     web.isUserInteractionEnabled = false
                     web.accessibilityElementsHidden = true
                     window.insertSubview(web, at: 0)
                 }
+                #if READERPRO_TESTING
+                NSLog("WebDelayProbe attached=%d windows=%ld", web.window != nil ? 1 : 0, windows.count)
+                #endif
                 loader.timer = Task {
                     try? await Task.sleep(nanoseconds: UInt64(max(0.1, timeout) * 1_000_000_000))
                     guard !Task.isCancelled else { return }
@@ -59,6 +65,9 @@ import UIKit
                         await config.websiteDataStore.httpCookieStore.setCookie(cookie)
                     }
                     guard loader.continuation != nil else { return }
+                    #if READERPRO_TESTING
+                    NSLog("WebDelayProbe load html=%d", html != nil ? 1 : 0)
+                    #endif
                     if let html, !html.isEmpty { web.loadHTMLString(html, baseURL: request.url) }
                     else { web.load(request) }
                 }
@@ -69,6 +78,9 @@ import UIKit
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        #if READERPRO_TESTING
+        NSLog("WebDelayProbe navigationFinished window=%d", webView.window != nil ? 1 : 0)
+        #endif
         guard !startedPolling else { return }; startedPolling = true
         polling = Task {
             // Give asynchronous page scripts a chance to populate the DOM.
