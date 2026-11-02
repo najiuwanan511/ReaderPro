@@ -3,7 +3,7 @@ import Foundation
 /// Foreground reading and background preloading share the same request and raw
 /// chapter cache. Cached text is never purified, so editing a rule is reversible.
 @MainActor final class ReaderChapterCache {
-    typealias Fetch = (LegadoSource, BookChapter, String?) async throws -> String
+    typealias Fetch = @MainActor (LegadoSource, BookChapter, String?) async throws -> String
     private weak var store: BookStore?
     private let fetch: Fetch
     private struct Request {
@@ -45,7 +45,11 @@ import Foundation
                 throw SourceFailure(stage: "正文", message: "该章节没有返回正文")
             }
             current.chapters[index].text = text
-            store.updateBook(current)
+            guard let bookIndex = store.books.firstIndex(where: { $0.id == bookID }) else { throw CancellationError() }
+            store.books[bookIndex] = current
+            // A background chapter does not change sources or preferences.
+            // Avoid serializing a large source collection three times per turn.
+            store.saveBooks()
             return text
         }
         requests[key] = Request(token: token, bookID: bookID, task: task)

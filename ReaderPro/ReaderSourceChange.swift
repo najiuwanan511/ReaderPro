@@ -8,8 +8,9 @@ struct ReaderSourceCandidate: Identifiable {
     var error = ""
     var id: String { [book.sourceUrl, book.sourceName, book.url].joined(separator: "\u{1f}") }
     var directorySummary: String {
+        if !error.isEmpty { return "目录加载失败：\(error)" }
         if let count = chapterCount ?? chapters?.count { return "目录 · \(count) 章" }
-        return error.isEmpty ? "正在读取目录…" : "目录加载失败：\(error)"
+        return "正在读取目录…"
     }
 }
 
@@ -24,7 +25,7 @@ struct ReaderSourceCandidate: Identifiable {
     private var tasks: [String: Task<Void, Never>] = [:]
     private var pending: [String] = []
     private var sources: [LegadoSource] = []
-    private var directoryCallbacks: [String: [(ReaderSourceCandidate) -> Void]] = [:]
+    private var directoryCallbacks: [String: (ReaderSourceCandidate) -> Void] = [:]
 
     static func matches(_ found: SourceBook, title: String, author: String) -> Bool {
         func normalized(_ value: String) -> String {
@@ -73,7 +74,7 @@ struct ReaderSourceCandidate: Identifiable {
 
     func withDirectory(_ row: ReaderSourceCandidate, action: @escaping (ReaderSourceCandidate) -> Void) {
         if row.chapters?.isEmpty == false { action(row); return }
-        directoryCallbacks[row.id, default: []].append(action)
+        directoryCallbacks[row.id] = action
         retry(row)
     }
 
@@ -98,7 +99,7 @@ struct ReaderSourceCandidate: Identifiable {
                         rows[victim].chapters = nil
                     }
                     let ready = rows[index]
-                    directoryCallbacks.removeValue(forKey: id)?.forEach { $0(ready) }
+                    directoryCallbacks.removeValue(forKey: id)?(ready)
                 } catch {
                     if generation == run, !Task.isCancelled, let index = rows.firstIndex(where: { $0.id == id }) {
                         rows[index].error = sourceErrorMessage(error)

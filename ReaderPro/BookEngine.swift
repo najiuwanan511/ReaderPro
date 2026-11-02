@@ -546,7 +546,7 @@ class BookStore: ObservableObject {
         if metaExists && sources.count != beforeCount { save() }
     }
     func save() {
-        if let d = try? JSONEncoder().encode(books) { try? d.write(to: Self.booksURL) }
+        saveBooks()
         let m = Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
                      fontSize: fontSize, lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing,
                      pagePaddingH: pagePaddingH, pagePaddingV: pagePaddingV, brightness: brightness,
@@ -554,6 +554,9 @@ class BookStore: ObservableObject {
                      ttsRate: ttsRate, ttsPitch: ttsPitch, theme: theme,
                      webdavURL: webdavURL, webdavUser: webdavUser, webdavPassword: webdavPassword, webdavPath: webdavPath)
         if let d = try? JSONEncoder().encode(m) { try? d.write(to: Self.metaURL) }
+    }
+    func saveBooks() {
+        if let data = try? JSONEncoder().encode(books) { try? data.write(to: Self.booksURL, options: .atomic) }
     }
     func updateBook(_ book: LocalBook) {
         if let i = books.firstIndex(where: { $0.id == book.id }) { books[i] = book } else { books.insert(book, at: 0) }
