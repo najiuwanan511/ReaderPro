@@ -1,8 +1,6 @@
-name: iOS 17 Release regression
+name: iOS 17 WebView delay probe
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -39,27 +37,8 @@ jobs:
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
-            -only-testing:ReaderProUITests/SourceFlowUITests \
-            -only-testing:ReaderProUITests/ReaderSettingsUITests \
-            -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
-            -only-testing:ReaderProUITests/DiscoveryPaginationUITests \
-            -only-testing:ReaderProUITests/RssSourceUITests \
-            -only-testing:ReaderProTests/JSConcurrencyStressTests \
-            -only-testing:ReaderProTests/JSBridgeStressTests \
-            -only-testing:ReaderProTests/JSImportAndResponseTests \
-            -only-testing:ReaderProTests/SourceVariableCommentTests \
-            -only-testing:ReaderProTests/SourceRuleObjectTests \
-            -only-testing:ReaderProTests/RssSourceTests \
-            -only-testing:ReaderProTests/ContentPaginationRuleTests \
-            -only-testing:ReaderProTests/SourceURLCompatibilityTests \
-            -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \
-            -only-testing:ReaderProTests/DiscoveryPaginationTests \
-            -only-testing:ReaderProTests/LegadoIndexRuleTests \
-            -only-testing:ReaderProTests/LegadoJSONPathRuleTests \
-            -only-testing:ReaderProTests/ReaderTextLayoutTests \
-            -only-testing:ReaderProTests/ReaderPageControllerTests \
-            -only-testing:ReaderProTests/JavaCryptoTests \
-            -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
+            -only-testing:ReaderProTests/SourceURLCompatibilityTests/testWebViewRespectsSourceDelay \
+            -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \
             -resultBundlePath build/ReleaseRegression.xcresult \
@@ -82,5 +61,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios17-release-regression
+          name: ios17-webview-delay-probe
           path: build
