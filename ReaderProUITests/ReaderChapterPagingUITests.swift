@@ -146,6 +146,32 @@ final class ReaderChapterPagingUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [scrolled], timeout: 30), .completed, "滚动模式应回到书签对应的正文位置")
     }
 
+    func testMoreActionsCanOpenAndCloseBookmarksRepeatedly() {
+        for mode in [2, 4] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=\(mode)", "--reader-start-second", "--reader-bookmark-fixture"]
+            app.launch()
+            let text = mode == 2 ? app.textViews["readerFullText"] : page(app, containing: "第二章正文标记")
+            XCTAssertTrue(text.waitForExistence(timeout: 20))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            for _ in 0..<3 {
+                let more = app.buttons["更多操作"]
+                XCTAssertTrue(more.waitForExistence(timeout: 10))
+                more.tap()
+                let bookmarks = app.buttons["查看书签"]
+                XCTAssertTrue(bookmarks.waitForExistence(timeout: 10))
+                XCTAssertGreaterThanOrEqual(bookmarks.frame.height, 44)
+                bookmarks.tap()
+                XCTAssertTrue(app.navigationBars["书签"].waitForExistence(timeout: 10))
+                XCTAssertTrue(app.buttons.containing(.staticText, identifier: "新网络书签").firstMatch.exists)
+                app.buttons["关闭"].tap()
+                XCTAssertTrue(text.waitForExistence(timeout: 10))
+                XCTAssertFalse(bookmarks.exists, "关闭书签后，不应残留操作菜单")
+            }
+            app.terminate()
+        }
+    }
+
     func testScrollContinuesBetweenChaptersAtBothEnds() {
         let app = launch(mode: 2, startSecond: true)
         let text = app.textViews["readerFullText"]

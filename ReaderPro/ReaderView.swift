@@ -49,6 +49,7 @@ struct ReaderView: View {
 
     // 菜单 / 弹层
     @State private var showMenu = false
+    @State private var showMoreMenu = false
     @State private var showSettings = false
     @State private var showStyle = false
     @State private var showCatalog = false
@@ -156,6 +157,9 @@ struct ReaderView: View {
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(hideStatusBar && !showMenu)
+        .onChange(of: showMenu) { _, visible in
+            if !visible { showMoreMenu = false }
+        }
         .preferredColorScheme(themeBrightness())
         .onChange(of: keepScreenAwake) { _, enabled in
             UIApplication.shared.isIdleTimerDisabled = enabled || initialIdleTimerDisabled
@@ -849,9 +853,20 @@ struct ReaderView: View {
     var menuOverlay: some View {
         VStack(spacing: 0) {
             topBar
+                .overlay(alignment: .topTrailing) {
+                    if showMoreMenu {
+                        moreActions
+                            .padding(.top, 64)
+                            .padding(.trailing, 8)
+                    }
+                }
+                .zIndex(1)
             Spacer()
                 .contentShape(Rectangle())
-                .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu = false } }
+                .onTapGesture {
+                    if showMoreMenu { showMoreMenu = false }
+                    else { withAnimation(.easeInOut(duration: 0.15)) { showMenu = false } }
+                }
             bottomBar
         }
         .transition(.opacity)
@@ -874,13 +889,7 @@ struct ReaderView: View {
                 Image(systemName: "bookmark").font(.system(size: 18))
                     .frame(width: 44, height: 44).contentShape(Rectangle())
             }
-            Menu {
-                Button("搜索正文", systemImage: "magnifyingglass") { showSearch = true }
-                Button("查看书签", systemImage: "bookmark") { showBookmarks = true }
-                Button("切换书源", systemImage: "arrow.triangle.2.circlepath") { openSourceChange() }
-                Button("缓存全书", systemImage: "arrow.down.circle") { startDownloadAll() }
-                Button(autoPageEnabled ? "关闭自动翻页" : "自动翻页", systemImage: "play.circle") { toggleAutoPage(!autoPageEnabled) }
-            } label: {
+            Button { showMoreMenu.toggle() } label: {
                 Image(systemName: "ellipsis").font(.system(size: 20))
                     .frame(width: 44, height: 44).contentShape(Rectangle())
             }
@@ -891,6 +900,45 @@ struct ReaderView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color(uiColor: theme.background).opacity(0.97))
+    }
+
+    // Keep actions in the reader's view tree. The iOS 17 native context menu
+    // can stall its presentation animation and leave visible rows unable to
+    // dispatch their actions. This also avoids presenting a sheet while a
+    // separate UIKit menu controller is being dismissed.
+    private var moreActions: some View {
+        VStack(spacing: 0) {
+            moreAction("搜索正文", icon: "magnifyingglass") { showSearch = true }
+            moreAction("查看书签", icon: "bookmark") { showBookmarks = true }
+            moreAction("切换书源", icon: "arrow.triangle.2.circlepath") { openSourceChange() }
+            moreAction("缓存全书", icon: "arrow.down.circle") { startDownloadAll() }
+            moreAction(autoPageEnabled ? "关闭自动翻页" : "自动翻页", icon: "play.circle") { toggleAutoPage(!autoPageEnabled) }
+        }
+        .frame(width: 250)
+        .foregroundStyle(Color(uiColor: theme.text))
+        .background(Color(uiColor: theme.background), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color(uiColor: theme.secondary).opacity(0.2)))
+        .shadow(color: .black.opacity(0.2), radius: 12, y: 4)
+        .accessibilityIdentifier("readerMoreActions")
+    }
+
+    private func moreAction(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button {
+            showMoreMenu = false
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Text(title).multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: icon).frame(width: 24)
+            }
+            .font(.body)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     var bottomBar: some View {
