@@ -36,6 +36,16 @@ jobs:
       - name: Test optimized build with large search and real source pack
         run: |
           set -o pipefail
+          # Fail promptly on the new editor flow, then retain the full suite.
+          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+            -maximum-test-execution-time-allowance 300 \
+            -resultBundlePath build/ReplacementEditorRegression.xcresult \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
+            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/replacement-editor.log
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
@@ -72,6 +82,9 @@ jobs:
           if [ -d build/ReleaseRegression.xcresult ]; then
             xcrun xcresulttool export attachments --path build/ReleaseRegression.xcresult --output-path build/screenshots || true
             xcrun xcresulttool export diagnostics --path build/ReleaseRegression.xcresult --output-path build/diagnostics || true
+          elif [ -d build/ReplacementEditorRegression.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/ReplacementEditorRegression.xcresult --output-path build/screenshots || true
+            xcrun xcresulttool export diagnostics --path build/ReplacementEditorRegression.xcresult --output-path build/diagnostics || true
           fi
           sleep 10
           mkdir -p build/native-crashes

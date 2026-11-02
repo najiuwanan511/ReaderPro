@@ -39,6 +39,17 @@ jobs:
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE" -b
+          # Exercise the new multi-sheet editor before the longer full suite.
+          # The full regression below still includes this same test.
+          xcodebuild test \
+            -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
+            -destination "platform=iOS Simulator,id=$DEVICE" \
+            -parallel-testing-enabled NO \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
+            -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
+            -maximum-test-execution-time-allowance 300 \
+            -resultBundlePath build/ReplacementEditorRegression.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/replacement-editor.log
           xcodebuild test \
             -project ReaderPro.xcodeproj \
             -scheme ReaderPro \
@@ -60,6 +71,8 @@ jobs:
         run: |
           if [ -d build/SourceRegression.xcresult ]; then
             xcrun xcresulttool export attachments --path build/SourceRegression.xcresult --output-path build/screenshots
+          elif [ -d build/ReplacementEditorRegression.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/ReplacementEditorRegression.xcresult --output-path build/screenshots
           fi
       - name: Verify the reader draws visible body glyphs
         run: xcrun swift scripts/verify_reader_pixels.swift build/screenshots
@@ -101,6 +114,8 @@ jobs:
           name: source-regression-evidence
           path: |
             build/SourceRegression.xcresult
+            build/ReplacementEditorRegression.xcresult
+            build/replacement-editor.log
             build/tests.log
             build/fixture-server.log
             build/screenshots
