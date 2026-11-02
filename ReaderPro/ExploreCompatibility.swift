@@ -33,6 +33,7 @@ struct ExploreCategory: Identifiable, Equatable {
     var viewName: String? = nil
     var style = ExploreStyle()
     var displayTitle: String? = nil
+    var displayError: String? = nil
     var canNavigate: Bool { type == "url" && !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var choices: [String] { chars ?? ["chars", "is null"] }
 
@@ -162,7 +163,17 @@ extension LegadoSource {
                         if (3...19).contains(name.count), name.hasPrefix("'"), name.hasSuffix("'") {
                             categories[index].displayTitle = String(name.dropFirst().dropLast())
                         } else {
-                            categories[index].displayTitle = self.runExploreScript(name)
+                            // A bad display-name script must not discard the
+                            // source's otherwise usable category URLs.
+                            let failures = RuleFailures()
+                            categories[index].displayTitle = LegadoJSCtx.$failures.withValue(failures) { self.runExploreScript(name) }
+                            do { try failures.check() }
+                            catch {
+                                try Task.checkCancellation()
+                                if let deadline = LegadoJSCtx.deadline, deadline <= Date() { throw error }
+                                categories[index].displayTitle = "err"
+                                categories[index].displayError = "分类「\(category.title)」名称脚本：" + sourceErrorMessage(error)
+                            }
                         }
                     }
                 }

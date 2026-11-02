@@ -129,6 +129,18 @@ final class DiscoveryPaginationTests: XCTestCase {
         catch { XCTAssertTrue(sourceErrorMessage(error).contains("action failure is visible")) }
     }
 
+    func testBrokenDynamicNameDoesNotDiscardWorkingCategoryLinks() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://explore-name.test/" + UUID().uuidString
+        source.exploreUrl = #"[{title:'可读分类',url:'/working',viewName:"throw Error('broken display name')"}]"#
+        let result = try await source.resolvedExploreCategories()
+        XCTAssertEqual(result.count, 1)
+        XCTAssertEqual(result[0].url, "/working")
+        XCTAssertTrue(result[0].canNavigate)
+        XCTAssertEqual(result[0].displayTitle, "err")
+        XCTAssertTrue(result[0].displayError?.contains("broken display name") == true)
+    }
+
     func testDiscoverySourceGroupsOrderAndIndependentEnableSwitch() throws {
         var first = LegadoSource(); first.id = "a"; first.bookSourceName = "源甲"; first.exploreUrl = "/list"
         first.enabled = false; first.enabledExplore = true; first.customOrder = 3; first.bookSourceGroup = "小说, 测试"

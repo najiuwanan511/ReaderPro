@@ -136,6 +136,7 @@ struct SourceExploreCard: View {
                 let parsed = try await source.resolvedExploreCategories()
                 guard !Task.isCancelled else { return }
                 categories = parsed; loadedKey = key; loading = false
+                actionError = parsed.compactMap(\.displayError).joined(separator: "\n")
             } catch {
                 guard !Task.isCancelled else { return }
                 categoryError = sourceErrorMessage(error); loading = false
@@ -255,9 +256,9 @@ private struct ExploreCategoryControl: View {
         }
     }
     private func pill(_ text: String) -> some View {
-        Text(text).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: alignment)
+        Text(text).lineLimit(1).frame(maxWidth: .infinity, alignment: alignment)
             .padding(.horizontal, 12).padding(.vertical, 4)
-            .background(AppTheme.surfaceMuted, in: Capsule())
+            .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 16))
     }
 }
 
