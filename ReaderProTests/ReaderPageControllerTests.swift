@@ -45,6 +45,30 @@ final class ReaderPageControllerTests: XCTestCase {
                        "Slider/edge navigation must update the existing controller without recreating its recognizers")
     }
 
+    @MainActor func testProgrammaticTurnAndNativeSwipeDoNotResetEachOther() async {
+        var parent = CurlPageController(
+            pages: [NSRange(location: 0, length: 1), NSRange(location: 1, length: 1)],
+            attributed: NSAttributedString(string: "甲乙"), pageSize: CGSize(width: 320, height: 600),
+            background: .white, startIndex: 0, hasPreviousChapter: false, hasNextChapter: false,
+            onPageChange: { _ in }, onChapterBoundary: { _ in }, onEdgeTap: { _ in })
+        let coordinator = parent.makeCoordinator()
+        let controller = UIPageViewController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        controller.setViewControllers([coordinator.pageVC(for: 0)!], direction: .forward, animated: false)
+        // Auto-page updates the index without a slider/jump token.
+        parent.startIndex = 1
+        coordinator.update(controller, parent: parent)
+        XCTAssertEqual((controller.viewControllers?.first as? PageHostController)?.index, 1)
+        // A subsequent native swipe publishes index 0; its parent update must
+        // preserve the page UIKit already installed, rather than reset it.
+        let first = coordinator.pageVC(for: 0)!
+        controller.setViewControllers([first], direction: .reverse, animated: false)
+        coordinator.pageViewController(controller, didFinishAnimating: true, previousViewControllers: [], transitionCompleted: true)
+        await nextMainTurn()
+        parent.startIndex = 0
+        coordinator.update(controller, parent: parent)
+        XCTAssertTrue(controller.viewControllers?.first === first)
+    }
+
     @MainActor func testChapterWithIdenticalPageRangesWaitsForCancelledTransition() async {
         let parent = model()
         let coordinator = parent.makeCoordinator()

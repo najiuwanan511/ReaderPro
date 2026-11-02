@@ -602,6 +602,7 @@ struct CurlPageController: UIViewControllerRepresentable {
                 || displayed.hasPreviousChapter != parent.hasPreviousChapter
                 || displayed.hasNextChapter != parent.hasNextChapter
                 || displayed.positionToken != parent.positionToken
+                || displayed.startIndex != parent.startIndex
             vc.view.backgroundColor = parent.background
             refreshIfNeeded(vc)
         }
@@ -658,7 +659,13 @@ struct CurlPageController: UIViewControllerRepresentable {
                 guard completed, let index else { return }
                 if index < 0 { self.parent.onChapterBoundary(false) }
                 else if index >= self.displayed.pages.count { self.parent.onChapterBoundary(true) }
-                else { self.parent.onPageChange(index) }
+                else {
+                    // Record a native swipe before publishing it to SwiftUI.
+                    // A subsequent parent index change can then be identified
+                    // as a programmatic turn (timer, slider, keyboard, etc.).
+                    self.displayed.startIndex = index
+                    self.parent.onPageChange(index)
+                }
             }
         }
     }
