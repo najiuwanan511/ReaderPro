@@ -282,7 +282,14 @@ private final class ReaderScrollProgress {
                     .allowsHitTesting(false)
             }
         }
-        .id("page-controller-\(animatedCurl)")
+        // iOS 17's native page-curl controller retains directional neighbour
+        // state after replacing a chapter. Reusing it can ask for the previous
+        // page without ever beginning the next reverse animation. Chapter
+        // boundaries are committed after didFinishAnimating, so recreate the
+        // curl controller there; keep it stable for turns inside a chapter.
+        .id(animatedCurl
+            ? "curl-\(chapterIndex)-\(chapter?.id ?? "")-\(book?.sourceName ?? "")-\(book?.sourceUrl ?? "")"
+            : "page-controller-false")
     }
 
     // 覆盖：当前页 + 手势左滑盖入下一页

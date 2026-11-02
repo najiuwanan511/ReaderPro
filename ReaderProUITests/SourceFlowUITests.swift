@@ -122,7 +122,13 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(replacement.exists && replacement.isHittable)
         replacement.tap(); replacement.typeText("净化正文")
         XCTAssertTrue(hideKeyboard.waitForExistence(timeout: 5)); hideKeyboard.tap()
-        app.buttons["全屏编辑"].tap(); app.buttons["替换内容"].tap()
+        // iOS 17 can incorrectly ask a visible SwiftUI toolbar Menu to scroll
+        // into view. Use the actual touch point and still require its action
+        // and the real full-screen text editor to appear and preserve text.
+        let fullScreen = app.buttons["全屏编辑"]
+        XCTAssertTrue(fullScreen.waitForExistence(timeout: 5))
+        fullScreen.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["替换内容"].waitForExistence(timeout: 5)); app.buttons["替换内容"].tap()
         let fullEditor = app.textViews["replacementRuleFullEditor"]
         XCTAssertTrue(fullEditor.waitForExistence(timeout: 10))
         XCTAssertEqual(fullEditor.value as? String, "完整正文")
@@ -135,7 +141,10 @@ final class SourceFlowUITests: XCTestCase {
         let purified = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "净化正文"), object: page)
         XCTAssertEqual(XCTWaiter.wait(for: [purified], timeout: 10), .completed)
         app.buttons["更多操作"].tap(); app.buttons["替换净化"].tap()
-        app.buttons["更多阅读回归净化"].tap(); app.buttons["删除"].tap()
+        let ruleMenu = app.buttons["更多阅读回归净化"]
+        XCTAssertTrue(ruleMenu.waitForExistence(timeout: 5))
+        ruleMenu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["删除"].waitForExistence(timeout: 5)); app.buttons["删除"].tap()
         app.buttons["完成"].tap()
         let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "完整正文"), object: page)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed, "删除净化规则后应恢复缓存原文")
