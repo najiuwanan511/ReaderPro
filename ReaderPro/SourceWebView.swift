@@ -1,6 +1,7 @@
 import Foundation
 import WebKit
 import Security
+import UIKit
 
 @MainActor final class SourceWebLoader: NSObject, WKNavigationDelegate {
     private static var active: [UUID: SourceWebLoader] = [:]
@@ -37,6 +38,17 @@ import Security
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
+                // iOS 17 may suspend an unattached WebContent process, even
+                // for loadHTMLString. Keep the renderer in the app's window
+                // behind its root view, without intercepting input or exposing
+                // a second accessibility tree. Remove it on every exit path.
+                let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+                let windows = scenes.filter { $0.activationState == .foregroundActive }.flatMap(\.windows)
+                if let window = windows.first(where: \.isKeyWindow) ?? windows.first(where: { !$0.isHidden }) {
+                    web.isUserInteractionEnabled = false
+                    web.accessibilityElementsHidden = true
+                    window.insertSubview(web, at: 0)
+                }
                 loader.timer = Task {
                     try? await Task.sleep(nanoseconds: UInt64(max(0.1, timeout) * 1_000_000_000))
                     guard !Task.isCancelled else { return }
@@ -85,6 +97,10 @@ import Security
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
 
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finish(.failure(SourceFailure(stage: "网页脚本", message: "网页渲染进程已退出，请重试", url: webView.url?.absoluteString ?? "")))
+    }
+
     func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
                  completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if allowsInvalidCertificates, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
@@ -95,7 +111,8 @@ import Security
     private func finish(_ result: Result<SourcePage, Error>) {
         guard let continuation else { return }
         self.continuation = nil
-        timer?.cancel(); polling?.cancel(); webView?.stopLoading(); webView?.navigationDelegate = nil; webView = nil
+        timer?.cancel(); polling?.cancel(); webView?.stopLoading(); webView?.navigationDelegate = nil
+        webView?.removeFromSuperview(); webView = nil
         Self.active[id] = nil
         continuation.resume(with: result)
     }
