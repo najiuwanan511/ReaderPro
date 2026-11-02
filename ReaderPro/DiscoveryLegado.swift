@@ -108,12 +108,16 @@ struct SourceExploreCard: View {
     @State private var categoryError = ""
     @State private var actionError = ""
     @State private var showSourceActions = false
+    @State private var sourceLongPressed = false
     @State private var retry = 0
     private var cacheKey: String { source.exploreCacheKey + "|\(retry)|\(ExploreInfo.revision(source.bookSourceUrl))" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Button { withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() } } label: {
+            Button {
+                guard !sourceLongPressed else { return }
+                withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+            } label: {
                 HStack(spacing: 8) {
                     Text(source.bookSourceName).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)
                     Spacer()
@@ -124,7 +128,9 @@ struct SourceExploreCard: View {
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
                 .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
-                .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in showSourceActions = true })
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                    sourceLongPressed = true; showSourceActions = true
+                })
             if expanded { categoryContent }
         }
         .confirmationDialog(source.bookSourceName, isPresented: $showSourceActions, titleVisibility: .visible) {
@@ -147,6 +153,7 @@ struct SourceExploreCard: View {
             }
         }
         .onChange(of: expanded) { _, open in if !open { ExploreInfo.savePending(source.bookSourceUrl) } }
+        .onChange(of: showSourceActions) { _, shown in if !shown { sourceLongPressed = false } }
         .onDisappear { ExploreInfo.savePending(source.bookSourceUrl) }
     }
     @ViewBuilder private var categoryContent: some View {
