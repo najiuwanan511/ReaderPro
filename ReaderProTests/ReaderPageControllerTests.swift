@@ -29,6 +29,22 @@ final class ReaderPageControllerTests: XCTestCase {
                       "SwiftUI updates must not reset UIKit's installed page and gesture state")
     }
 
+    @MainActor func testExplicitPositionTokenMovesWithinAnUnchangedChapter() {
+        var parent = CurlPageController(
+            pages: [NSRange(location: 0, length: 1), NSRange(location: 1, length: 1)],
+            attributed: NSAttributedString(string: "甲乙"), pageSize: CGSize(width: 320, height: 600),
+            background: .white, startIndex: 0, hasPreviousChapter: false, hasNextChapter: false,
+            onPageChange: { _ in }, onChapterBoundary: { _ in }, onEdgeTap: { _ in })
+        let coordinator = parent.makeCoordinator()
+        let controller = UIPageViewController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        controller.setViewControllers([coordinator.pageVC(for: 0)!], direction: .forward, animated: false)
+        parent.startIndex = 1
+        parent.positionToken += 1
+        coordinator.update(controller, parent: parent)
+        XCTAssertEqual((controller.viewControllers?.first as? PageHostController)?.index, 1,
+                       "Slider/edge navigation must update the existing controller without recreating its recognizers")
+    }
+
     @MainActor func testChapterWithIdenticalPageRangesWaitsForCancelledTransition() async {
         let parent = model()
         let coordinator = parent.makeCoordinator()

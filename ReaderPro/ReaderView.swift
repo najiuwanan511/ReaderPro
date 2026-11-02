@@ -236,6 +236,7 @@ struct ReaderView: View {
                 background: theme.background,
                 startIndex: pageIndex,
                 animatedCurl: animatedCurl,
+                positionToken: jumpToken,
                 hasPreviousChapter: chapterIndex > 0,
                 hasNextChapter: chapterIndex < (book?.chapters.count ?? 0) - 1,
                 onPageChange: { idx in
@@ -248,16 +249,11 @@ struct ReaderView: View {
                 onEdgeTap: { forward in
                     if forward { goNext() } else { goPrev() }
                     jumpToken += 1
+                },
+                onCenterTap: {
+                    withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() }
                 }
             )
-            // 中间 1/3 点击弹菜单，左右交给系统翻页
-            HStack(spacing: 0) {
-                Color.clear.frame(width: size.width / 3).allowsHitTesting(false)
-                Color.clear.frame(width: size.width / 3)
-                    .contentShape(Rectangle())
-                    .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
-                Color.clear.frame(width: size.width / 3).allowsHitTesting(false)
-            }
         }
         .frame(width: size.width, height: size.height)
         .overlay(alignment: .top) {
@@ -281,7 +277,7 @@ struct ReaderView: View {
                     .allowsHitTesting(false)
             }
         }
-        .id("page-controller-\(animatedCurl)-\(jumpToken)")
+        .id("page-controller-\(animatedCurl)")
     }
 
     // 覆盖：当前页 + 手势左滑盖入下一页

@@ -504,11 +504,13 @@ struct CurlPageController: UIViewControllerRepresentable {
     let background: UIColor
     var startIndex: Int
     var animatedCurl: Bool = true
+    var positionToken: Int = 0
     var hasPreviousChapter: Bool
     var hasNextChapter: Bool
     var onPageChange: (Int) -> Void
     var onChapterBoundary: (Bool) -> Void
     var onEdgeTap: (Bool) -> Void
+    var onCenterTap: () -> Void = {}
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -522,11 +524,15 @@ struct CurlPageController: UIViewControllerRepresentable {
         vc.delegate = context.coordinator
         vc.view.backgroundColor = background
         vc.isDoubleSided = false
-        if !animatedCurl {
-            let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.edgeTapped(_:)))
-            tap.cancelsTouchesInView = false
-            tap.delegate = context.coordinator
-            vc.view.addGestureRecognizer(tap)
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.readerTapped(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        vc.view.addGestureRecognizer(tap)
+        // The centre tap belongs to this same UIKit surface, not a transparent
+        // SwiftUI sibling which can intercept the beginning of a page swipe.
+        // Edge taps in curl mode still belong to the native curl recognizer.
+        for recognizer in vc.gestureRecognizers where recognizer is UITapGestureRecognizer && recognizer !== tap {
+            recognizer.require(toFail: tap)
         }
         if let start = context.coordinator.pageVC(for: startIndex) {
             vc.setViewControllers([start], direction: .forward, animated: false)
@@ -556,15 +562,20 @@ struct CurlPageController: UIViewControllerRepresentable {
             displayed = p
         }
 
-        @objc func edgeTapped(_ tap: UITapGestureRecognizer) {
+        @objc func readerTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
             let fraction = tap.location(in: view).x / view.bounds.width
             if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
             else if fraction > 2.0 / 3.0 { parent.onEdgeTap(true) }
+            else { parent.onCenterTap() }
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool { true }
+                               shouldReceive touch: UITouch) -> Bool {
+            guard parent.animatedCurl, let view = gestureRecognizer.view, view.bounds.width > 0 else { return true }
+            let fraction = touch.location(in: view).x / view.bounds.width
+            return fraction >= 1.0 / 3.0 && fraction <= 2.0 / 3.0
+        }
 
         func pageVC(for index: Int) -> PageHostController? {
             let sub: NSAttributedString
@@ -590,6 +601,7 @@ struct CurlPageController: UIViewControllerRepresentable {
                 || displayed.pageSize != parent.pageSize
                 || displayed.hasPreviousChapter != parent.hasPreviousChapter
                 || displayed.hasNextChapter != parent.hasNextChapter
+                || displayed.positionToken != parent.positionToken
             vc.view.backgroundColor = parent.background
             refreshIfNeeded(vc)
         }
@@ -633,8 +645,7 @@ struct CurlPageController: UIViewControllerRepresentable {
             finishing = true
             let index = (pvc.viewControllers?.first as? PageHostController)?.index
             trace(completed ? "completed" : "cancelled", index: index)
-            // A boundary callback replaces this controller via SwiftUI .id.
-            // Do not tear it down while UIKit is still finishing the curl and
+            // Defer the chapter/page state update until UIKit has finished
             // resetting its gesture recognizers (especially on iOS 17).
             DispatchQueue.main.async { [weak self, weak pvc] in
                 guard let self, let pvc else { return }
