@@ -153,9 +153,33 @@ struct SourceFixtureRoot: View {
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {
                 source.exploreUrl = "重复分类::/library/categories/fiction\n重复分类::/library/categories/fiction\n重复分类::/library/categories/alternate"
             }
+            if ProcessInfo.processInfo.arguments.contains("--discovery-controls-fixture") {
+                source.bookSourceGroup = "小说,测试"; source.customOrder = 1
+                source.exploreUrl = #"""
+                @js:
+                var channel=infoMap.get('频道') || '小说';
+                [
+                  {title:'频道分类',style:{layout_flexBasisPercent:1}},
+                  {title:'关键词',type:'text',action:'infoMap.save()'},
+                  {title:'模式',type:'toggle',chars:['关','开'],default:'关',action:'infoMap.save();java.refreshExplore()'},
+                  {title:'频道',type:'select',chars:['小说','其他'],default:'小说',action:'infoMap.save();java.refreshExplore()'},
+                  {title:'更新',type:'button',viewName:"'刷新参数'",action:"infoMap.put('更新次数',String(Number(infoMap.get('更新次数')||0)+1));infoMap.save();java.refreshExplore()"},
+                  {title:'打开'+channel,url:channel==='小说'?'/library/categories/fiction':'/library/categories/alternate',style:{layout_wrapBefore:true}},
+                  {title:'更新次数'+(infoMap.get('更新次数')||'0')}
+                ]
+                """#
+                _ = ExploreInfo.bridge(source.bookSourceUrl, "clear", "[]")
+            }
             var failed = source; failed.id = "fixture-failed"; failed.bookSourceName = "失败测试书源"; failed.searchUrl = "/denied"; failed.exploreUrl = ""; failed.enabled = false
             var partial = SourceTestFixtures.json(); partial.id = "fixture-partial"; partial.bookSourceName = "无结果测试书源"; partial.searchUrl = "/json/noresults"; partial.enabled = false
             store.books = []; store.sources = [source, failed, partial]
+            if ProcessInfo.processInfo.arguments.contains("--discovery-controls-fixture") {
+                var alternate = SourceTestFixtures.html()
+                alternate.id = "discovery-only-fixture"; alternate.bookSourceUrl += "/discover-only"
+                alternate.bookSourceName = "仅发现书源"; alternate.enabled = false; alternate.enabledExplore = true
+                alternate.bookSourceGroup = "漫画,测试"; alternate.customOrder = 2
+                store.sources.append(alternate)
+            }
             if ProcessInfo.processInfo.arguments.contains("--rss-ui-fixture") {
                 if ProcessInfo.processInfo.arguments.contains("--rss-style-ui-fixture") {
                     if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {

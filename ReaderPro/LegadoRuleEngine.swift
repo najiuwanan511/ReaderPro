@@ -1152,12 +1152,6 @@ func applyContentNextPageRule(_ input: String, _ rule: String, base: String) -> 
 
 // MARK: - Explore categories
 
-struct ExploreCategory: Identifiable, Equatable {
-    var id: String { title + "|" + url }
-    var title: String
-    var url: String
-}
-
 // Legado accepts either a single next-content link (follow it as a chain) or
 // several links on the first page (those links enumerate the remaining pages).
 // Keep the declared order and avoid loading a chapter twice, including when a
@@ -1250,35 +1244,7 @@ extension LegadoSource {
             let out = Self.fillSearchTemplate(t, key: "", page: 1, sourceUrl: bookSourceUrl)
             t = out.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        if t.isEmpty { return [] }
-        // Legado's other exploreUrl format (used by most yckceo/1325 sources):
-        // one "标题::链接" per line, separated by \n. The old code only knew
-        // JSON arrays and single URLs, so it treated the whole multi-line
-        // string as one URL and discovery always failed.
-        if t.contains("::") {
-            var out: [ExploreCategory] = []
-            for line in t.replacingOccurrences(of: "&&", with: "\n").components(separatedBy: .newlines) {
-                let l = line.trimmingCharacters(in: .whitespaces)
-                guard let r = l.range(of: "::") else { continue }
-                let title = String(l[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
-                let url = String(l[r.upperBound...]).trimmingCharacters(in: .whitespaces)
-                if !title.isEmpty && !url.isEmpty { out.append(ExploreCategory(title: title, url: url)) }
-            }
-            if !out.isEmpty { return out }
-        }
-        if t.hasPrefix("[") {
-            guard let data = t.data(using: .utf8),
-                  let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
-            var out: [ExploreCategory] = []
-            for obj in arr {
-                let title = (obj["title"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-                let url = (obj["url"] as? String ?? "").trimmingCharacters(in: .whitespaces)
-                if !title.isEmpty && !url.isEmpty { out.append(ExploreCategory(title: title, url: url)) }
-            }
-            return out
-        }
-        // Plain URL = a single "推荐" category
-        return [ExploreCategory(title: "推荐", url: t)]
+        return ExploreCategory.parse(t)
     }
 
     func postSearchRequest(for key: String) -> (url: String, method: String, body: String)? {
@@ -1469,8 +1435,11 @@ extension LegadoSource {
 
     func discover(category: ExploreCategory? = nil, page: Int = 1) async throws -> [SourceBook] {
         try await withRules {
-            guard let category = category ?? exploreCategories().first else {
+            guard let category = category ?? exploreCategories().first(where: \.canNavigate) else {
                 throw SourceFailure(stage: "发现分类", message: "没有解析到分类，请检查 exploreUrl 或脚本兼容性")
+            }
+            guard category.canNavigate else {
+                throw SourceFailure(stage: "发现分类", message: "此分类是标题或交互控件，没有书籍列表地址")
             }
             let response = try await loadPage(category.url, page: max(1, page), stage: "发现分类「\(category.title)」")
             let rule = effectiveDiscoverRule.bookList.isEmpty && effectiveDiscoverRule.name.isEmpty ? ruleSearch : effectiveDiscoverRule

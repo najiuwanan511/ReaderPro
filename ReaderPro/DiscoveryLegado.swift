@@ -5,86 +5,87 @@ struct DiscoveryView: View {
     @State private var searchText = ""
     @State private var showSourceSearch = false
     @FocusState private var sourceSearchFocused: Bool
-    @State private var filterMode = 0
+    @State private var selectedGroup: String?
+    @State private var expandedSourceID: String?
     @State private var exploreTarget: ExploreTarget?
 
-    private var sources: [LegadoSource] {
-        store.enabledSources.filter { source in
-            guard source.enabledExplore else { return false }
-            guard !source.effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-            guard searchText.isEmpty || source.bookSourceName.localizedCaseInsensitiveContains(searchText)
-                || source.bookSourceGroup.localizedCaseInsensitiveContains(searchText) else { return false }
-            let group = source.bookSourceGroup
-            let fast = group.contains("⚡") || group.contains("快")
-            let official = group.contains("🏷") || group.contains("正版")
-            switch filterMode {
-            case 1: return fast
-            case 2: return !fast && !official
-            case 3: return official
-            default: return true
-            }
-        }
-    }
+    private var sources: [LegadoSource] { ExploreSources.filter(store.sources, query: searchText, group: selectedGroup) }
+    private var groups: [String] { ExploreSources.groups(store.sources) }
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if sources.isEmpty {
-                        VStack(spacing: 12) {
-                            Image(systemName: "safari").font(.system(size: 36, weight: .light))
-                            Text(store.enabledSources.isEmpty ? "还没有启用的书源" : "没有匹配的发现分类").font(.headline)
-                            Text("导入带发现规则的书源后，点击源名称展开分类。也可以通过右上角搜索找书。")
-                                .font(.footnote).multilineTextAlignment(.center)
-                            NavigationLink("书源管理") { SourceManagementView(store: store) }
-                        }.foregroundStyle(.secondary).padding(.horizontal, 32).padding(.top, 90)
-                    }
-                    ForEach(sources) { source in
-                        SourceExploreCard(source: source) { category in
-                            exploreTarget = ExploreTarget(source: source, category: category)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        if sources.isEmpty { emptyState }
+                        ForEach(sources) { source in
+                            SourceExploreCard(source: source, expanded: Binding(
+                                get: { expandedSourceID == source.id },
+                                set: { expandedSourceID = $0 ? source.id : nil }
+                            )) { category in
+                                exploreTarget = ExploreTarget(source: source, category: category)
+                            }.id(source.id)
                         }
-                    }
+                    }.padding(.bottom, 12)
+                }
+                .onChange(of: expandedSourceID) { _, id in
+                    if let id { withAnimation { proxy.scrollTo(id, anchor: .top) } }
                 }
             }
             .background(AppTheme.surface)
-            .navigationTitle("发现")
+            .navigationTitle(selectedGroup ?? "发现")
             .readerNavigationStyle()
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    if showSourceSearch {
-                        HStack {
-                            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                            TextField("搜索发现书源 / 分组", text: $searchText)
-                                .focused($sourceSearchFocused)
-                                .submitLabel(.search)
-                                .accessibilityIdentifier("discoverySourceSearch")
-                            Button("取消") {
-                                searchText = ""
-                                showSourceSearch = false
-                                sourceSearchFocused = false
-                            }
-                        }.padding(.horizontal, 16).padding(.vertical, 10)
-                    }
-                    ReaderTabStrip(titles: ["全部", "快速", "通常", "正版"], selection: $filterMode)
-                }.background(AppTheme.surface)
+                if showSourceSearch { searchBar }
             }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showSourceSearch = true
-                        sourceSearchFocused = true
-                    } label: { Image(systemName: "magnifyingglass") }
+                    Button { showSourceSearch = true; sourceSearchFocused = true } label: { Image(systemName: "magnifyingglass") }
                         .accessibilityLabel("搜索发现书源")
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button { selectedGroup = nil } label: {
+                            Label("全部分组", systemImage: selectedGroup == nil ? "checkmark" : "circle")
+                        }
+                        ForEach(groups, id: \.self) { group in
+                            Button { selectedGroup = group } label: {
+                                Label(group, systemImage: selectedGroup == group ? "checkmark" : "circle")
+                            }.accessibilityIdentifier("discoveryGroup-\(group)")
+                        }
+                    } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
+                        .accessibilityLabel("发现书源分组")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SourceManagementView(store: store) } label: { Image(systemName: "slider.horizontal.3") }
                         .accessibilityLabel("书源管理")
                 }
             }
+            .onChange(of: groups) { _, current in
+                if let selectedGroup, !current.contains(selectedGroup) { self.selectedGroup = nil }
+            }
             .navigationDestination(item: $exploreTarget) { target in
                 ExploreListView(store: store, source: target.source, category: target.category)
             }
         }
+    }
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "safari").font(.system(size: 36, weight: .light))
+            Text("没有匹配的发现书源").font(.headline)
+            Text("启用书源的发现功能后，点击源名称展开分类。右上角可搜索源名称和分组。")
+                .font(.footnote).multilineTextAlignment(.center)
+            NavigationLink("书源管理") { SourceManagementView(store: store) }
+        }.foregroundStyle(.secondary).padding(.horizontal, 32).padding(.top, 90)
+    }
+    private var searchBar: some View {
+        HStack {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("搜索发现书源 / 分组", text: $searchText)
+                .focused($sourceSearchFocused).submitLabel(.search)
+                .accessibilityIdentifier("discoverySourceSearch")
+            Button("取消") { searchText = ""; showSourceSearch = false; sourceSearchFocused = false }
+        }.padding(.horizontal, 16).padding(.vertical, 10).background(AppTheme.surface)
     }
 }
 
@@ -98,13 +99,15 @@ struct ExploreTarget: Identifiable, Hashable {
 
 struct SourceExploreCard: View {
     let source: LegadoSource
+    @Binding var expanded: Bool
     let onTapCategory: (ExploreCategory) -> Void
-    @State private var expanded = false
     @State private var categories: [ExploreCategory] = []
-    @State private var loadedRule: String?
+    @State private var loadedKey: String?
     @State private var loading = false
     @State private var categoryError = ""
+    @State private var actionError = ""
     @State private var retry = 0
+    private var cacheKey: String { source.exploreCacheKey + "|\(retry)|\(ExploreInfo.revision(source.bookSourceUrl))" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -112,53 +115,149 @@ struct SourceExploreCard: View {
                 HStack(spacing: 8) {
                     Text(source.bookSourceName).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)
                     Spacer()
-                    if expanded && !categories.isEmpty { Text("\(categories.count)").font(.caption).foregroundStyle(.secondary) }
-                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .medium))
-                        .rotationEffect(.degrees(expanded ? 90 : 0)).foregroundStyle(.secondary)
-                }.padding(.horizontal, 16).frame(minHeight: 48).contentShape(Rectangle())
-            }.buttonStyle(.plain)
+                    Image(systemName: "chevron.down").font(.system(size: 12, weight: .medium))
+                        .rotationEffect(.degrees(expanded ? 180 : 0)).foregroundStyle(.secondary)
+                }.padding(.horizontal, 10).padding(.vertical, 6).frame(minHeight: 36)
+                    .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 6)).contentShape(Rectangle())
+            }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
                 .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
-            if expanded {
-                if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }
-                else if categories.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text(categoryError.isEmpty ? "未解析到分类，请尝试搜索该书源。" : categoryError)
-                            .font(.caption).foregroundStyle(.secondary)
-                        Button("重试加载分类") { retry += 1 }.font(.caption)
-                    }.padding(16)
+                .contextMenu {
+                    Button("刷新发现分类", systemImage: "arrow.clockwise") { retry += 1; expanded = true }
                 }
-                else {
-                    CategoryFlow {
-                        // Some real source packs contain repeated title+URL
-                        // pairs. Category IDs are therefore not unique: use
-                        // each row's position while preserving every entry.
-                        ForEach(Array(categories.enumerated()), id: \.offset) { entry in
-                            Button { onTapCategory(entry.element) } label: {
-                                Text(entry.element.title).font(.system(size: 13)).lineLimit(1)
-                                    .padding(.horizontal, 12).padding(.vertical, 8)
-                                    .background(AppTheme.surfaceMuted, in: RoundedRectangle(cornerRadius: 4))
-                                    .foregroundStyle(.primary)
-                            }.buttonStyle(.plain).accessibilityIdentifier("explore-category-\(entry.offset)")
-                        }
-                    }.padding(.horizontal, 16).padding(.bottom, 12)
-                }
-            }
-            Divider().padding(.leading, 16)
+            if expanded { categoryContent }
         }
-        .task(id: expanded ? source.effectiveDiscoverUrl + "|\(retry)" : "") {
-            guard expanded, loadedRule != source.effectiveDiscoverUrl else { return }
-            loading = true; categoryError = ""; categories = []
-            let snapshot = source
+        .task(id: expanded ? cacheKey : "") {
+            guard expanded else { loading = false; return }
+            let key = cacheKey
+            guard loadedKey != key else { loading = false; return }
+            loading = true; categoryError = ""; actionError = ""; categories = []
             do {
-                let parsed = try await snapshot.fetchExploreCategories()
+                let parsed = try await source.resolvedExploreCategories()
                 guard !Task.isCancelled else { return }
-                categories = parsed; loadedRule = snapshot.effectiveDiscoverUrl; loading = false
+                categories = parsed; loadedKey = key; loading = false
             } catch {
                 guard !Task.isCancelled else { return }
                 categoryError = sourceErrorMessage(error); loading = false
             }
         }
+        .onChange(of: expanded) { _, open in if !open { ExploreInfo.savePending(source.bookSourceUrl) } }
+        .onDisappear { ExploreInfo.savePending(source.bookSourceUrl) }
+    }
+    @ViewBuilder private var categoryContent: some View {
+        if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }
+        else if categories.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(categoryError.isEmpty ? "未解析到分类，请检查发现规则。" : categoryError).font(.caption).foregroundStyle(.secondary)
+                Button("重试加载分类") { retry += 1 }.font(.caption)
+            }.padding(16)
+        } else {
+            CategoryFlow {
+                ForEach(Array(categories.enumerated()), id: \.offset) { entry in
+                    ExploreCategoryControl(source: source, category: entry.element, index: entry.offset,
+                                           onTapCategory: onTapCategory, onRefresh: { retry += 1 },
+                                           onError: { actionError = $0 })
+                        .id("\(entry.offset)|\(entry.element.title)|\(entry.element.type)")
+                        .layoutValue(key: ExploreStyleKey.self, value: entry.element.style)
+                }
+            }.padding(.horizontal, 11).padding(.top, 11).padding(.bottom, 6)
+            if !actionError.isEmpty { Text(actionError).font(.caption).foregroundStyle(.red).padding(.horizontal, 16) }
+            HStack {
+                Spacer()
+                Button { retry += 1 } label: { Label("刷新分类", systemImage: "arrow.clockwise") }.font(.caption)
+                    .accessibilityIdentifier("refreshExploreCategories")
+            }.padding(.horizontal, 16).padding(.vertical, 6)
+        }
+    }
+}
+
+private struct ExploreCategoryControl: View {
+    let source: LegadoSource
+    let category: ExploreCategory
+    let index: Int
+    let onTapCategory: (ExploreCategory) -> Void
+    let onRefresh: () -> Void
+    let onError: (String) -> Void
+    @State private var value: String
+    @State private var actionRequest = 0
+    @State private var running = false
+
+    init(source: LegadoSource, category: ExploreCategory, index: Int, onTapCategory: @escaping (ExploreCategory) -> Void,
+         onRefresh: @escaping () -> Void, onError: @escaping (String) -> Void) {
+        self.source = source; self.category = category; self.index = index
+        self.onTapCategory = onTapCategory; self.onRefresh = onRefresh; self.onError = onError
+        _value = State(initialValue: ExploreInfo.value(source.bookSourceUrl, category.title))
+    }
+    private var name: String { category.displayTitle ?? category.title }
+    private var alignment: Alignment {
+        switch category.style.justifySelf { case "flex_start": return .leading; case "flex_end": return .trailing; default: return .center }
+    }
+    private var textAlignment: TextAlignment {
+        switch category.style.justifySelf { case "center": return .center; case "flex_end": return .trailing; default: return .leading }
+    }
+    var body: some View {
+        control.font(.system(size: 14)).foregroundStyle(.primary)
+            .task(id: actionRequest) {
+                guard actionRequest > 0 else { return }
+                do {
+                    if category.type == "text" { try await Task.sleep(nanoseconds: 600_000_000) }
+                    try Task.checkCancellation()
+                    running = true; onError("")
+                    let refresh = try await source.performExploreAction(category)
+                    guard !Task.isCancelled else { return }
+                    running = false
+                    if refresh { onRefresh() }
+                } catch {
+                    guard !Task.isCancelled else { return }
+                    running = false; onError("分类操作失败：" + sourceErrorMessage(error))
+                }
+            }
+    }
+    @ViewBuilder private var control: some View {
+        switch category.type {
+        case "text":
+            TextField(name, text: $value).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .multilineTextAlignment(textAlignment).frame(minWidth: 96)
+                .padding(.horizontal, 12).padding(.vertical, 6)
+                .background(AppTheme.surfaceMuted, in: Capsule())
+                .accessibilityIdentifier("explore-input-\(index)")
+                .onChange(of: value) { _, new in
+                    ExploreInfo.put(source.bookSourceUrl, category.title, new); actionRequest += 1
+                }
+        case "toggle":
+            Button {
+                let choices = category.choices
+                guard !choices.isEmpty, !running else { return }
+                let next = ((choices.firstIndex(of: value) ?? -1) + 1) % choices.count
+                value = choices[next]; ExploreInfo.put(source.bookSourceUrl, category.title, value); actionRequest += 1
+            } label: { pill(category.style.justifySelf == "right" ? name + value : value + name) }
+                .buttonStyle(.plain).accessibilityIdentifier("explore-toggle-\(index)")
+        case "select":
+            Menu {
+                ForEach(Array(category.choices.enumerated()), id: \.offset) { choice in
+                    Button {
+                        guard choice.element != value else { return }
+                        value = choice.element; ExploreInfo.put(source.bookSourceUrl, category.title, value); actionRequest += 1
+                    } label: { Label(choice.element, systemImage: value == choice.element ? "checkmark" : "circle") }
+                }
+            } label: { pill(name + " " + value + " ▾") }
+                .disabled(running).accessibilityIdentifier("explore-select-\(index)")
+        case "button":
+            Button { if !running { actionRequest += 1 } } label: { pill(name) }
+                .buttonStyle(.plain).accessibilityIdentifier("explore-button-\(index)")
+        default:
+            if category.canNavigate {
+                Button { onTapCategory(category) } label: { pill(name) }
+                    .buttonStyle(.plain).accessibilityIdentifier("explore-category-\(index)")
+            } else {
+                pill(name).accessibilityIdentifier("explore-heading-\(index)")
+            }
+        }
+    }
+    private func pill(_ text: String) -> some View {
+        Text(text).fixedSize(horizontal: false, vertical: true).frame(maxWidth: .infinity, alignment: alignment)
+            .padding(.horizontal, 12).padding(.vertical, 4)
+            .background(AppTheme.surfaceMuted, in: Capsule())
     }
 }
 

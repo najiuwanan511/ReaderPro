@@ -24,6 +24,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var bookSourceComment: String = ""
     var variableComment: String? = nil
     var enabledExplore: Bool = true
+    var customOrder: Int = 0
     var ruleSearch: RuleSet = RuleSet()
     var ruleBookInfo: RuleSet = RuleSet()
     var ruleToc: RuleSet = RuleSet()
@@ -133,7 +134,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment, variableComment
+        case id, customOrder, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment, variableComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -159,6 +160,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         ruleDiscover = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleDiscover)) ?? RuleSet()
         ruleExplore = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleExplore)) ?? RuleSet()
         bookSourceType = c.tolerantInt(.bookSourceType)
+        customOrder = c.tolerantInt(.customOrder)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -177,6 +179,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try encodeRule(ruleToc, .ruleToc); try encodeRule(ruleContent, .ruleContent)
         try encodeRule(ruleDiscover, .ruleDiscover); try encodeRule(ruleExplore, .ruleExplore)
         try c.encode(bookSourceType, forKey: .bookSourceType)
+        try c.encode(customOrder, forKey: .customOrder)
     }
     // Legado's real discovery fields are exploreUrl + ruleExplore, not discoverUrl.
     static func == (lhs: LegadoSource, rhs: LegadoSource) -> Bool {
@@ -187,7 +190,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         lhs.variableComment == rhs.variableComment && lhs.enabledExplore == rhs.enabledExplore &&
         lhs.ruleSearch == rhs.ruleSearch && lhs.ruleBookInfo == rhs.ruleBookInfo && lhs.ruleToc == rhs.ruleToc &&
         lhs.ruleContent == rhs.ruleContent && lhs.ruleDiscover == rhs.ruleDiscover && lhs.ruleExplore == rhs.ruleExplore &&
-        lhs.bookSourceType == rhs.bookSourceType
+        lhs.bookSourceType == rhs.bookSourceType && lhs.customOrder == rhs.customOrder
     }
     var effectiveDiscoverUrl: String { discoverUrl.isEmpty ? exploreUrl : discoverUrl }
     var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }

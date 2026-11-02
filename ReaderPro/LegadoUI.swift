@@ -33,38 +33,6 @@ struct ReaderTabStrip: View {
     }
 }
 
-/// Variable-width categories wrap in the same order as the source's Flexbox list.
-struct CategoryFlow: Layout {
-    var spacing: CGFloat = 8
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        positions(width: proposal.width ?? 320, subviews: subviews).size
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        let layout = positions(width: bounds.width, subviews: subviews)
-        for (index, point) in layout.points.enumerated() {
-            let size = subviews[index].sizeThatFits(.unspecified)
-            subviews[index].place(at: CGPoint(x: bounds.minX + point.x, y: bounds.minY + point.y),
-                                 proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height))
-        }
-    }
-
-    private func positions(width: CGFloat, subviews: Subviews) -> (size: CGSize, points: [CGPoint]) {
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        var points: [CGPoint] = []
-        for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
-            let itemWidth = min(size.width, width)
-            if x > 0 && x + itemWidth > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
-            points.append(CGPoint(x: x, y: y))
-            x += itemWidth + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return (CGSize(width: width, height: y + rowHeight), points)
-    }
-}
-
 struct RemoteBookCover: View {
     let title: String
     let url: String

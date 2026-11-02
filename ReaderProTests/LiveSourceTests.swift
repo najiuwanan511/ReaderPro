@@ -12,7 +12,7 @@ final class LiveSourceTests: XCTestCase {
         let sample = try XCTUnwrap(search.first)
         let categories = try await withTimeout(40) { try await source.withRules { source.exploreCategories() } }
         XCTAssertGreaterThan(categories.count, 6)
-        let discovered = try await withTimeout(40) { try await source.discover(category: categories.first) }
+        let discovered = try await withTimeout(40) { try await source.discover(category: categories.first(where: \.canNavigate)) }
         XCTAssertFalse(discovered.isEmpty)
         let detail = try await withTimeout(40) { try await source.fetchBookInfo(book: sample) }
         XCTAssertEqual(detail.tocUrl?.contains("catalog.mysignal.cn"), true, detail.tocUrl ?? "No directory URL")
@@ -54,7 +54,7 @@ final class LiveSourceTests: XCTestCase {
         XCTAssertFalse(search.isEmpty)
         let categories = source.exploreCategories()
         XCTAssertFalse(categories.isEmpty)
-        let discovered = try await withTimeout(35) { try await source.discover(category: categories.first) }
+        let discovered = try await withTimeout(35) { try await source.discover(category: categories.first(where: \.canNavigate)) }
         XCTAssertFalse(discovered.isEmpty)
         let sample = SourceBook(title: "创世公开阅读回归", url: "https://chuangshi.qq.com/detail/56936324", sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl)
         let detail = try await source.fetchBookInfo(book: sample)

@@ -394,6 +394,13 @@ final class LegadoJS {
         if structuredResult is [String] {
             ctx.evaluateScript("result = _elements(result)")
         }
+        let infoMap: @convention(block) (String, String) -> String = { operation, payload in
+            ExploreInfo.bridge(sourceUrl, operation, payload)
+        }
+        let refreshExplore: @convention(block) () -> Void = { ExploreInfo.refresh(sourceUrl) }
+        ctx.setObject(infoMap, forKeyedSubscript: "_exploreInfo" as NSString)
+        java.setObject(refreshExplore, forKeyedSubscript: "refreshExplore" as NSString)
+        ctx.evaluateScript(Self.exploreInfoScript)
         SourceCrypto.install(java, context: ctx)
         let digest: @convention(block) (JSValue, String) -> String = { text, algorithm in
             let data = SourceCrypto.bytes(text)
@@ -531,6 +538,38 @@ final class LegadoJS {
         text.applyingTransform(StringTransform("Traditional-Simplified"), reverse: true) ?? text
     }
 
+    private static let exploreInfoScript = #"""
+    var infoMap = (function() {
+        function call(op, args) { return JSON.parse(_exploreInfo(op, JSON.stringify(args))); }
+        function map(value) {
+            Object.defineProperties(value, {
+                get: {value: function(k) {return this[String(k)] == null ? null : this[String(k)];}},
+                put: {value: function(k,v) {var old=this[k]; this[k]=String(v); return old;}},
+                size: {value: function() {return Object.keys(this).length;}},
+                keySet: {value: function() {return _array(Object.keys(this));}}
+            });
+            return value;
+        }
+        return {
+            get: function(k) {return arguments.length ? call('get',[String(k)]) : map(call('get',[]));},
+            put: function(k,v) {return call('put',[String(k),String(v)]);},
+            remove: function(k) {return call('remove',[String(k)]);},
+            clear: function() {call('clear',[]);},
+            set: function(v) {call('set',[v]);},
+            putAll: function(v) {call('putAll',[v]);},
+            containsKey: function(k) {return call('get',[String(k)]) !== null;},
+            containsValue: function(v) {var m=call('get',[]); return Object.keys(m).some(function(k){return m[k]===String(v);});},
+            size: function() {return Object.keys(call('get',[])).length;},
+            isEmpty: function() {return this.size()===0;},
+            keySet: function() {return _array(Object.keys(call('get',[])));},
+            values: function() {var m=call('get',[]);return _array(Object.keys(m).map(function(k){return m[k];}));},
+            entrySet: function() {var m=call('get',[]);return _array(Object.keys(m).map(function(k){return {getKey:function(){return k;},getValue:function(){return m[k];}};}));},
+            save: function(time,need) {call('save',[time || 0,need === undefined ? true : !!need]);},
+            saveNow: function() {call('saveNow',[]);}
+        };
+    })();
+    """#
+
     private static let compatibilityScript = #"""
     function _text(value) {
         if (value == null) return java._content();
@@ -619,7 +658,7 @@ final class LegadoJS {
         return date.getFullYear()+'/'+pad(date.getMonth()+1)+'/'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes());
     };
     java.log = function(value) { return value; };
-    java.toast = java.longToast = java.refreshExplore = function() {};
+    java.toast = java.longToast = function() {};
     java.ruleUrl = baseUrl;
     java.getSource = function() { return source; };
     java.getBook = function() { return book; };
