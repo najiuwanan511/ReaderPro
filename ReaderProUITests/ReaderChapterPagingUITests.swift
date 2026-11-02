@@ -99,9 +99,11 @@ final class ReaderChapterPagingUITests: XCTestCase {
         let changeSource = app.buttons["切换书源"]
         XCTAssertTrue(changeSource.waitForExistence(timeout: 10)); changeSource.tap()
         XCTAssertTrue(app.navigationBars["换源"].waitForExistence(timeout: 10))
-        app.buttons["搜索"].tap()
-        let result = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
-        XCTAssertTrue(result.waitForExistence(timeout: 30)); result.tap()
+        let result = app.buttons["changeSource-回归测试书源"]
+        XCTAssertTrue(result.waitForExistence(timeout: 30), "打开换源后应自动查找同书名来源")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: result)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed, "读取完整目录后才能切换")
+        result.tap()
         XCTAssertTrue(page(app, containing: "第2章第1段").waitForExistence(timeout: 30), "换源后应加载对应章节，而非回到第一章或停在未加载状态")
     }
 

@@ -46,21 +46,6 @@ struct Bookmark: Identifiable, Codable, Equatable, Hashable {
     var date: Date = Date()
 }
 
-struct ReplaceRule: Identifiable, Codable, Equatable, Hashable {
-    var id: String = UUID().uuidString
-    var name: String = ""
-    var pattern: String = ""
-    var replacement: String = ""
-    var enabled: Bool = true
-    static var defaults: [ReplaceRule] {
-        [
-            ReplaceRule(name: "去“本章未完”", pattern: "本章未完，点击下一页继续阅读.*", replacement: ""),
-            ReplaceRule(name: "去广告网址行", pattern: "https?://[^\\s\\n]+", replacement: ""),
-            ReplaceRule(name: "去多余空行", pattern: "\\n{3,}", replacement: "\n\n")
-        ]
-    }
-}
-
 struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var id: String = UUID().uuidString
     var title: String
@@ -78,6 +63,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var totalMinutes: Int = 0
     var favorite: Bool = false
     var group: String = ""
+    var useReplaceRule = true
     var chapters: [BookChapter] = []
     var imageNames: [String] = []
     // 音频/视频书（对标阅读Sigma）：歌词 LRC 文本、音频网络地址、视频选集源
@@ -97,7 +83,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, author, coverUrl, sourceName, sourceUrl, fileName, kind, chapterIndex, paragraphIndex, charOffset, progress, lastRead, totalMinutes, favorite, group, chapters, imageNames, lyrics, audioUrl, videoUrls
+        case id, title, author, coverUrl, sourceName, sourceUrl, fileName, kind, chapterIndex, paragraphIndex, charOffset, progress, lastRead, totalMinutes, favorite, group, useReplaceRule, chapters, imageNames, lyrics, audioUrl, videoUrls
     }
 
     init(title: String, author: String = "", coverUrl: String = "", sourceName: String = "", sourceUrl: String = "", fileName: String, kind: String = "txt") {
@@ -125,6 +111,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
         totalMinutes = (try? c.decode(Int.self, forKey: .totalMinutes)) ?? 0
         favorite = (try? c.decode(Bool.self, forKey: .favorite)) ?? false
         group = (try? c.decode(String.self, forKey: .group)) ?? ""
+        useReplaceRule = (try? c.decode(Bool.self, forKey: .useReplaceRule)) ?? true
         chapters = (try? c.decode([BookChapter].self, forKey: .chapters)) ?? []
         imageNames = (try? c.decode([String].self, forKey: .imageNames)) ?? []
         lyrics = (try? c.decode(String.self, forKey: .lyrics)) ?? ""
@@ -142,6 +129,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
         try c.encode(charOffset, forKey: .charOffset); try c.encode(progress, forKey: .progress)
         try c.encode(lastRead, forKey: .lastRead); try c.encode(totalMinutes, forKey: .totalMinutes)
         try c.encode(favorite, forKey: .favorite); try c.encode(group, forKey: .group)
+        try c.encode(useReplaceRule, forKey: .useReplaceRule)
         try c.encode(chapters, forKey: .chapters); try c.encode(imageNames, forKey: .imageNames)
         try c.encode(lyrics, forKey: .lyrics); try c.encode(audioUrl, forKey: .audioUrl)
         try c.encode(videoUrls, forKey: .videoUrls)
@@ -469,6 +457,7 @@ struct SourceMergeResult {
 }
 
 class BookStore: ObservableObject {
+    @MainActor lazy var chapterCache = ReaderChapterCache(store: self)
     @Published var books: [LocalBook] = []
     @Published var bookmarks: [Bookmark] = []
     @Published var sources: [LegadoSource] = []
@@ -576,15 +565,12 @@ class BookStore: ObservableObject {
         save()
     }
     func addBookmark(_ bm: Bookmark) { bookmarks.insert(bm, at: 0); save() }
-    func purify(_ text: String) -> String {
-        var out = text
-        for rule in replaceRules where rule.enabled && !rule.pattern.isEmpty {
-            if let re = try? NSRegularExpression(pattern: rule.pattern, options: []) {
-                let range = NSRange(out.startIndex..., in: out)
-                out = re.stringByReplacingMatches(in: out, range: range, withTemplate: rule.replacement)
-            }
+    func purify(_ text: String, book: LocalBook? = nil, title: Bool = false) -> String {
+        guard book?.useReplaceRule != false else { return text }
+        return replaceRules.reduce(text) { value, rule in
+            guard rule.applies(to: book, title: title) else { return value }
+            return (try? rule.replacing(value)) ?? value
         }
-        return out
     }
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
 
@@ -686,48 +672,27 @@ class BookStore: ObservableObject {
 
     // MARK: 整本下载（在线书缓存全部章节）
 
-    func downloadAllChapters(bookId: String, onProgress: @escaping (Int, Int) -> Void) async {
-        guard let book = books.first(where: { $0.id == bookId }),
-              let src = sourceForBook(book) else { return }
-        let pending = book.chapters.enumerated().filter { $0.element.text.hasPrefix("__URL__") }
-        let total = pending.count
-        guard total > 0 else { return }
-        var done = 0
-        var index = 0
-        while index < pending.count {
-            let batch = Array(pending[index..<min(index + 8, pending.count)])
-            index += batch.count
-            await withTaskGroup(of: (Int, String).self) { group in
-                for (i, ch) in batch {
-                    group.addTask {
-                        let nextURL = book.chapters.indices.contains(i + 1) ? book.chapters[i + 1].url : book.chapters.first?.url
-                        if let c = try? await src.fetchChapterContent(ch, nextChapterUrl: nextURL) {
-                            return (i, c.isEmpty ? "（本章没有正文）" : c)
-                        }
-                        return (i, "")
-                    }
-                }
-                var updates: [Int: String] = [:]
-                for await (i, c) in group { updates[i] = c }
-                await MainActor.run {
-                    if let bi = self.books.firstIndex(where: { $0.id == bookId }) {
-                        for (i, c) in updates where i < self.books[bi].chapters.count && !c.isEmpty {
-                            self.books[bi].chapters[i].text = c
-                        }
-                    }
-                    done += batch.count
-                    onProgress(min(done, total), total)
-                }
-            }
+    @MainActor func downloadAllChapters(bookId: String, onProgress: @escaping (Int, Int) -> Void) async {
+        guard let original = books.first(where: { $0.id == bookId }) else { return }
+        let pending = original.chapters.indices.filter { original.chapters[$0].text.hasPrefix("__URL__") }
+        for (offset, index) in pending.enumerated() {
+            guard !Task.isCancelled,
+                  let current = books.first(where: { $0.id == bookId }),
+                  current.sourceUrl == original.sourceUrl, current.sourceName == original.sourceName,
+                  current.chapters.indices.contains(index), current.chapters[index].id == original.chapters[index].id else { return }
+            _ = try? await chapterCache.content(bookID: bookId, index: index)
+            onProgress(offset + 1, pending.count)
         }
-        save()
     }
 
     // MARK: 换源（用新书源重新拉目录，保留书）
 
     func reloadBookFromSource(bookId: String, source: LegadoSource, sourceBook: SourceBook) async throws {
-        let chapters = try await source.fetchChapters(book: sourceBook)
+        let info = try await source.fetchBookInfo(book: sourceBook)
+        let chapters = try await source.fetchChapters(book: info)
+        guard !chapters.isEmpty else { throw SourceFailure(stage: "换源", message: "新书源没有返回目录，已保留当前来源") }
         await MainActor.run {
+            chapterCache.cancel(bookID: bookId)
             if var nb = books.first(where: { $0.id == bookId }) {
                 nb.sourceName = source.bookSourceName
                 nb.sourceUrl = source.bookSourceUrl

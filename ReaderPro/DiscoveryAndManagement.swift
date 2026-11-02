@@ -440,30 +440,6 @@ class QRScannerController: UIViewController, AVCaptureMetadataOutputObjectsDeleg
     }
 }
 
-struct ReplaceRuleEditorView: View {
-    @ObservedObject var store: BookStore
-    var ruleId: String
-    @State private var name = ""
-    @State private var pattern = ""
-    @State private var replacement = ""
-    var body: some View {
-        Form {
-            TextField("规则名", text: $name)
-            TextField("正则表达式", text: $pattern).autocapitalization(.none)
-            TextField("替换为（可用 $1）", text: $replacement).autocapitalization(.none)
-            Button("保存") {
-                if let i = store.replaceRules.firstIndex(where: { $0.id == ruleId }) {
-                    store.replaceRules[i].name = name; store.replaceRules[i].pattern = pattern; store.replaceRules[i].replacement = replacement; store.save()
-                }
-            }
-        }
-        .navigationTitle("编辑替换规则")
-        .onAppear {
-            if let r = store.replaceRules.first(where: { $0.id == ruleId }) { name = r.name; pattern = r.pattern; replacement = r.replacement }
-        }
-    }
-}
-
 // MARK: - 书源详情（查看规则 + 测试搜索）
 
 struct SourceDetailView: View {

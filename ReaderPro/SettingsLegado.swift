@@ -403,49 +403,6 @@ struct BackupSettingsView: View {
 
 // MARK: - 替换净化（列表 + 开关 + 添加 + 进入编辑）
 
-struct ReplaceRuleView: View {
-    @ObservedObject var store: BookStore
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(store.replaceRules) { rule in
-                    HStack(spacing: 0) {
-                        NavigationLink {
-                            ReplaceRuleEditorView(store: store, ruleId: rule.id)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: "wand.and.stars")
-                                    .font(.system(size: 15, weight: .medium)).foregroundStyle(.white)
-                                    .frame(width: 30, height: 30)
-                                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.orange))
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(rule.name).font(.body).foregroundStyle(.primary)
-                                    Text("\(rule.pattern) → \(rule.replacement)").font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                }
-                                Spacer()
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        Toggle("", isOn: Binding(get: { rule.enabled }, set: { v in
-                            if let i = store.replaceRules.firstIndex(where: { $0.id == rule.id }) { store.replaceRules[i].enabled = v; store.save() }
-                        })).labelsHidden()
-                    }
-                }
-                .onDelete { idx in store.replaceRules.remove(atOffsets: idx); store.save() }
-                Button("添加替换规则") {
-                    store.replaceRules.append(ReplaceRule(name: "新规则", pattern: "", replacement: "")); store.save()
-                }
-            } header: { SettingSectionHeader(title: "替换规则") }
-            footer: {
-                Text("替换规则是正则表达式，显示和下载正文时都会自动净化（去广告、去“本章未完”等）。点规则行进入编辑。").font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .navigationTitle("替换净化")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}
-
 // MARK: - 书签
 
 struct AllBookmarksView: View {

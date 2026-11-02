@@ -44,6 +44,83 @@ final class SourceFlowUITests: XCTestCase {
         let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "校验状态与常驻搜索"; attachment.lifetime = .keepAlways; add(attachment)
     }
 
+    private func openPipelineNovel() -> XCUIApplication {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-switch-fixture"]
+        app.launch()
+        app.tabBars.buttons["发现"].tap(); app.buttons["回归测试书源"].tap()
+        let category = app.buttons["分类"]
+        XCTAssertTrue(category.waitForExistence(timeout: 15)); category.tap()
+        let book = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 20)); book.tap()
+        let start = app.buttons["开始阅读"]
+        XCTAssertTrue(start.waitForExistence(timeout: 20))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed); start.tap()
+        XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 30))
+        return app
+    }
+
+    func testDiscoveryReaderPreloadsThreeAndShowsAlternativeDirectories() {
+        let app = openPipelineNovel()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.buttons["目录"].tap()
+        let fourth = app.buttons["readerChapter-3"]
+        XCTAssertTrue(fourth.waitForExistence(timeout: 15))
+        let prefetched = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", "已缓存"), object: fourth)
+        XCTAssertEqual(XCTWaiter.wait(for: [prefetched], timeout: 30), .completed)
+        XCTAssertEqual(app.buttons["readerChapter-1"].value as? String, "已缓存")
+        XCTAssertEqual(app.buttons["readerChapter-2"].value as? String, "已缓存")
+        XCTAssertEqual(app.buttons["readerChapter-4"].value as? String, "未缓存", "读第一章时应只向后预加载三章")
+        app.buttons["readerChapter-1"].tap()
+        XCTAssertTrue(app.textViews["readerPage"].label.contains("第2章第1段"))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.buttons["更多操作"].tap(); app.buttons["切换书源"].tap()
+        let original = app.buttons["changeSource-回归测试书源"]
+        let alternate = app.buttons["changeSource-备用测试书源"]
+        XCTAssertTrue(original.waitForExistence(timeout: 30)); XCTAssertTrue(alternate.waitForExistence(timeout: 30))
+        let directory = app.buttons["查看备用测试书源目录"]
+        XCTAssertTrue(directory.waitForExistence(timeout: 30)); directory.tap()
+        XCTAssertTrue(app.navigationBars["备用测试书源目录"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["sourceDirectoryChapter-0"].exists)
+        XCTAssertFalse(app.buttons["sourceDirectoryChapter-1"].exists)
+        let snapshot = XCTAttachment(screenshot: app.screenshot()); snapshot.name = "换源前查看各源实际目录"; snapshot.lifetime = .keepAlways; add(snapshot)
+        app.buttons["sourceDirectoryChapter-0"].tap()
+        XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.textViews["readerPage"].label.contains("第1章第1段"))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap(); app.buttons["目录"].tap()
+        XCTAssertTrue(app.buttons["readerChapter-0"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["readerChapter-1"].exists, "目录切换后应使用所选源的一章目录")
+    }
+
+    func testReaderReplacementEntryEditsSavesAndRestoresRawContent() {
+        let app = openPipelineNovel()
+        let page = app.textViews["readerPage"]
+        XCTAssertTrue(page.label.contains("完整正文"))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        app.buttons["更多操作"].tap(); app.buttons["替换净化"].tap()
+        XCTAssertTrue(app.navigationBars["替换净化"].waitForExistence(timeout: 10))
+        app.buttons["添加替换规则"].tap()
+        let name = app.textFields["replacementRuleName"]
+        XCTAssertTrue(name.waitForExistence(timeout: 10)); name.tap(); name.typeText("阅读回归净化")
+        let pattern = app.textViews["replacementRulePattern"]
+        pattern.tap(); pattern.typeText("完整正文")
+        let replacement = app.textViews["replacementRuleReplacement"]
+        if !replacement.isHittable { app.swipeUp() }
+        replacement.tap(); replacement.typeText("净化正文")
+        app.buttons["保存替换规则"].tap()
+        XCTAssertTrue(app.navigationBars["替换净化"].waitForExistence(timeout: 10))
+        app.buttons["完成"].tap()
+        let purified = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "净化正文"), object: page)
+        XCTAssertEqual(XCTWaiter.wait(for: [purified], timeout: 10), .completed)
+        app.buttons["更多操作"].tap(); app.buttons["替换净化"].tap()
+        app.buttons["更多阅读回归净化"].tap(); app.buttons["删除"].tap()
+        app.buttons["完成"].tap()
+        let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "完整正文"), object: page)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 10), .completed, "删除净化规则后应恢复缓存原文")
+    }
+
     func testDiscoveryOpensCompleteDirectoryAndChapterDirectly() {
         let app = launch()
         app.tabBars.buttons["发现"].tap()

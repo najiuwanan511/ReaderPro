@@ -25,7 +25,7 @@ struct ReaderBoundaryFixtureRoot: View {
             source.ruleContent.nextContentUrl = ""
             var book = LocalBook(title: "翻页回归", sourceName: source.bookSourceName,
                                  sourceUrl: source.bookSourceUrl, fileName: "fixture.txt", kind: "web")
-            if args.contains("--reader-source-change-fixture") { book.title = "测试" }
+            if args.contains("--reader-source-change-fixture") { book.title = "测试小说" }
             book.id = "reader-boundary-fixture"
             let url = base + "/reader-boundary/long"
             book.chapters = [

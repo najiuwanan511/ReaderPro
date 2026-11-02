@@ -34,7 +34,7 @@ private final class ReaderScrollProgress {
     var offset = 0
 }
 
-struct ReaderView: View {
+@MainActor struct ReaderView: View {
     @ObservedObject var store: BookStore
     let bookId: String
     @Environment(\.dismiss) private var dismiss
@@ -88,10 +88,7 @@ struct ReaderView: View {
     @State private var autoPageInterval: Double = 10
     @State private var autoTimer: Timer?
 
-    // 换源
-    @State private var sourceChangeKey = ""
-    @State private var sourceChangeResults: [SourceBook] = []
-    @State private var sourceChangeLoading = false
+    @State private var showReplaceRules = false
 
     // 整本缓存
     @State private var downloadProgress: (Int, Int)?
@@ -167,6 +164,7 @@ struct ReaderView: View {
             UIApplication.shared.isIdleTimerDisabled = enabled || initialIdleTimerDisabled
         }
         .onDisappear {
+            store.chapterCache.cancel(bookID: bookId)
             if !loading && chapter?.text.hasPrefix("__URL__") != true { saveProgress() }
             cancelChapterLoad()
             let minutes = max(0, Int(Date().timeIntervalSince(readingStart) / 60))
@@ -185,6 +183,11 @@ struct ReaderView: View {
         .sheet(isPresented: $showStyle) { styleSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
         .sheet(isPresented: $showSourceChange) { sourceChangeSheet }
+        .sheet(isPresented: $showReplaceRules) {
+            NavigationStack { ReplaceRuleView(store: store, bookID: bookId) }
+        }
+        .onChange(of: book?.useReplaceRule) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
+        .onChange(of: store.replaceRules) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
         .sheet(isPresented: $showDownloadAll) { downloadSheet }
         .alert("加载失败", isPresented: .constant(!errorText.isEmpty)) {
             Button("重试") { errorText = ""; loadChapterIfNeeded() }
@@ -261,7 +264,7 @@ struct ReaderView: View {
         .overlay(alignment: .top) {
             if store.showHeader, let c = chapter {
                 HStack {
-                    Text(c.title).font(.system(size: CGFloat(max(store.fontSize - 5, 11)), weight: .medium))
+                    Text(store.purify(c.title, book: book, title: true)).font(.system(size: CGFloat(max(store.fontSize - 5, 11)), weight: .medium))
                         .foregroundColor(Color(uiColor: theme.secondary)).lineLimit(1)
                     Spacer()
                 }.padding(.horizontal, CGFloat(store.pagePaddingH))
@@ -350,7 +353,7 @@ struct ReaderView: View {
                         if settled { saveProgress() }
                     }))
                 if let c = chapter, store.showHeader {
-                    Text(c.title)
+                    Text(store.purify(c.title, book: book, title: true))
                         .font(.system(size: CGFloat(store.fontSize + 3), weight: .bold))
                         .foregroundColor(Color(uiColor: theme.text))
                         .padding(.bottom, 4)
@@ -398,7 +401,7 @@ struct ReaderView: View {
             .overlay(alignment: .top) {
                 if store.showHeader, let c = chapter {
                     HStack {
-                        Text(c.title)
+                        Text(store.purify(c.title, book: book, title: true))
                             .font(.system(size: CGFloat(max(store.fontSize - 5, 11)), weight: .medium))
                             .foregroundColor(Color(uiColor: theme.secondary))
                             .lineLimit(1)
@@ -496,6 +499,7 @@ struct ReaderView: View {
             pageIndex = atEnd ? max(pages.count - 1, 0) : 0
             if atEnd { scrollProgress.offset = pages.last?.location ?? 0 }
             saveProgress(page: pageIndex)
+            store.chapterCache.preload(bookID: bookId, after: chapterIndex)
         }
         jumpToken += 1
     }
@@ -526,7 +530,7 @@ struct ReaderView: View {
     func rebuild(size: CGSize, keepOffset: Int?) {
         lastSize = size
         guard let c = chapter, !c.text.hasPrefix("__URL__") else { return }
-        let text = NSAttributedString(string: store.purify(c.text), attributes: baseAttributes())
+        let text = NSAttributedString(string: store.purify(c.text, book: book), attributes: baseAttributes())
         attributed = text
         // Reserve the real overlay height. A fixed 20pt allowance is enough at
         // the default size but lets large fonts collide with the header/footer.
@@ -577,6 +581,7 @@ struct ReaderView: View {
             loadChapterIfNeeded()
         } else {
             rebuild(size: size, keepOffset: restored.offset)
+            store.chapterCache.preload(bookID: bookId, after: chapterIndex)
         }
     }
 
@@ -624,21 +629,20 @@ struct ReaderView: View {
         guard let b = book, b.chapters.indices.contains(chapterIndex) else { return }
         let ch = b.chapters[chapterIndex]
         guard ch.text.hasPrefix("__URL__") else { return }
-        guard let src = store.sourceForBook(b) else {
+        guard store.sourceForBook(b) != nil else {
             errorText = "这本书的书源已删除或未启用，无法拉取在线章节"
             return
         }
         loading = true
         let idx = chapterIndex
         let token = chapterLoadToken
-        let nextURL = b.chapters.indices.contains(idx + 1) ? b.chapters[idx + 1].url : nil
         chapterLoadTask = Task { @MainActor in
             defer {
                 if chapterLoadToken == token { loading = false; chapterLoadTask = nil }
             }
             do {
                 // One deadline covers all pagination and synchronous JS retries.
-                let content = try await withTimeout(45) { try await src.fetchChapterContent(ch, nextChapterUrl: nextURL) }
+                let content = try await store.chapterCache.content(bookID: bookId, index: idx)
                 guard !Task.isCancelled, chapterLoadToken == token, chapterIndex == idx,
                       var nb = store.books.first(where: { $0.id == bookId }),
                       nb.chapters.indices.contains(idx), nb.chapters[idx].id == ch.id else { return }
@@ -663,6 +667,7 @@ struct ReaderView: View {
                 }
                 saveProgress(page: pageIndex)
                 jumpToken += 1
+                store.chapterCache.preload(bookID: bookId, after: idx)
             } catch {
                 guard !Task.isCancelled, chapterLoadToken == token else { return }
                 errorText = sourceErrorMessage(error)
@@ -725,7 +730,7 @@ struct ReaderView: View {
     }
 
     func paragraphs(_ c: BookChapter) -> [String] {
-        store.purify(c.text)
+        store.purify(c.text, book: book)
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
@@ -761,71 +766,37 @@ struct ReaderView: View {
 
     // MARK: 换源
 
-    func openSourceChange() {
-        sourceChangeKey = book?.title ?? ""
-        sourceChangeResults = []
-        sourceChangeLoading = false
-        showSourceChange = true
-    }
+    func openSourceChange() { showSourceChange = true }
 
-    func searchForChangeSource() {
-        guard !sourceChangeKey.isEmpty else { return }
-        sourceChangeLoading = true
-        let enabled = store.enabledSources
-        let key = sourceChangeKey
-        Task {
-            let raw = await searchAllRawSources(enabled, key: key)
-            var seen = Set<String>(); var deduped: [SourceBook] = []
-            for b in raw {
-                let k = dedupeKey(b)
-                if seen.contains(k) { continue }
-                seen.insert(k); deduped.append(b)
-            }
-            await MainActor.run { sourceChangeResults = deduped; sourceChangeLoading = false }
-        }
-    }
-
-    func changeSource(to r: SourceBook) {
-        showSourceChange = false
-        showMenu = false
-        guard let src = store.sources.first(where: { $0.bookSourceName == r.sourceName && ($0.bookSourceUrl == r.sourceUrl || r.sourceUrl.isEmpty) }) ?? store.sources.first(where: { $0.bookSourceName == r.sourceName }) else {
-            errorText = "找不到对应书源（可能已删除），请重新搜索"
-            return
-        }
-        guard let previousBook = book, previousBook.chapters.indices.contains(chapterIndex) else { return }
+    func changeSource(to candidate: ReaderSourceCandidate, chapter selectedChapter: Int?) {
+        let r = candidate.book
+        guard let chapters = candidate.chapters, !chapters.isEmpty,
+              let src = store.sources.first(where: { $0.bookSourceUrl == r.sourceUrl && $0.bookSourceName == r.sourceName }),
+              var updated = book else { return }
         let previousIndex = chapterIndex
-        let previousTitle = previousBook.chapters[previousIndex].title
-        let previousOffset = currentCharOffset()
-        // A pending request for the old source must not replace the new source
-        // while its directory is being fetched.
+        let previousTitle = chapter?.title ?? ""
+        let previousOffset = selectedChapter == nil ? currentCharOffset() : 0
         cancelChapterLoad()
-        Task {
-            do {
-                try await store.reloadBookFromSource(bookId: bookId, source: src, sourceBook: r)
-                await MainActor.run {
-                    guard let updated = book, !updated.chapters.isEmpty else { return }
-                    func normalized(_ title: String) -> String {
-                        title.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
-                    }
-                    let name = normalized(previousTitle)
-                    // Prefer the same chapter title when the sources have
-                    // different directory offsets; otherwise keep the old
-                    // position as closely as the new directory permits.
-                    let matches = updated.chapters.indices.filter { !name.isEmpty && normalized(updated.chapters[$0].title) == name }
-                    let target = matches.min(by: { abs($0 - previousIndex) < abs($1 - previousIndex) })
-                        ?? min(previousIndex, updated.chapters.count - 1)
-                    openChapter(target)
-                    chapterLanding = .offset(previousOffset)
-                    scrollProgress.offset = previousOffset
-                    if !updated.chapters[target].text.hasPrefix("__URL__") {
-                        rebuild(size: lastSize, keepOffset: previousOffset)
-                        saveProgress(page: pageIndex)
-                        jumpToken += 1
-                    }
-                }
-            } catch {
-                await MainActor.run { errorText = "换源失败：\(sourceErrorMessage(error))" }
-            }
+        store.chapterCache.cancel(bookID: bookId)
+        updated.sourceName = src.bookSourceName; updated.sourceUrl = src.bookSourceUrl
+        updated.chapters = chapters
+        func normalized(_ title: String) -> String {
+            title.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
+        }
+        let name = normalized(previousTitle)
+        let matches = chapters.indices.filter { !name.isEmpty && normalized(chapters[$0].title) == name }
+        let target = selectedChapter.map { boundedReadingIndex($0, count: chapters.count) }
+            ?? matches.min(by: { abs($0 - previousIndex) < abs($1 - previousIndex) })
+            ?? boundedReadingIndex(previousIndex, count: chapters.count)
+        updated.chapterIndex = target; updated.charOffset = previousOffset
+        updated.paragraphIndex = 0
+        store.updateBook(updated)
+        showSourceChange = false; showMenu = false
+        openChapter(target)
+        chapterLanding = .offset(previousOffset); scrollProgress.offset = previousOffset
+        if !chapters[target].text.hasPrefix("__URL__") {
+            rebuild(size: lastSize, keepOffset: previousOffset)
+            saveProgress(page: pageIndex); jumpToken += 1
         }
     }
 
@@ -882,7 +853,7 @@ struct ReaderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(book?.title ?? "").font(.headline).lineLimit(1)
                 if let c = chapter, store.showHeader {
-                    Text(c.title).font(.caption).foregroundColor(Color(uiColor: theme.secondary)).lineLimit(1)
+                    Text(store.purify(c.title, book: book, title: true)).font(.caption).foregroundColor(Color(uiColor: theme.secondary)).lineLimit(1)
                 }
             }
             Spacer()
@@ -911,6 +882,7 @@ struct ReaderView: View {
         VStack(spacing: 0) {
             moreAction("搜索正文", icon: "magnifyingglass") { showSearch = true }
             moreAction("查看书签", icon: "bookmark") { showBookmarks = true }
+            moreAction("替换净化", icon: "wand.and.stars") { showReplaceRules = true }
             moreAction("切换书源", icon: "arrow.triangle.2.circlepath") { openSourceChange() }
             moreAction("缓存全书", icon: "arrow.down.circle") { startDownloadAll() }
             moreAction(autoPageEnabled ? "关闭自动翻页" : "自动翻页", icon: "play.circle") { toggleAutoPage(!autoPageEnabled) }
@@ -1072,17 +1044,21 @@ struct ReaderView: View {
                 ForEach(Array((book?.chapters ?? []).enumerated()), id: \.offset) { entry in
                     Button {
                         showCatalog = false
+                        showMenu = false
                         guard let current = book, current.chapters.indices.contains(entry.offset),
                               current.chapters[entry.offset].id == entry.element.id else { return }
                         openChapter(entry.offset, atStart: true)
                     } label: {
                         HStack {
-                            Text(entry.element.title)
+                            Text(store.purify(entry.element.title, book: book, title: true))
                                 .foregroundColor(entry.offset == chapterIndex ? Color.accentColor : .primary)
                             Spacer()
                             if entry.offset == chapterIndex { Image(systemName: "checkmark") }
+                            if !entry.element.text.hasPrefix("__URL__") { Image(systemName: "checkmark.circle").foregroundStyle(.secondary) }
                         }
                     }
+                    .accessibilityIdentifier("readerChapter-\(entry.offset)")
+                    .accessibilityValue(entry.element.text.hasPrefix("__URL__") ? "未缓存" : "已缓存")
                 }
             }
             .navigationTitle("目录")
@@ -1146,7 +1122,7 @@ struct ReaderView: View {
         var out: [FullSearchResult] = []
         for (i, ch) in b.chapters.enumerated() {
             if ch.text.hasPrefix("__URL__") { continue }
-            let paras = store.purify(ch.text).components(separatedBy: .newlines)
+            let paras = store.purify(ch.text, book: book).components(separatedBy: .newlines)
             for (j, p) in paras.enumerated() where p.contains(key) {
                 out.append(FullSearchResult(chapterIndex: i, chapterTitle: ch.title, line: p, lineIndex: j))
             }
@@ -1222,30 +1198,11 @@ struct ReaderView: View {
 
     // MARK: 换源
 
-    var sourceChangeSheet: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                HStack {
-                    TextField("搜书名（换源）", text: $sourceChangeKey)
-                        .textFieldStyle(.roundedBorder)
-                    Button("搜索") { searchForChangeSource() }.disabled(sourceChangeKey.isEmpty || sourceChangeLoading)
-                }.padding()
-                if sourceChangeLoading { ProgressView("多源搜索中…") }
-                List(sourceChangeResults) { r in
-                    Button { changeSource(to: r) } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(r.title).font(.headline)
-                            HStack {
-                                if !r.author.isEmpty { Text(r.author).font(.caption).foregroundStyle(.secondary) }
-                                if !r.sourceName.isEmpty { Text(r.sourceName).font(.caption).padding(.horizontal, 6).padding(.vertical, 2).background(AppTheme.accentSoft).cornerRadius(6) }
-                            }
-                        }
-                    }
-                }
+    @ViewBuilder var sourceChangeSheet: some View {
+        if let book {
+            ReaderSourceChangeView(store: store, current: book) { candidate, index in
+                changeSource(to: candidate, chapter: index)
             }
-            .navigationTitle("换源")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .navigationBarTrailing) { Button("关闭") { showSourceChange = false } } }
         }
     }
 
