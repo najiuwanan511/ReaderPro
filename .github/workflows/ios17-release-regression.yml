@@ -37,6 +37,7 @@ jobs:
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -only-testing:ReaderProTests/SourceHeaderCompatibilityTests/testWebViewRejectsProxyWithoutFallingBackDirectly \
             -only-testing:ReaderProTests/SourceURLCompatibilityTests/testWebViewRespectsSourceDelay \
             -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
