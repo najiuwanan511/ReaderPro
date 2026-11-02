@@ -24,26 +24,45 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8765/health
           if ! xcrun simctl list runtimes available | grep -q 'iOS 17.0'; then
-            xcodebuild -downloadPlatform iOS -buildVersion 17.0
+            for attempt in 1 2 3; do
+              if xcodebuild -downloadPlatform iOS -buildVersion 17.0; then break; fi
+              if [ "$attempt" -eq 3 ]; then exit 1; fi
+            done
           fi
           xcrun simctl list runtimes available
           DEVICE=$(xcrun simctl create ReaderPro-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-0)
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE"
           xcrun simctl bootstatus "$DEVICE" -b
+      - name: Compile optimized simulator tests
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/ReaderProPixelDerivedData" \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
+            ONLY_ACTIVE_ARCH=YES ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/build-for-testing.log
+      - name: Restart simulator after compilation
+        run: |
+          xcrun simctl shutdown "$READER_SIMULATOR_ID"
+          xcrun simctl boot "$READER_SIMULATOR_ID"
+          xcrun simctl bootstatus "$READER_SIMULATOR_ID" -b
       - name: Test optimized build with large search and real source pack
         run: |
           set -o pipefail
-          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+          xcodebuild test-without-building -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/ReaderProPixelDerivedData" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -only-testing:ReaderProTests/SourceHeaderCompatibilityTests/testWebViewRejectsProxyWithoutFallingBackDirectly \
+            -only-testing:ReaderProTests/SourceURLCompatibilityTests/testWebViewRespectsSourceDelay \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \
             -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \
             -resultBundlePath build/ReleaseRegression.xcresult \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
-            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/release-regression.log
+            ONLY_ACTIVE_ARCH=YES ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/release-regression.log
       - name: Preserve test results and crash reports
         if: always()
         run: |
