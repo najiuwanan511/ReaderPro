@@ -13,6 +13,7 @@ struct SourceManagementView: View {
     @State private var showFileResult = false
     @State private var fileImportMessage = ""
     @State private var importingFile = false
+    @State private var showImportOptions = false
     @State private var showPaste = false
     @State private var pasteText = ""
     @State private var pasteError = ""
@@ -198,16 +199,22 @@ struct SourceManagementView: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button("本地文件", systemImage: "doc") { showFileImport = true }
-                    Button("粘贴书源", systemImage: "doc.on.clipboard") { showPaste = true }
-                    Button("网络链接", systemImage: "link") { showNetwork = true }
-                    Button("扫描二维码", systemImage: "qrcode.viewfinder") { showQR = true }
-                } label: {
+                Button { showImportOptions = true } label: {
                     if importingFile { ProgressView() }
-                    else { Image(systemName: "square.and.arrow.down") }
+                    else {
+                        Label("导入书源", systemImage: "square.and.arrow.down")
+                            .labelStyle(.iconOnly)
+                            .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
                 }.disabled(importingFile).accessibilityLabel("导入书源")
             }
+        }
+        .confirmationDialog("导入书源或订阅源", isPresented: $showImportOptions, titleVisibility: .visible) {
+            Button("本地文件") { showFileImport = true }
+            Button("粘贴书源") { showPaste = true }
+            Button("网络链接") { showNetwork = true }
+            Button("扫描二维码") { showQR = true }
+            Button("取消", role: .cancel) {}
         }
         .fileImporter(isPresented: $showFileImport, allowedContentTypes: [.json, .plainText, .data]) { result in
             switch result {
