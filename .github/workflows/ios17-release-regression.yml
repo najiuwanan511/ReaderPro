@@ -1,4 +1,4 @@
-name: iOS 17 WebView delay probe
+name: iOS 17 discovery reader pixel probe
 
 on:
   workflow_dispatch:
@@ -37,8 +37,7 @@ jobs:
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
-            -only-testing:ReaderProTests/SourceHeaderCompatibilityTests/testWebViewRejectsProxyWithoutFallingBackDirectly \
-            -only-testing:ReaderProTests/SourceURLCompatibilityTests/testWebViewRespectsSourceDelay \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \
             -test-iterations 3 \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \
@@ -62,5 +61,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios17-webview-delay-probe
+          name: ios17-reader-pixel-probe
           path: build

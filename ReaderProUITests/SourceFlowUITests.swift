@@ -81,6 +81,9 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertTrue(page.waitForExistence(timeout: 15))
         XCTAssertTrue(page.label.contains("第1章第1段"))
         assertReaderUsesFullScreen(app)
+        Thread.sleep(forTimeInterval: 1) // Allow the full-screen presentation and TextKit draw to settle.
+        let body = XCTAttachment(screenshot: page.screenshot())
+        body.name = "正文像素"; body.lifetime = .keepAlways; add(body)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "发现开始阅读全屏无弹窗留白"; screenshot.lifetime = .keepAlways; add(screenshot)
         app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
