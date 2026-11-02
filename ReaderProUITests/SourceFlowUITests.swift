@@ -35,7 +35,7 @@ final class SourceFlowUITests: XCTestCase {
         failed.tap()
         XCTAssertTrue(app.navigationBars["校验报告"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "403")).firstMatch.exists)
-        app.buttons["关闭"].tap()
+        app.navigationBars["校验报告"].buttons["关闭"].tap()
         app.terminate()
         app.launchArguments = ["--source-ui-fixture"]
         app.launch()
@@ -87,7 +87,7 @@ final class SourceFlowUITests: XCTestCase {
         let back = app.buttons["返回"]
         XCTAssertTrue(back.waitForExistence(timeout: 10)); back.tap()
         XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 10))
-        app.buttons["关闭"].tap()
+        app.navigationBars["书籍详情"].buttons["关闭"].tap()
         XCTAssertTrue(app.navigationBars["分类"].waitForExistence(timeout: 10))
     }
 
@@ -100,7 +100,12 @@ final class SourceFlowUITests: XCTestCase {
         XCTAssertLessThan(viewport.frame.minY - screen.minY, 70, file: file, line: line)
         XCTAssertGreaterThan(viewport.frame.height, screen.height - 120, file: file, line: line)
         XCTAssertFalse(app.buttons["加入书架"].exists, file: file, line: line)
-        XCTAssertFalse(app.navigationBars["书籍详情"].exists, file: file, line: line)
+        // UIKit may retain the covered detail in the accessibility tree.
+        // Require it to be inaccessible while the reader fills the screen.
+        let detailCovered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !app.navigationBars["书籍详情"].isHittable
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [detailCovered], timeout: 5), .completed, file: file, line: line)
     }
 
     func testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable() {
@@ -196,7 +201,7 @@ final class SourceFlowUITests: XCTestCase {
         let book = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "批量书籍")).firstMatch
         XCTAssertTrue(book.waitForExistence(timeout: 10)); book.tap()
         XCTAssertTrue(app.staticTexts["目录 · 1 章"].waitForExistence(timeout: 20))
-        app.buttons["关闭"].tap()
+        app.navigationBars["书籍详情"].buttons["关闭"].tap()
 
         app.tabBars.buttons["书架"].tap()
         app.swipeDown()
