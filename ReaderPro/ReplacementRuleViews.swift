@@ -249,6 +249,7 @@ struct ReplaceRuleEditorView: View {
         .fullScreenCover(isPresented: Binding(get: { !fullField.isEmpty }, set: { if !$0 { fullField = "" } })) {
             NavigationStack {
                 TextEditor(text: fullFieldBinding).font(.system(.body, design: .monospaced)).autocorrectionDisabled().textInputAutocapitalization(.never).padding()
+                    .accessibilityIdentifier("replacementRuleFullEditor")
                     .navigationTitle(fullField).navigationBarTitleDisplayMode(.inline)
                     .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { fullField = "" } } }
             }

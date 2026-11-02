@@ -81,7 +81,9 @@ final class SourceFlowUITests: XCTestCase {
         let alternate = app.buttons["changeSource-备用测试书源"]
         XCTAssertTrue(original.waitForExistence(timeout: 30)); XCTAssertTrue(alternate.waitForExistence(timeout: 30))
         let directory = app.buttons["查看备用测试书源目录"]
-        XCTAssertTrue(directory.waitForExistence(timeout: 30)); directory.tap()
+        XCTAssertTrue(directory.waitForExistence(timeout: 30))
+        let sources = XCTAttachment(screenshot: app.screenshot()); sources.name = "换源显示各源目录与最新章节"; sources.lifetime = .keepAlways; add(sources)
+        directory.tap()
         XCTAssertTrue(app.navigationBars["备用测试书源目录"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["sourceDirectoryChapter-0"].exists)
         XCTAssertFalse(app.buttons["sourceDirectoryChapter-1"].exists)
@@ -109,8 +111,15 @@ final class SourceFlowUITests: XCTestCase {
         let replacement = app.textViews["replacementRuleReplacement"]
         if !replacement.isHittable { app.swipeUp() }
         replacement.tap(); replacement.typeText("净化正文")
+        app.buttons["全屏编辑"].tap(); app.buttons["替换内容"].tap()
+        let fullEditor = app.textViews["replacementRuleFullEditor"]
+        XCTAssertTrue(fullEditor.waitForExistence(timeout: 10))
+        XCTAssertEqual(fullEditor.value as? String, "完整正文")
+        let editorShot = XCTAttachment(screenshot: app.screenshot()); editorShot.name = "替换规则全屏编辑"; editorShot.lifetime = .keepAlways; add(editorShot)
+        app.buttons["完成"].tap()
         app.buttons["保存替换规则"].tap()
         XCTAssertTrue(app.navigationBars["替换净化"].waitForExistence(timeout: 10))
+        let managerShot = XCTAttachment(screenshot: app.screenshot()); managerShot.name = "替换规则管理按钮与保存结果"; managerShot.lifetime = .keepAlways; add(managerShot)
         app.buttons["完成"].tap()
         let purified = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS %@", "净化正文"), object: page)
         XCTAssertEqual(XCTWaiter.wait(for: [purified], timeout: 10), .completed)

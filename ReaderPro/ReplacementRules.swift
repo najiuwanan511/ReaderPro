@@ -96,11 +96,18 @@ enum ReplacementRuleDocument {
         else if let dictionary = object as? [String: Any], dictionary["pattern"] != nil { values = [dictionary] }
         else { throw SourceFailure(stage: "替换规则导入", message: "需要开源阅读替换规则 JSON 对象或数组") }
         guard !values.isEmpty else { throw SourceFailure(stage: "替换规则导入", message: "没有找到替换规则") }
-        return try values.enumerated().map { index, value in
-            let rule = try JSONDecoder().decode(ReplaceRule.self, from: JSONSerialization.data(withJSONObject: value))
+        var entries: [(position: Int, rule: ReplaceRule)] = []
+        for (index, value) in values.enumerated() {
+            let encoded = try JSONSerialization.data(withJSONObject: value)
+            let rule = try JSONDecoder().decode(ReplaceRule.self, from: encoded)
             try rule.validate()
-            return (index, rule)
-        }.sorted { $0.1.order == $1.1.order ? $0.0 < $1.0 : $0.1.order < $1.1.order }.map(\.1)
+            entries.append((position: index, rule: rule))
+        }
+        entries.sort { left, right in
+            if left.rule.order == right.rule.order { return left.position < right.position }
+            return left.rule.order < right.rule.order
+        }
+        return entries.map { $0.rule }
     }
 
     static func encode(_ rules: [ReplaceRule]) throws -> Data {
