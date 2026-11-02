@@ -76,7 +76,8 @@ final class DiscoveryPaginationUITests: XCTestCase {
         XCTAssertEqual(first.value as? String, "已折叠")
         XCTAssertFalse(app.staticTexts["频道分类"].exists)
         app.buttons["发现书源分组"].tap()
-        app.buttons["discoveryGroup-小说"].tap()
+        let group = app.buttons["小说"]
+        XCTAssertTrue(group.waitForExistence(timeout: 10)); group.tap()
         XCTAssertTrue(first.waitForExistence(timeout: 10)); XCTAssertFalse(second.exists)
         app.buttons["发现书源分组"].tap()
         app.buttons["全部分组"].tap()
