@@ -364,6 +364,10 @@ struct ReaderView: View {
             .padding(.horizontal, CGFloat(store.pagePaddingH))
             .padding(.vertical, CGFloat(store.pagePaddingV))
         }
+        // Short chapters leave most of the viewport outside the content
+        // stack. Include that space in the menu tap target on iOS 17.
+        .frame(width: size.width, height: size.height)
+        .contentShape(Rectangle())
         .scrollBounceBehavior(.always, axes: .vertical)
         .onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
         .onAppear {
