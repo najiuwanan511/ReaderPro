@@ -69,6 +69,7 @@ jobs:
         if: always()
         run: |
           if [ -d build/ReleaseRegression.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/ReleaseRegression.xcresult --output-path build/screenshots || true
             xcrun xcresulttool export diagnostics --path build/ReleaseRegression.xcresult --output-path build/diagnostics || true
           fi
           sleep 10

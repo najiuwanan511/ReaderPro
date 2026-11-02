@@ -107,6 +107,7 @@ struct SourceExploreCard: View {
     @State private var loading = false
     @State private var categoryError = ""
     @State private var actionError = ""
+    @State private var showSourceActions = false
     @State private var retry = 0
     private var cacheKey: String { source.exploreCacheKey + "|\(retry)|\(ExploreInfo.revision(source.bookSourceUrl))" }
 
@@ -123,10 +124,12 @@ struct SourceExploreCard: View {
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
                 .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
-                .contextMenu {
-                    Button("刷新发现分类", systemImage: "arrow.clockwise") { retry += 1; expanded = true }
-                }
+                .highPriorityGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in showSourceActions = true })
             if expanded { categoryContent }
+        }
+        .confirmationDialog(source.bookSourceName, isPresented: $showSourceActions, titleVisibility: .visible) {
+            Button("刷新发现分类") { retry += 1; expanded = true }
+            Button("取消", role: .cancel) { }
         }
         .task(id: expanded ? cacheKey : "") {
             guard expanded else { loading = false; return }
