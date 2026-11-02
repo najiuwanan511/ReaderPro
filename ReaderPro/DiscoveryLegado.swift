@@ -5,6 +5,7 @@ struct DiscoveryView: View {
     @State private var searchText = ""
     @State private var showSourceSearch = false
     @FocusState private var sourceSearchFocused: Bool
+    @State private var showGroups = false
     @State private var selectedGroup: String?
     @State private var expandedSourceID: String?
     @State private var exploreTarget: ExploreTarget?
@@ -44,22 +45,22 @@ struct DiscoveryView: View {
                         .accessibilityLabel("搜索发现书源")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button { selectedGroup = nil } label: {
-                            Label("全部分组", systemImage: selectedGroup == nil ? "checkmark" : "circle")
-                        }
-                        ForEach(groups, id: \.self) { group in
-                            Button { selectedGroup = group } label: {
-                                Label(group, systemImage: selectedGroup == group ? "checkmark" : "circle")
-                            }.accessibilityIdentifier("discoveryGroup-\(group)")
-                        }
-                    } label: { Image(systemName: "line.3.horizontal.decrease.circle") }
-                        .accessibilityLabel("发现书源分组")
+                    Button { showGroups = true } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .frame(width: 44, height: 44).contentShape(Rectangle())
+                    }.accessibilityLabel("发现书源分组")
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { SourceManagementView(store: store) } label: { Image(systemName: "slider.horizontal.3") }
                         .accessibilityLabel("书源管理")
                 }
+            }
+            .confirmationDialog("发现书源分组", isPresented: $showGroups, titleVisibility: .visible) {
+                Button("全部分组") { selectedGroup = nil }
+                ForEach(groups, id: \.self) { group in
+                    Button(group) { selectedGroup = group }.accessibilityIdentifier("discoveryGroup-\(group)")
+                }
+                Button("取消", role: .cancel) { }
             }
             .onChange(of: groups) { _, current in
                 if let selectedGroup, !current.contains(selectedGroup) { self.selectedGroup = nil }
