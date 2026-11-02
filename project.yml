@@ -1,6 +1,7 @@
 name: ReaderPro
 options:
   bundleIdPrefix: com.selfuse
+  developmentLanguage: zh-Hans
 packages:
   Kanna:
     url: https://github.com/tid-kijyun/Kanna.git
