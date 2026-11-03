@@ -1,6 +1,28 @@
 import XCTest
 
 final class DiscoveryPaginationUITests: XCTestCase {
+    func testDiscoveryCanScrollBothDirectionsAfterExpandingAndCollapsingSource() {
+        continueAfterFailure = false
+        executionTimeAllowance = 300
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--discovery-scroll-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let first = app.buttons["滚动书源0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 15)); first.tap()
+        XCTAssertTrue(app.buttons["分类0"].waitForExistence(timeout: 15))
+        let scroll = app.scrollViews["discoverySourceScroll"]
+        let last = app.buttons["滚动书源39"]
+        for _ in 0..<16 { if last.exists && last.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(last.isHittable, "An expanded source must not trap the outer scroll view")
+        for _ in 0..<16 { if first.exists && first.isHittable { break }; scroll.swipeDown() }
+        XCTAssertTrue(first.isHittable); first.tap()
+        XCTAssertEqual(first.value as? String, "已折叠")
+        for _ in 0..<12 { if last.exists && last.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(last.isHittable, "Closing a source must leave scrolling enabled")
+        for _ in 0..<12 { if first.exists && first.isHittable { break }; scroll.swipeDown() }
+        XCTAssertTrue(first.isHittable)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "发现展开折叠后仍可双向滚动"; shot.lifetime = .keepAlways; add(shot)
+    }
     func testDiscoveryLoadsNextPageAndCanJumpBack() {
         continueAfterFailure = false
         executionTimeAllowance = 300

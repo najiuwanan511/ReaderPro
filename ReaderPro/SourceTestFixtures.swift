@@ -29,6 +29,38 @@ enum SourceTestFixtures {
         source.ruleContent.nextContentUrl = "@css:a.next@href"
         return source
     }
+    // Content and directory rules copied unchanged from source 112 of the
+    // user-provided 1330 pack; fixture pages contain only synthetic videos.
+    static func video() -> LegadoSource {
+        var source = LegadoSource()
+        source.id = "fixture-video"; source.bookSourceType = 4
+        source.bookSourceName = "短剧视频测试源"; source.bookSourceUrl = base
+        source.exploreUrl = "短剧分类::/video/list"
+        source.header = #"{"X-Video":"ReaderPro","Referer":"http://127.0.0.1:8765/video/book"}"#
+        source.ruleExplore.bookList = "a.drama"
+        source.ruleExplore.name = "text"; source.ruleExplore.bookUrl = "href"
+        source.ruleBookInfo.name = "h1@text"
+        source.ruleToc.chapterList = "a.dm-ep"
+        source.ruleToc.chapterName = "text"; source.ruleToc.chapterUrl = "href"
+        source.ruleContent.content = #"""
+        @js:(function(){
+          var html=String(result||'');
+          var ep='';var em=String(baseUrl||'').match(/[?&]ep=(\d+)/);
+          if(em)ep=em[1];
+          var src='';
+          if(ep){
+            var re=new RegExp('data-ep="'+ep+'"[^>]*data-ep-src="([^"]+)"');
+            var m=html.match(re);
+            if(m)src=m[1];
+          }
+          if(!src){var m3=html.match(/data-ep-src="([^"]+)"/);if(m3)src=m3[1];}
+          if(!src){var m4=html.match(/data-video-src="([^"]+)"/);if(m4)src=m4[1];}
+          if(src&&src.indexOf('http')<0)src='https://huangdoudj.com'+src;
+          return src;
+        })()
+        """#
+        return source
+    }
     static func json() -> LegadoSource {
         var source = LegadoSource()
         source.bookSourceName = "JSON测试源"
@@ -179,6 +211,19 @@ struct SourceFixtureRoot: View {
                 alternate.bookSourceName = "仅发现书源"; alternate.enabled = false; alternate.enabledExplore = true
                 alternate.bookSourceGroup = "漫画,测试"; alternate.customOrder = 2
                 store.sources.append(alternate)
+            }
+            if ProcessInfo.processInfo.arguments.contains("--video-ui-fixture") {
+                store.sources = [SourceTestFixtures.video()]
+                if ProcessInfo.processInfo.arguments.contains("--video-error-fixture") { store.sources[0].ruleContent.content = "@js:''" }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--discovery-scroll-fixture") {
+                store.sources = (0..<40).map { index in
+                    var item = SourceTestFixtures.html()
+                    item.id = "scroll-\(index)"; item.bookSourceUrl += "/scroll-\(index)"
+                    item.bookSourceName = "滚动书源\(index)"; item.customOrder = index
+                    item.exploreUrl = (0..<80).map { "分类\($0)::/video/list" }.joined(separator: "\n")
+                    return item
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("--rss-ui-fixture") {
                 if ProcessInfo.processInfo.arguments.contains("--rss-style-ui-fixture") {

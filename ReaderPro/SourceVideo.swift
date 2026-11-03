@@ -1,0 +1,97 @@
+import Foundation
+
+// A chapter rule may hand its player page to java.startBrowser instead of
+// returning a URL. Keep that handoff inside this episode's playback task.
+final class SourceMediaCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var address: String?
+    func set(_ value: String) { lock.lock(); address = value; lock.unlock() }
+    var value: String? { lock.lock(); defer { lock.unlock() }; return address }
+}
+
+extension LegadoJSCtx {
+    @TaskLocal static var mediaCapture: SourceMediaCapture?
+}
+
+enum SourceVideoResource {
+    case native(URLRequest)
+    case web(URLRequest)
+    case html(String, URL)
+
+    static func isMediaURL(_ raw: String) -> Bool {
+        let path = URLComponents(string: SourceHTTP.options(raw).url)?.path.lowercased() ?? ""
+        return ["m3u8", "mp4", "m4v", "mov", "mpd", "webm"].contains((path as NSString).pathExtension)
+    }
+
+    static func make(_ raw: String, base: String, headers: [String: String], forceWeb: Bool = false) throws -> Self {
+        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { throw SourceFailure(stage: "视频解析", message: "章节规则未返回播放地址，请检查登录状态或播放线路", url: base) }
+        if text.hasPrefix("<") {
+            // Do not run text cleanup on media HTML or signed URLs.
+            let addresses = cssExtractAll(text, "video@src") + cssExtractAll(text, "video source@src")
+            if let address = addresses.first(where: { !$0.isEmpty }) {
+                return try make(address, base: base, headers: headers)
+            }
+            guard let url = URL(string: SourceHTTP.options(base).url) else { throw URLError(.badURL) }
+            return .html(text, url)
+        }
+        let address = resolveUrl(text.replacingOccurrences(of: "&amp;", with: "&"), base: base)
+        guard isSourceURL(address) else { throw SourceFailure(stage: "视频解析", message: "章节规则未返回有效视频地址", url: base) }
+        var request = try SourceHTTP.request(address, base: base, headers: headers)
+        if request.value(forHTTPHeaderField: "Referer") == nil { request.setValue(SourceHTTP.options(base).url, forHTTPHeaderField: "Referer") }
+        if request.value(forHTTPHeaderField: "Cookie") == nil, let url = request.url {
+            let cookies = HTTPCookieStorage.shared.cookies(for: url) ?? []
+            for (key, value) in HTTPCookie.requestHeaderFields(with: cookies) { request.setValue(value, forHTTPHeaderField: key) }
+        }
+        let path = request.url?.path.lowercased() ?? ""
+        if forceWeb || (!isMediaURL(address) && (["html", "htm", "php"].contains((path as NSString).pathExtension) || path.contains("/player") || path.contains("/embed"))) {
+            return .web(request)
+        }
+        if path.hasSuffix(".mpd") {
+            throw SourceFailure(stage: "视频格式", message: "此线路返回 DASH/MPD，系统播放器不支持，请选择 m3u8 或 MP4 线路", url: request.url?.absoluteString ?? "")
+        }
+        return .native(request)
+    }
+}
+
+extension LegadoSource {
+    func fetchChapterVideo(_ chapter: BookChapter) async throws -> SourceVideoResource {
+        try await withChapterRules(chapter) {
+            let capture = SourceMediaCapture()
+            return try await LegadoJSCtx.$mediaCapture.withValue(capture) {
+                let initial = chapter.url ?? videoURLFromChapter(chapter.text)
+                let headers = try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders).allHTTPHeaderFields ?? requestHeaders
+                if !chapter.text.hasPrefix("__URL__"), !chapter.text.isEmpty {
+                    return try SourceVideoResource.make(chapter.text, base: initial, headers: headers)
+                }
+                guard !ruleContent.content.isEmpty else {
+                    return try SourceVideoResource.make(initial, base: initial, headers: headers, forceWeb: !SourceVideoResource.isMediaURL(initial))
+                }
+                let response: SourcePage
+                if SourceVideoResource.isMediaURL(initial) {
+                    // Never download an entire stream just to evaluate a rule
+                    // such as the pack's `result = baseUrl`.
+                    response = SourcePage(text: "", url: SourceHTTP.options(initial).url)
+                } else {
+                    do { response = try await loadPage(initial, stage: "视频章节") }
+                    catch let failure as SourceFailure {
+                        guard failure.message.hasPrefix("HTTP "), SourceScript.loadsOwnContent(ruleContent.content) else { throw failure }
+                        response = SourcePage(text: "", url: SourceHTTP.options(initial).url)
+                    }
+                }
+                var input = response.text
+                if let webJS = ruleContent.androidValue("webJs"), !webJS.isEmpty {
+                    let request = try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders)
+                    input = try await SourceWebLoader.load(request, html: input, script: webJS).text
+                }
+                var result = applyContentRule(input, ruleContent.content, base: response.url).joined(separator: "\n")
+                try LegadoJSCtx.failures?.check()
+                if let target = capture.value, !target.isEmpty {
+                    return try SourceVideoResource.make(target, base: response.url, headers: headers, forceWeb: !SourceVideoResource.isMediaURL(target))
+                }
+                if !ruleContent.replaceRegex.isEmpty { result = applyRuleReplace(result, replaceRegex: ruleContent.replaceRegex) }
+                return try SourceVideoResource.make(result, base: response.url, headers: headers)
+            }
+        }
+    }
+}

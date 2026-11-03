@@ -153,9 +153,41 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parsed.path
+        if path.startswith('/video/episode') and path.endswith('.mp4'):
+            # AVFoundation must send the headers returned by the source rules.
+            if self.headers.get('X-Video') != 'ReaderPro' or self.headers.get('Referer') != 'http://127.0.0.1:8765/video/book':
+                self.send_error(403, 'missing media source headers')
+                return
+            data = Path('scripts/fixtures/episode-test.mp4').read_bytes()
+            start, end, status = 0, len(data) - 1, 200
+            requested = self.headers.get('Range', '')
+            if requested.startswith('bytes='):
+                first, last = requested[6:].split('-', 1)
+                start = int(first or '0'); end = min(int(last) if last else end, end); status = 206
+            chunk = data[start:end + 1]
+            self.send_response(status)
+            self.send_header('Content-Type', 'video/mp4')
+            self.send_header('Accept-Ranges', 'bytes')
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{end}/{len(data)}')
+            self.send_header('Content-Length', str(len(chunk)))
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
         status, mime = 200, 'text/html; charset=utf-8'
         if path == '/health':
             body = 'ready'
+        elif path == '/video/list':
+            body = '<a class="drama" href="/video/book">测试短剧</a>'
+        elif path == '/video/book':
+            body = '<h1>测试短剧</h1>' + ''.join(
+                f'<a class="dm-ep" href="/video/play?ep={i}" title="{i}" data-ep-free="1">第{i}集</a>' for i in range(1, 4))
+        elif path == '/video/play':
+            body = ''.join(f'<div data-ep="{i}" data-ep-src="http://127.0.0.1:8765/video/episode{i}.mp4?token=a%2Bb&part={i}"></div>' for i in range(1, 4))
+        elif path == '/video/empty':
+            body = '<p>没有播放地址</p>'
+        elif path == '/video/embed':
+            body = '<video controls playsinline src="/video/episode1.mp4"></video>'
         elif path.startswith('/bridge-stress/'):
             parts = path.split('/')
             if len(parts) == 4 and parts[3] == 'search':

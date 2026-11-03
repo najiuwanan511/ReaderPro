@@ -160,7 +160,9 @@ struct SourceBookDetailView: View {
         // inherits its top gap and the detail screen's bottom action inset.
         .fullScreenCover(item: $readingBook) { book in
             NavigationStack {
-                if book.isComicKind {
+                if book.isVideo {
+                    VideoPlayerView(book: book, source: source, store: store)
+                } else if book.isComicKind {
                     MangaView(store: store, bookId: book.id)
                         .toolbar { ToolbarItem(placement: .topBarLeading) { Button("返回目录") { readingBook = nil } } }
                 }
@@ -217,7 +219,8 @@ struct SourceBookDetailView: View {
     private func makeBook() -> LocalBook {
         var book = existingBook ?? LocalBook(title: selected.title, author: selected.author, coverUrl: displayBook.cover,
             sourceName: selected.sourceName, sourceUrl: selected.sourceUrl,
-            fileName: selected.title + ".web", kind: source?.isComic == true ? "comic" : "web")
+            fileName: selected.title + ".web", kind: source?.localBookKind ?? "web")
+        if let source { book.kind = source.localBookKind }
         // Refresh the directory without discarding already downloaded content.
         let oldChapters = book.chapters
         book.chapters = chapters.map { chapter in

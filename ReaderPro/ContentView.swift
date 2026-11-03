@@ -209,7 +209,9 @@ struct BookshelfView: View {
             .navigationDestination(item: $selectedBook) { book in ReaderView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedManga) { book in MangaView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedAudio) { book in AudioPlayerView(book: book) }
-            .navigationDestination(item: $selectedVideo) { book in VideoPlayerView(book: book) }
+            .navigationDestination(item: $selectedVideo) { book in
+                VideoPlayerView(book: book, source: store.sources.first { $0.bookSourceUrl == book.sourceUrl }, store: store)
+            }
         }
     }
 
@@ -234,7 +236,7 @@ struct BookshelfView: View {
 
     func openBook(_ book: LocalBook) {
         if book.isAudio { selectedAudio = book }
-        else if book.isVideo { selectedVideo = book }
+        else if book.isVideo || store.sources.first(where: { $0.bookSourceUrl == book.sourceUrl })?.isVideo == true { selectedVideo = book }
         else if book.isComicKind { selectedManga = book }
         else { selectedBook = book }
     }

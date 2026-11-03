@@ -31,7 +31,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var ruleContent: RuleSet = RuleSet()
     var ruleDiscover: RuleSet = RuleSet()
     var ruleExplore: RuleSet = RuleSet()
-    var bookSourceType: Int = 0 // 0 文本, 1 音频, 2 图片/漫画
+    var bookSourceType: Int = 0 // Legado: 0 文本, 1 音频, 2 漫画, 3 文件, 4 视频
     struct RuleSet: Codable, Equatable {
         // Preserve Android fields and their null/empty distinctions even when
         // the iOS rule engine does not yet interpret a particular field.
@@ -196,6 +196,8 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var effectiveDiscoverRule: RuleSet { ruleDiscover.bookList.isEmpty ? ruleExplore : ruleDiscover }
     // 漫画书源：bookSourceType == 2，或正文规则里带图片提取规则 imageUrl
     var isComic: Bool { bookSourceType == 2 || !ruleContent.imageUrl.isEmpty }
+    var isVideo: Bool { bookSourceType == 4 }
+    var localBookKind: String { isVideo ? "video" : (isComic ? "comic" : "web") }
 }
 
 extension KeyedDecodingContainer {

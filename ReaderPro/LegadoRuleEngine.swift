@@ -1597,7 +1597,7 @@ extension LegadoSource {
         }
     }
 
-    private func withChapterRules<T>(_ chapter: BookChapter, operation: () async throws -> T) async throws -> T {
+    func withChapterRules<T>(_ chapter: BookChapter, operation: () async throws -> T) async throws -> T {
         try await withRules {
             try await LegadoJSCtx.$book.withValue(chapter.ruleBook) {
                 try await LegadoJSCtx.$chapter.withValue(chapter) {

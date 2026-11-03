@@ -1,319 +1,266 @@
 import SwiftUI
 import AVFoundation
 import AVKit
+import WebKit
 
-// MARK: - 视频播放模型
+func videoURLFromChapter(_ text: String) -> String {
+    text.hasPrefix("__URL__") ? String(text.dropFirst(7)) : text
+}
 
 final class VideoPlayerModel: ObservableObject {
-    @Published var isPlaying = false
+    let player = AVPlayer()
+    @Published var status = "等待播放"
+    @Published var error = ""
     @Published var currentTime: TimeInterval = 0
-    @Published var duration: TimeInterval = 0
-    @Published var isBuffering = false
-    var player = AVPlayer()
+    private var itemObservation: NSKeyValueObservation?
+    private var stateObservation: NSKeyValueObservation?
     private var timeObserver: Any?
+    private var endObserver: NSObjectProtocol?
+    var onEnded: (() -> Void)?
 
     init() {
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
+            self?.currentTime = time.seconds.isFinite ? time.seconds : 0
+        }
+        stateObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+            DispatchQueue.main.async {
+                guard let self, self.error.isEmpty else { return }
+                switch player.timeControlStatus {
+                case .playing: self.status = "正在播放"
+                case .waitingToPlayAtSpecifiedRate: self.status = "正在缓冲…"
+                default: self.status = "已暂停"
+                }
+            }
+        }
+    }
+
+    deinit {
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+    }
+
+    func stop() {
+        itemObservation = nil
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }; endObserver = nil
+        player.pause(); player.replaceCurrentItem(with: nil)
+        currentTime = 0; error = ""; status = "正在解析播放地址…"
+    }
+
+    func play(_ request: URLRequest) {
+        guard let url = request.url else { error = "播放地址无效"; return }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] t in
-            guard let self else { return }
-            self.currentTime = t.seconds.isFinite ? t.seconds : 0
-            if let d = self.player.currentItem?.duration, d.seconds.isFinite { self.duration = d.seconds }
+        var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]
+        options[AVURLAssetHTTPCookiesKey] = HTTPCookieStorage.shared.cookies(for: url) ?? []
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
+        error = ""; status = "正在缓冲…"
+        itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
+            DispatchQueue.main.async {
+                guard let self, self.player.currentItem === item else { return }
+                if item.status == .failed {
+                    self.error = "视频播放失败：" + (item.error.map(sourceErrorMessage) ?? "地址不可用或格式不受系统支持")
+                    self.status = "播放失败"
+                }
+            }
         }
-    }
-
-    func play(url: URL) {
-        let item = AVPlayerItem(url: url)
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in self?.onEnded?() }
         player.replaceCurrentItem(with: item)
         player.play()
-        isPlaying = true
-    }
-
-    func toggle() {
-        if player.rate > 0 { player.pause(); isPlaying = false } else { player.play(); isPlaying = true }
-    }
-
-    func seek(to t: TimeInterval) {
-        player.seek(to: CMTime(seconds: t, preferredTimescale: 600))
-        currentTime = t
     }
 }
 
-// MARK: - AVPlayerLayer 桥接
-
-final class PlayerContainerView: UIView {
-    override static var layerClass: AnyClass { AVPlayerLayer.self }
-    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
-}
-
-struct PlayerLayerView: UIViewRepresentable {
+struct NativeVideoPlayer: UIViewControllerRepresentable {
     let player: AVPlayer
-    func makeUIView(context: Context) -> PlayerContainerView {
-        let v = PlayerContainerView()
-        v.playerLayer.player = player
-        v.playerLayer.videoGravity = .resizeAspect
-        v.backgroundColor = .black
-        return v
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = true
+        controller.allowsPictureInPicturePlayback = true
+        return controller
     }
-    func updateUIView(_ uiView: PlayerContainerView, context: Context) {
-        uiView.playerLayer.player = player
-    }
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) { controller.player = nil }
 }
 
-// MARK: - 弹幕
+// Web-based players and rule-generated HTML stay in the app, including iframe
+// players. Each episode owns a new web view so old playback cannot continue.
+struct EpisodeWebPlayer: UIViewRepresentable {
+    let resource: SourceVideoResource
+    let sourceRegex: String
+    let onStatus: (String) -> Void
+    let onMedia: (URLRequest) -> Void
 
-struct DanmakuItem: Identifiable, Equatable {
-    let id = UUID()
-    let text: String
-    let lane: Int
-    let color: Color
-}
-
-final class DanmakuModel: ObservableObject {
-    @Published var items: [DanmakuItem] = []
-    @Published var enabled = true
-    private static let colors: [Color] = [.white, Color(red: 1, green: 0.85, blue: 0.4), Color(red: 0.5, green: 0.85, blue: 1), Color(red: 1, green: 0.6, blue: 0.75), Color(red: 0.6, green: 1, blue: 0.7)]
-
-    func send(_ text: String) {
-        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { return }
-        let item = DanmakuItem(text: t, lane: Int.random(in: 0..<8), color: Self.colors.randomElement() ?? .white)
-        items.append(item)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 9) { [weak self] in
-            self?.items.removeAll { $0.id == item.id }
+    func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+    func makeUIView(context: Context) -> WKWebView {
+        let config = WKWebViewConfiguration()
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = []
+        config.userContentController.add(context.coordinator, name: "readerVideo")
+        config.userContentController.addUserScript(WKUserScript(source: #"""
+        function reportReaderVideo() {
+            var v=document.querySelector('video');
+            if(v){v.controls=true;v.setAttribute('playsinline','');
+                window.webkit.messageHandlers.readerVideo.postMessage({state:v.error?'网页视频播放失败':(!v.paused?'正在播放':'网页播放器已就绪'),url:v.currentSrc||v.src||''});}
+            var entries=performance.getEntriesByType('resource');
+            for(var i=entries.length-1;i>=0;i--){if(/\.(m3u8|mp4)(\?|$)/i.test(entries[i].name)){
+                window.webkit.messageHandlers.readerVideo.postMessage({url:entries[i].name});break;}}
+        }
+        setInterval(reportReaderVideo,1000);
+        """#, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
+        let web = WKWebView(frame: .zero, configuration: config)
+        web.navigationDelegate = context.coordinator
+        web.uiDelegate = context.coordinator
+        web.isOpaque = false; web.backgroundColor = .black
+        switch resource {
+        case .native(let request), .web(let request):
+            web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
+            Task { @MainActor in
+                for cookie in HTTPCookieStorage.shared.cookies ?? [] { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
+                guard !context.coordinator.cancelled else { return }
+                web.load(request)
+            }
+        case .html(let html, let base): web.loadHTMLString(html, baseURL: base)
+        }
+        return web
+    }
+    func updateUIView(_ view: WKWebView, context: Context) { }
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.cancelled = true
+        view.evaluateJavaScript("document.querySelectorAll('video,audio').forEach(v=>v.pause())", completionHandler: nil)
+        view.stopLoading(); view.navigationDelegate = nil; view.uiDelegate = nil
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "readerVideo")
+        view.loadHTMLString("", baseURL: nil)
+    }
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
+        let parent: EpisodeWebPlayer
+        var cancelled = false
+        private var handedOff = false
+        init(parent: EpisodeWebPlayer) { self.parent = parent }
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { parent.onStatus("网页播放器已加载") }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            guard !cancelled, (error as NSError).code != NSURLErrorCancelled else { return }
+            parent.onStatus("网页播放器加载失败：" + sourceErrorMessage(error))
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.onStatus("网页播放器已退出，请重试") }
+        func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }; return nil
+        }
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !cancelled, let value = message.body as? [String: String] else { return }
+            if let status = value["state"] { parent.onStatus(status) }
+            guard !handedOff, let raw = value["url"], SourceVideoResource.isMediaURL(raw), isSourceURL(raw) else { return }
+            if !parent.sourceRegex.isEmpty, raw.range(of: parent.sourceRegex, options: .regularExpression) == nil { return }
+            // Page cookies and the originating Referer are required on many
+            // media CDNs. Forward them when handing off to the native player.
+            var request = URLRequest(url: URL(string: raw)!)
+            switch parent.resource {
+            case .native(let original), .web(let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
+            case .html(_, let base): request.setValue(base.absoluteString, forHTTPHeaderField: "Referer")
+            }
+            let cookies = HTTPCookieStorage.shared.cookies(for: request.url!) ?? []
+            for (key, val) in HTTPCookie.requestHeaderFields(with: cookies) { request.setValue(val, forHTTPHeaderField: key) }
+            handedOff = true; parent.onMedia(request)
         }
     }
-
-    func seedDemo() {
-        let demo = ["终于等到了", "前方高能", "这画质可以", "好片推荐", "弹幕护体", "来了来了"]
-        for (i, t) in demo.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 2.2) { [weak self] in
-                let item = DanmakuItem(text: t, lane: Int.random(in: 0..<8), color: Self.colors.randomElement() ?? .white)
-                self?.items.append(item)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 9) { self?.items.removeAll { $0.id == item.id } }
-            }
-        }
-    }
 }
-
-struct DanmakuOverlayView: View {
-    @ObservedObject var model: DanmakuModel
-    var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                ForEach(model.items) { item in
-                    DanmakuText(item: item, laneHeight: 34, width: geo.size.width)
-                }
-            }
-            .clipped()
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-struct DanmakuText: View {
-    let item: DanmakuItem
-    let laneHeight: CGFloat
-    let width: CGFloat
-    @State private var x: CGFloat = 0
-    var body: some View {
-        Text(item.text)
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(item.color)
-            .shadow(color: .black.opacity(0.8), radius: 1, x: 0, y: 1)
-            .fixedSize()
-            .position(x: x, y: laneHeight / 2 + CGFloat(item.lane) * laneHeight)
-            .onAppear {
-                x = width + 120
-                withAnimation(.linear(duration: 8)) {
-                    x = -200
-                }
-            }
-    }
-}
-
-// MARK: - 视频选集条目
-
-struct VideoEpisode: Identifiable, Equatable {
-    let id = UUID()
-    let title: String
-    let url: String
-}
-
-/// 解析 __URL__ 前缀（与网络书的正文缓存约定一致）
-func videoURLFromChapter(_ text: String) -> String {
-    if text.hasPrefix("__URL__") { return String(text.dropFirst(7)) }
-    return text
-}
-
-// MARK: - 视频播放器（弹幕 + 选集 + 换源，对标阅读Sigma「带弹幕的视频播放」）
 
 struct VideoPlayerView: View {
-    let title: String
-    let episodes: [VideoEpisode]
-    let sources: [String]
-
-    @StateObject private var playerModel = VideoPlayerModel()
-    @StateObject private var danmaku = DanmakuModel()
+    let book: LocalBook
+    let source: LegadoSource?
+    let store: BookStore?
+    @StateObject private var model = VideoPlayerModel()
     @Environment(\.dismiss) private var dismiss
-    @State private var episodeIndex = 0
-    @State private var sourceIndex = 0
-    @State private var danmakuText = ""
-    @State private var controlsVisible = true
-    @State private var showEpisodes = false
-    @State private var showSources = false
+    @State private var episodeIndex: Int
+    @State private var resource: SourceVideoResource?
+    @State private var retry = 0
+    @State private var loading = true
+    @State private var resolveError = ""
+    @State private var webStatus = "正在加载网页播放器…"
 
-    init(book: LocalBook) {
-        title = book.title
-        episodes = book.chapters.map { VideoEpisode(title: $0.title, url: videoURLFromChapter($0.text)) }
-        var src = book.videoUrls
-        if src.isEmpty, let first = episodes.first { src = [first.url] }
-        sources = src
+    init(book: LocalBook, source: LegadoSource? = nil, store: BookStore? = nil) {
+        self.book = book; self.source = source; self.store = store
+        _episodeIndex = State(initialValue: min(max(0, book.chapterIndex), max(0, book.chapters.count - 1)))
     }
-
-    /// 当前播放地址
-    private var currentURL: String {
-        if !sources.isEmpty && sourceIndex < sources.count { return sources[sourceIndex] }
-        if episodeIndex < episodes.count { return episodes[episodeIndex].url }
-        return ""
+    private var chapters: [BookChapter] {
+        book.chapters.isEmpty ? book.videoUrls.enumerated().map { BookChapter(title: "第 \($0.offset + 1) 集", text: "__URL__" + $0.element) } : book.chapters
     }
-
+    private var status: String {
+        if loading { return "正在解析播放地址…" }
+        if !resolveError.isEmpty { return resolveError }
+        if !model.error.isEmpty { return model.error }
+        switch resource { case .web, .html: return webStatus; default: return model.status }
+    }
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            VStack(spacing: 0) {
-                ZStack {
-                    PlayerLayerView(player: playerModel.player)
-                    DanmakuOverlayView(model: danmaku)
-                        .opacity(danmaku.enabled ? 1 : 0)
-                    if controlsVisible {
-                        controlOverlay
+        VStack(spacing: 0) {
+            ZStack {
+                Color.black
+                if let resource {
+                    switch resource {
+                    case .native: NativeVideoPlayer(player: model.player)
+                    case .web, .html:
+                        EpisodeWebPlayer(resource: resource, sourceRegex: source?.ruleContent.androidValue("sourceRegex") ?? "", onStatus: { webStatus = $0 }, onMedia: { request in
+                            self.resource = .native(request); model.play(request)
+                        }).id("\(episodeIndex)-\(retry)")
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(height: 240)
-                .contentShape(Rectangle())
-                .onTapGesture { withAnimation { controlsVisible.toggle() } }
-            }
-            .ignoresSafeArea(edges: .top)
-        }
-        .onAppear { playCurrent() }
-        .onDisappear { playerModel.player.pause() }
-        .sheet(isPresented: $showEpisodes) { episodeSheet }
-        .sheet(isPresented: $showSources) { sourceSheet }
-    }
-
-    var controlOverlay: some View {
-        VStack {
-            HStack {
-                Button { dismiss() } label: { Image(systemName: "chevron.down").font(.title3).foregroundStyle(.white).padding(8).background(Circle().fill(Color.black.opacity(0.4))) }
-                Spacer()
-                Text(title).font(.headline).foregroundStyle(.white).lineLimit(1)
-                Spacer()
-                Button { danmaku.enabled.toggle() } label: {
-                    Image(systemName: danmaku.enabled ? "captions.bubble.fill" : "captions.bubble").font(.title3).foregroundStyle(.white).padding(8).background(Circle().fill(Color.black.opacity(0.4)))
-                }
-            }
-            Spacer()
-            Button { playerModel.toggle() } label: {
-                Image(systemName: playerModel.isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                    .font(.system(size: 56)).foregroundStyle(.white.opacity(0.9))
-            }
-            Spacer()
-            // 弹幕输入
-            HStack(spacing: 8) {
-                TextField("发个弹幕…", text: $danmakuText)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 12).padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black.opacity(0.5)))
-                    .foregroundStyle(.white)
-                    .onSubmit { sendDanmaku() }
-                Button("发送") { sendDanmaku() }
-                    .font(.subheadline).foregroundStyle(.white)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(AppTheme.unreadBadge))
-                Button { danmaku.seedDemo() } label: { Image(systemName: "wand.and.stars").foregroundStyle(.white) }
-            }
-            .padding(.horizontal)
-            // 进度条 + 时间
-            VStack(spacing: 4) {
-                Slider(value: Binding(get: { playerModel.currentTime }, set: { playerModel.seek(to: $0) }), in: 0...(playerModel.duration > 0 ? playerModel.duration : 1))
-                    .tint(.white)
+                if loading { ProgressView().tint(.white) }
+            }.aspectRatio(16 / 9, contentMode: .fit).accessibilityIdentifier("chapterVideoPlayer")
+            VStack(alignment: .leading, spacing: 8) {
+                Text(chapters.indices.contains(episodeIndex) ? chapters[episodeIndex].title : book.title).font(.headline)
+                    .accessibilityIdentifier("videoEpisodeTitle")
+                Text(status).font(.caption).foregroundStyle(resolveError.isEmpty && model.error.isEmpty ? Color.secondary : .red)
+                    .accessibilityIdentifier("videoPlaybackStatus")
                 HStack {
-                    Text(fmt(playerModel.currentTime)).font(.caption2).foregroundStyle(.white).monospacedDigit()
+                    Text("已播放 \(Int(model.currentTime)) 秒").font(.caption).monospacedDigit().accessibilityIdentifier("videoPlaybackTime")
                     Spacer()
-                    Button { showSources = true } label: { Label(sources.isEmpty ? "默认" : "源 \(sourceIndex + 1)/\(sources.count)", systemImage: "arrow.triangle.2.circlepath").font(.caption2).foregroundStyle(.white) }
-                    Spacer()
-                    Button { showEpisodes = true } label: { Label("选集 \(episodeIndex + 1)/\(max(episodes.count,1))", systemImage: "list.number").font(.caption2).foregroundStyle(.white) }
-                    Spacer()
-                    Text(fmt(playerModel.duration)).font(.caption2).foregroundStyle(.white).monospacedDigit()
+                    Button("重新加载") { retry += 1 }.accessibilityIdentifier("videoRetry")
+                    Button("下一集") { if episodeIndex + 1 < chapters.count { episodeIndex += 1 } }
+                        .disabled(episodeIndex + 1 >= chapters.count).accessibilityIdentifier("videoNextEpisode")
                 }
-            }
-            .padding(.horizontal).padding(.bottom, 10)
-        }
-    }
-
-    var episodeSheet: some View {
-        NavigationStack {
+            }.padding(16)
             List {
-                ForEach(Array(episodes.enumerated()), id: \.offset) { i, ep in
-                    Button {
-                        episodeIndex = i
-                        showEpisodes = false
-                        playCurrent()
-                    } label: {
-                        HStack {
-                            Text(ep.title).foregroundStyle(i == episodeIndex ? AppTheme.unreadBadge : .primary)
-                            Spacer()
-                            if i == episodeIndex { Image(systemName: "checkmark").foregroundStyle(AppTheme.unreadBadge) }
-                        }
+                Section("选集 · \(chapters.count) 集") {
+                    ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                        Button { episodeIndex = index } label: {
+                            HStack {
+                                Text(chapter.title).foregroundStyle(index == episodeIndex ? AppTheme.accent : .primary)
+                                Spacer()
+                                if index == episodeIndex { Image(systemName: "play.fill").foregroundStyle(AppTheme.accent) }
+                            }
+                        }.accessibilityIdentifier("video-episode-\(index)")
                     }
                 }
-            }
-            .navigationTitle("选集")
-            .toolbar { Button("关闭") { showEpisodes = false } }
+            }.listStyle(.plain)
         }
-        .presentationDetents([.medium, .large])
+        .background(AppTheme.surface)
+        .navigationTitle(book.title).navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("返回目录") { dismiss() } } }
+        .task(id: "\(episodeIndex)-\(retry)") { await loadEpisode() }
+        .onDisappear { model.stop() }
     }
-
-    var sourceSheet: some View {
-        NavigationStack {
-            List {
-                ForEach(Array(sources.enumerated()), id: \.offset) { i, s in
-                    Button {
-                        sourceIndex = i
-                        showSources = false
-                        playCurrent()
-                    } label: {
-                        HStack {
-                            Text("播放源 \(i + 1)").foregroundStyle(i == sourceIndex ? AppTheme.unreadBadge : .primary)
-                            Spacer()
-                            Text(s).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                            if i == sourceIndex { Image(systemName: "checkmark").foregroundStyle(AppTheme.unreadBadge) }
-                        }
-                    }
-                }
-                Text("换源即切换当前集的播放地址。视频地址来自书源/浏览器识别的 <video> 或你手动导入的 m3u8/mp4 直链。").font(.footnote).foregroundStyle(.secondary)
-            }
-            .navigationTitle("播放源")
-            .toolbar { Button("关闭") { showSources = false } }
+    private func loadEpisode() async {
+        model.stop(); resource = nil; loading = true; resolveError = ""
+        guard chapters.indices.contains(episodeIndex) else { loading = false; resolveError = "没有可播放的章节"; return }
+        let index = episodeIndex
+        var chapter = chapters[index]
+        chapter.ruleIndex = index
+        if chapter.ruleBook == nil { chapter.ruleBook = .init(bookUrl: chapter.url ?? "", name: book.title, author: book.author) }
+        model.onEnded = { if episodeIndex + 1 < chapters.count { episodeIndex += 1 } }
+        if let store {
+            var saved = store.books.first(where: { $0.id == book.id }) ?? book
+            saved.kind = "video"; saved.chapterIndex = index; saved.lastRead = Date()
+            store.updateBook(saved)
         }
-        .presentationDetents([.medium])
-    }
-
-    func playCurrent() {
-        guard !currentURL.isEmpty, let u = URL(string: currentURL) else { return }
-        playerModel.play(url: u)
-    }
-
-    func sendDanmaku() {
-        danmaku.send(danmakuText)
-        danmakuText = ""
-    }
-
-    func fmt(_ t: TimeInterval) -> String {
-        guard t.isFinite, t >= 0 else { return "00:00" }
-        let m = Int(t) / 60, s = Int(t) % 60
-        return String(format: "%02d:%02d", m, s)
+        do {
+            let resolved: SourceVideoResource
+            if let source { resolved = try await withTimeout(60) { try await source.fetchChapterVideo(chapter) } }
+            else { resolved = try SourceVideoResource.make(videoURLFromChapter(chapter.text), base: chapter.url ?? videoURLFromChapter(chapter.text), headers: [:]) }
+            guard !Task.isCancelled, episodeIndex == index else { return }
+            resource = resolved; loading = false
+            if case .native(let request) = resolved { model.play(request) }
+        } catch {
+            guard !Task.isCancelled, episodeIndex == index else { return }
+            loading = false; resolveError = sourceErrorMessage(error)
+        }
     }
 }

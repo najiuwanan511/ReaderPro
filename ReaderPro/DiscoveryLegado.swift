@@ -15,7 +15,6 @@ struct DiscoveryView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         if sources.isEmpty { emptyState }
@@ -29,10 +28,7 @@ struct DiscoveryView: View {
                         }
                     }.padding(.bottom, 12)
                 }
-                .onChange(of: expandedSourceID) { _, id in
-                    if let id { withAnimation { proxy.scrollTo(id, anchor: .top) } }
-                }
-            }
+                .accessibilityIdentifier("discoverySourceScroll")
             .background(AppTheme.surface)
             .navigationTitle(selectedGroup ?? "发现")
             .readerNavigationStyle()
@@ -107,16 +103,13 @@ struct SourceExploreCard: View {
     @State private var loading = false
     @State private var categoryError = ""
     @State private var actionError = ""
-    @State private var showSourceActions = false
-    @State private var sourceLongPressed = false
     @State private var retry = 0
     private var cacheKey: String { source.exploreCacheKey + "|\(retry)|\(ExploreInfo.revision(source.bookSourceUrl))" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button {
-                guard !sourceLongPressed else { return }
-                withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+                expanded.toggle()
             } label: {
                 HStack(spacing: 8) {
                     Text(source.bookSourceName).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)
@@ -128,14 +121,10 @@ struct SourceExploreCard: View {
             }.buttonStyle(.plain).padding(.horizontal, 16).padding(.top, 12)
                 .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
-                .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                    sourceLongPressed = true; showSourceActions = true
-                })
+                .contextMenu {
+                    Button("刷新发现分类") { retry += 1; expanded = true }
+                }
             if expanded { categoryContent }
-        }
-        .confirmationDialog(source.bookSourceName, isPresented: $showSourceActions, titleVisibility: .visible) {
-            Button("刷新发现分类") { retry += 1; expanded = true }
-            Button("取消", role: .cancel) { }
         }
         .task(id: expanded ? cacheKey : "") {
             guard expanded else { loading = false; return }
@@ -153,7 +142,6 @@ struct SourceExploreCard: View {
             }
         }
         .onChange(of: expanded) { _, open in if !open { ExploreInfo.savePending(source.bookSourceUrl) } }
-        .onChange(of: showSourceActions) { _, shown in if !shown { sourceLongPressed = false } }
         .onDisappear { ExploreInfo.savePending(source.bookSourceUrl) }
     }
     @ViewBuilder private var categoryContent: some View {
