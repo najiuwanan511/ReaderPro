@@ -1,5 +1,10 @@
 name: iOS 17 WebKit transport probe
 on:
+  push:
+    branches: [fix/legado-parity]
+    paths:
+      - scripts/ios17-webkit-probe/**
+      - .github/workflows/ios17-webkit-probe.yml
   workflow_dispatch:
 jobs:
   transport-probe:
