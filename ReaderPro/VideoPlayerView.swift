@@ -17,10 +17,13 @@ final class VideoPlayerModel: ObservableObject {
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     var onEnded: (() -> Void)?
+    private let controlID = UUID()
 
     init() {
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
-            self?.currentTime = time.seconds.isFinite ? time.seconds : 0
+            guard let self else { return }
+            self.currentTime = time.seconds.isFinite ? time.seconds : 0
+            MediaPlaybackControls.shared.update(owner: self.controlID, time: self.currentTime, duration: self.player.currentItem?.duration.seconds ?? 0, rate: self.player.rate)
         }
         stateObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
             DispatchQueue.main.async {
@@ -35,18 +38,20 @@ final class VideoPlayerModel: ObservableObject {
     }
 
     deinit {
+        MediaPlaybackControls.shared.release(owner: controlID)
         if let timeObserver { player.removeTimeObserver(timeObserver) }
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
     }
 
     func stop() {
+        MediaPlaybackControls.shared.release(owner: controlID)
         itemObservation = nil
         if let endObserver { NotificationCenter.default.removeObserver(endObserver) }; endObserver = nil
         player.pause(); player.replaceCurrentItem(with: nil)
         currentTime = 0; error = ""; status = "正在解析播放地址…"
     }
 
-    func play(_ request: URLRequest) {
+    func play(_ request: URLRequest, title: String = "视频", author: String = "") {
         guard let url = request.url else { error = "播放地址无效"; return }
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
         try? AVAudioSession.sharedInstance().setActive(true)
@@ -68,6 +73,11 @@ final class VideoPlayerModel: ObservableObject {
             self.onEnded?()
         }
         player.replaceCurrentItem(with: item)
+        MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
+            play: { [weak self] in self?.player.play() }, pause: { [weak self] in self?.player.pause() },
+            toggle: { [weak self] in guard let self else { return }; if self.player.rate > 0 { self.player.pause() } else { self.player.play() } },
+            seek: { [weak self] seconds in guard seconds.isFinite, seconds >= 0 else { return }; self?.player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) },
+            skip: { [weak self] seconds in guard let self else { return }; self.player.seek(to: CMTime(seconds: max(0, self.currentTime + seconds), preferredTimescale: 600)) }, next: onEnded)
         player.play()
     }
 }
@@ -204,7 +214,8 @@ struct VideoPlayerView: View {
         _episodeIndex = State(initialValue: book.chapters.readableIndex(from: initial) ?? book.chapters.readableIndex(from: initial, direction: -1) ?? 0)
     }
     private var chapters: [BookChapter] {
-        book.chapters.isEmpty ? book.videoUrls.enumerated().map { BookChapter(title: "第 \($0.offset + 1) 集", text: "__URL__" + $0.element) } : book.chapters
+        let current = store?.books.first(where: { $0.id == book.id }) ?? book
+        return current.chapters.isEmpty ? current.videoUrls.enumerated().map { BookChapter(title: "第 \($0.offset + 1) 集", text: "__URL__" + $0.element) } : current.chapters
     }
     private var status: String {
         if loading { return "正在解析播放地址…" }
@@ -221,7 +232,7 @@ struct VideoPlayerView: View {
                     case .native: NativeVideoPlayer(player: model.player)
                     case .web, .html:
                         EpisodeWebPlayer(resource: resource, sourceRegex: source?.ruleContent.androidValue("sourceRegex") ?? "", onStatus: { webStatus = $0 }, onMedia: { request in
-                            self.resource = .native(request); model.play(request)
+                            self.resource = .native(request); model.play(request, title: book.title, author: book.author)
                         }).id("\(episodeIndex)-\(retry)")
                     }
                 }
@@ -318,7 +329,7 @@ struct VideoPlayerView: View {
             else { resolved = try SourceVideoResource.make(videoURLFromChapter(chapter.text), base: chapter.url ?? videoURLFromChapter(chapter.text), headers: [:]) }
             guard !Task.isCancelled, episodeIndex == index else { return }
             resource = resolved; loading = false
-            if case .native(let request) = resolved { model.play(request); model.player.rate = Float(playbackRate) }
+            if case .native(let request) = resolved { model.play(request, title: book.title + " · " + chapters[index].title, author: book.author); model.player.rate = Float(playbackRate) }
         } catch {
             guard !Task.isCancelled, episodeIndex == index else { return }
             loading = false; resolveError = sourceErrorMessage(error)

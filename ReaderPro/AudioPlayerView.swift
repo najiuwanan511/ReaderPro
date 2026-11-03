@@ -45,13 +45,22 @@ final class AudioPlayerModel: ObservableObject {
     var player: AVPlayer?
     @Published var error = ""
     var onEnded: (() -> Void)?
+    var onPrevious: (() -> Void)?
+    private let controlID = UUID()
     private var itemObservation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
 
+    deinit {
+        MediaPlaybackControls.shared.release(owner: controlID)
+        if let timeObserver, let player { player.removeTimeObserver(timeObserver) }
+        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
+        player?.pause()
+    }
+
     func load(url: URL) { load(URLRequest(url: url)) }
 
-    func load(_ request: URLRequest, position: TimeInterval = 0) {
+    func load(_ request: URLRequest, position: TimeInterval = 0, title: String = "音频", author: String = "") {
         stop()
         guard let url = request.url else { error = "音频地址无效"; return }
         let item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]))
@@ -68,24 +77,34 @@ final class AudioPlayerModel: ObservableObject {
             let sec = t.seconds.isFinite ? t.seconds : 0
             self.currentTime = sec
             if let d = p.currentItem?.duration, d.seconds.isFinite { self.duration = d.seconds }
+            MediaPlaybackControls.shared.update(owner: self.controlID, time: sec, duration: self.duration, rate: p.rate)
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             self?.isPlaying = false
             self?.onEnded?()
         }
         if position > 0 { p.seek(to: CMTime(seconds: position, preferredTimescale: 600)) }
+        MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
+            play: { [weak self] in self?.play() }, pause: { [weak self] in self?.pause() },
+            toggle: { [weak self] in self?.toggle() }, seek: { [weak self] in self?.seek(to: $0) },
+            skip: { [weak self] delta in guard let self else { return }; self.seek(to: self.currentTime + delta) },
+            next: onEnded, previous: onPrevious)
         p.playImmediately(atRate: playbackRate)
         isPlaying = true
     }
 
     func toggle() {
-        guard let p = player else { return }
-        if p.rate > 0 { p.pause(); isPlaying = false } else { p.playImmediately(atRate: playbackRate); isPlaying = true }
+        if isPlaying { pause() } else { play() }
     }
 
+    func play() { guard let player else { return }; player.playImmediately(atRate: playbackRate); isPlaying = true }
+    func pause() { player?.pause(); isPlaying = false; MediaPlaybackControls.shared.update(owner: controlID, time: currentTime, duration: duration, rate: 0) }
+
     func seek(to t: TimeInterval) {
-        player?.seek(to: CMTime(seconds: t, preferredTimescale: 600))
-        currentTime = t
+        let bounded = max(0, min(t, duration > 0 ? duration : max(0, t)))
+        guard bounded.isFinite else { return }
+        player?.seek(to: CMTime(seconds: bounded, preferredTimescale: 600))
+        currentTime = bounded
     }
 
     func setRate(_ r: Float) {
@@ -94,6 +113,7 @@ final class AudioPlayerModel: ObservableObject {
     }
 
     func stop() {
+        MediaPlaybackControls.shared.release(owner: controlID)
         itemObservation = nil; error = ""
         if let o = timeObserver, let p = player { p.removeTimeObserver(o) }
         timeObserver = nil
@@ -236,7 +256,7 @@ struct AudioPlayerView: View {
             s -= 1
             if s <= 0 {
                 sleepRemaining = nil
-                model.player?.pause(); model.isPlaying = false
+                model.pause()
             } else { sleepRemaining = s }
         }
         .sheet(isPresented: $showPlaylist) { playlistSheet }
@@ -294,6 +314,7 @@ struct AudioPlayerView: View {
         let current = store?.books.first(where: { $0.id == book.id }) ?? book
         let activeSource = store?.sourceForBook(current) ?? source
         model.onEnded = { changeChapter(1) }
+        model.onPrevious = { changeChapter(-1) }
         do {
             let request: URLRequest
             var rawLyrics = current.lyrics
@@ -312,7 +333,8 @@ struct AudioPlayerView: View {
             guard !Task.isCancelled, chapterIndex == index else { return }
             lyrics = parseLRC(rawLyrics)
             let position = current.chapterIndex == index ? Double(current.charOffset) : 0
-            model.load(request, position: position); loading = false
+            let title = chapters.indices.contains(index) ? current.title + " · " + chapters[index].title : current.title
+            model.load(request, position: position, title: title, author: current.author); loading = false
         } catch {
             guard !Task.isCancelled, chapterIndex == index else { return }
             loading = false; loadError = sourceErrorMessage(error)
