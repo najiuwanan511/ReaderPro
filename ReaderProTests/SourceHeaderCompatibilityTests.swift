@@ -374,13 +374,23 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
     }
 
     @MainActor func testWebViewFailedProxyCannotFallBackToReachableDestination() async throws {
-        let target = "http://127.0.0.1:8765/web-script"
+        let hostResponse = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:8765/fixture-routable-host")!)
+        let host = String(decoding: hostResponse.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertFalse(host.isEmpty); XCTAssertFalse(host.hasPrefix("127."))
+        let target = "http://\(host):8765/web-script"
+        let targetURL = try XCTUnwrap(URL(string: target))
+        let direct = try await SourceWebLoader.load(URLRequest(url: targetURL), timeout: 15, delay: 0.6)
+        XCTAssertTrue(direct.text.contains("网页脚本正文"), "Destination must be reachable before checking failed proxy routing")
         let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:1"])
         do {
             _ = try await SourceWebLoader.load(request, timeout: 5)
             XCTFail("WebView bypassed the failed proxy and contacted the destination directly")
         } catch {
             XCTAssertFalse(error is CancellationError)
+        }
+        let loopback = try SourceHTTP.request("http://127.0.0.1:8765/web-script", base: target, headers: ["proxy": "http://127.0.0.1:8765"])
+        XCTAssertThrowsError(try SourceWebDataStore.make(request: loopback)) { error in
+            XCTAssertTrue(sourceErrorMessage(error).contains("本机地址"))
         }
     }
 }

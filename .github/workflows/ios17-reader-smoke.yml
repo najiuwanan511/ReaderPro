@@ -33,10 +33,14 @@ jobs:
       - name: Test paging and duplicate categories on iOS 17
         run: |
           set -o pipefail
-          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
+            -only-testing:ReaderProUITests/ReaderSettingsUITests \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryReaderPreloadsThreeAndShowsAlternativeDirectories \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 300 \

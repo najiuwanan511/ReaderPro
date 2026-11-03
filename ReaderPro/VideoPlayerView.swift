@@ -131,7 +131,10 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             switch resource {
             case .native(let original), .web(let original), .html(_, let original), .dash(_, let original): request = original
             }
-            do { try SourceWebDataStore.configure(config.websiteDataStore, request: request) }
+            do {
+                try SourceWebDataStore.configure(config.websiteDataStore, request: request)
+                try await SourceWebDataStore.preventLocalBypass(config, request: request)
+            }
             catch { onStatus(sourceErrorMessage(error)); return }
             for cookie in HTTPCookieStorage.shared.cookies ?? [] { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
             guard !context.coordinator.cancelled else { return }

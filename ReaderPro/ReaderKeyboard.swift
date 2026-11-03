@@ -8,7 +8,7 @@ struct ReaderKeyboard: UIViewControllerRepresentable {
     var menu: () -> Void
     func makeUIViewController(context: Context) -> Controller { Controller() }
     func updateUIViewController(_ controller: Controller, context: Context) {
-        controller.previous = previous; controller.next = next; controller.menu = menu
+        controller.previousPage = previous; controller.nextPage = next; controller.menu = menu
         if controller.enabled != enabled {
             controller.enabled = enabled
             if enabled && controller.view.window != nil { controller.becomeFirstResponder() }
@@ -18,7 +18,7 @@ struct ReaderKeyboard: UIViewControllerRepresentable {
     static func dismantleUIViewController(_ controller: Controller, coordinator: ()) { controller.enabled = false; controller.resignFirstResponder() }
     final class Controller: UIViewController {
         var enabled = false
-        var previous: (() -> Void)?, next: (() -> Void)?, menu: (() -> Void)?
+        var previousPage: (() -> Void)?, nextPage: (() -> Void)?, menu: (() -> Void)?
         override var canBecomeFirstResponder: Bool { enabled }
         override func viewDidAppear(_ animated: Bool) { super.viewDidAppear(animated); if enabled { becomeFirstResponder() } }
         override var keyCommands: [UIKeyCommand]? {
@@ -32,8 +32,8 @@ struct ReaderKeyboard: UIViewControllerRepresentable {
                 command.wantsPriorityOverSystemBehavior = true; return command
             }
         }
-        @objc private func back() { previous?() }
-        @objc private func forward() { next?() }
+        @objc private func back() { previousPage?() }
+        @objc private func forward() { nextPage?() }
         @objc private func showMenu() { menu?() }
     }
 }

@@ -119,25 +119,67 @@ func setReaderTextIfChanged(_ view: UITextView, _ attributed: NSAttributedString
 struct PageTextView: UIViewRepresentable {
     let attributed: NSAttributedString
     let pageSize: CGSize
+    let viewportSize: CGSize
     var chapterOffset: Int = 0
+    var onTap: ((CGPoint) -> Void)?
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = makeReaderTextView(attributed: attributed, size: pageSize)
-        (tv as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
-        tv.isAccessibilityElement = true
-        tv.accessibilityIdentifier = "readerPage"
-        tv.accessibilityLabel = attributed.string
-        return tv
+    func makeUIView(context: Context) -> ReaderPageSurface {
+        ReaderPageSurface(attributed: attributed, pageSize: pageSize)
     }
 
-    func updateUIView(_ tv: UITextView, context: Context) {
-        tv.isSelectable = ReaderSelectableTextView.selectionEnabled
-        tv.textContainer.size = pageSize
-        (tv as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
-        tv.attributedText = attributed
-        tv.layoutManager.ensureLayout(for: tv.textContainer)
-        tv.setNeedsDisplay()
-        tv.accessibilityLabel = attributed.string
+    func updateUIView(_ surface: ReaderPageSurface, context: Context) {
+        surface.pageSize = pageSize
+        surface.onTap = onTap
+        let text = surface.textView
+        (text as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
+        setReaderTextIfChanged(text, attributed)
+        text.accessibilityLabel = attributed.string
+        surface.setNeedsLayout()
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: ReaderPageSurface, context: Context) -> CGSize? {
+        // UITextView.sizeThatFits mutates its TextKit container during SwiftUI
+        // measurement on iOS 17. Keep the paginated geometry independent of
+        // intrinsic text size, including offscreen cover pages and two columns.
+        viewportSize
+    }
+}
+
+final class ReaderPageSurface: UIView, UIGestureRecognizerDelegate {
+    let textView: UITextView
+    var pageSize: CGSize
+    var onTap: ((CGPoint) -> Void)?
+    init(attributed: NSAttributedString, pageSize: CGSize) {
+        self.pageSize = pageSize
+        textView = makeReaderTextView(attributed: attributed, size: pageSize)
+        super.init(frame: .zero)
+        clipsToBounds = true
+        textView.isAccessibilityElement = true
+        textView.accessibilityIdentifier = "readerPage"
+        textView.accessibilityLabel = attributed.string
+        addSubview(textView)
+        let tap = UITapGestureRecognizer(target: self, action: #selector(tapped(_:)))
+        tap.cancelsTouchesInView = false
+        tap.delegate = self
+        addGestureRecognizer(tap)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        textView.frame = CGRect(x: (bounds.width - pageSize.width) / 2, y: (bounds.height - pageSize.height) / 2,
+                                width: pageSize.width, height: pageSize.height)
+        textView.textContainer.size = pageSize
+        textView.layoutManager.ensureLayout(for: textView.textContainer)
+    }
+    @objc private func tapped(_ tap: UITapGestureRecognizer) {
+        guard tap.state == .ended, !ReaderSelectionDelegate.shared.hasSelection else { return }
+        onTap?(tap.location(in: self))
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        onTap != nil && !ReaderSelectionDelegate.shared.hasSelection
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        true
     }
 }
 
@@ -637,7 +679,8 @@ struct CurlPageController: UIViewControllerRepresentable {
         // SwiftUI sibling which can intercept the beginning of a page swipe.
         // Edge taps in curl mode still belong to the native curl recognizer.
         for recognizer in vc.gestureRecognizers where recognizer is UITapGestureRecognizer && recognizer !== tap {
-            recognizer.require(toFail: tap)
+            if onTapPoint != nil { recognizer.isEnabled = false }
+            else { recognizer.require(toFail: tap) }
         }
         if let start = context.coordinator.pageVC(for: startIndex) {
             vc.setViewControllers([start], direction: .forward, animated: false)
@@ -669,7 +712,7 @@ struct CurlPageController: UIViewControllerRepresentable {
 
         @objc func readerTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
-            if let text = view.subviews.compactMap({ $0 as? UITextView }).first, text.selectedRange.length > 0 { return }
+            guard !ReaderSelectionDelegate.shared.hasSelection else { return }
             if let handler = parent.onTapPoint { handler(tap.location(in: view), view.bounds.size); return }
             let fraction = tap.location(in: view).x / view.bounds.width
             if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
@@ -679,11 +722,17 @@ struct CurlPageController: UIViewControllerRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldReceive touch: UITouch) -> Bool {
-            if let text = touch.view as? UITextView, text.selectedRange.length > 0 { return false }
+            if ReaderSelectionDelegate.shared.hasSelection { return false }
             if parent.onTapPoint != nil { return true }
             guard parent.animatedCurl, let view = gestureRecognizer.view, view.bounds.width > 0 else { return true }
             let fraction = touch.location(in: view).x / view.bounds.width
             return fraction >= 1.0 / 3.0 && fraction <= 2.0 / 3.0
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            // UITextView's selection recognizers otherwise prevent ancestor
+            // single taps from reaching the reader on iOS 17.
+            true
         }
 
         func pageVC(for index: Int) -> PageHostController? {

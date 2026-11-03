@@ -38,6 +38,8 @@ jobs:
             -only-testing:ReaderProTests/DiscoveryPaginationTests \
             -only-testing:ReaderProTests/JSImportAndResponseTests \
             -only-testing:ReaderProTests/ReaderContentPipelineTests \
+            -only-testing:ReaderProTests/ReaderTextLayoutTests \
+            -only-testing:ReaderProTests/ReaderPageControllerTests \
             -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -skip-testing:ReaderProTests/SourceEngineTests/testUserProvidedPackImportsEverySourceWithoutLosingRules \
             -resultBundlePath build/ParityRegression.xcresult \

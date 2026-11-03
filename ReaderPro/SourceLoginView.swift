@@ -225,6 +225,7 @@ struct SourceLoginWebPage: UIViewRepresentable {
                     }.value
                     try Task.checkCancellation()
                     try SourceWebDataStore.configure(web.configuration.websiteDataStore, request: request)
+                    try await SourceWebDataStore.preventLocalBypass(web.configuration, request: request)
                     for cookie in source.enabledCookieJar ? (HTTPCookieStorage.shared.cookies ?? []) : [] { await web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                     try Task.checkCancellation()
                     web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA

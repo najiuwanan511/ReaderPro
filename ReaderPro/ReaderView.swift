@@ -281,11 +281,10 @@ private final class ReaderScrollProgress {
 
     func doublePageReader(size: CGSize) -> some View {
         HStack(spacing: 0) {
-            pageView(i: pageIndex, size: CGSize(width: size.width / 2, height: size.height), interactive: false)
-            if pages.indices.contains(pageIndex + 1) { pageView(i: pageIndex + 1, size: CGSize(width: size.width / 2, height: size.height), interactive: false) }
+            pageView(i: pageIndex, size: CGSize(width: size.width / 2, height: size.height), tapViewport: size)
+            if pages.indices.contains(pageIndex + 1) { pageView(i: pageIndex + 1, size: CGSize(width: size.width / 2, height: size.height), tapViewport: size, tapOffset: size.width / 2) }
             else { Color.clear.frame(width: size.width / 2, height: size.height) }
-        }.simultaneousGesture(SpatialTapGesture().onEnded { handleTap($0.location, size: size) })
-            .simultaneousGesture(boundarySwipe(width: size.width, allPages: true))
+        }.simultaneousGesture(boundarySwipe(width: size.width, allPages: true))
     }
 
     // 平移（TabView .page）
@@ -378,12 +377,14 @@ private final class ReaderScrollProgress {
     func coverReader(size: CGSize) -> some View {
         let w = size.width
         ZStack {
-            pageView(i: pageIndex, size: size, interactive: false)
+            pageView(i: pageIndex, size: size)
             if pageIndex < pages.count - 1 {
                 pageView(i: pageIndex + 1, size: size, interactive: false)
                     .frame(width: size.width, height: size.height)
                     .background(Color(uiColor: theme.background))
                     .offset(x: w + coverDrag)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
         }
         .frame(width: size.width, height: size.height)
@@ -408,7 +409,6 @@ private final class ReaderScrollProgress {
                     withAnimation(.easeOut(duration: store.pageTurnSpeed)) { coverDrag = 0 }
                 }
         )
-        .simultaneousGesture(SpatialTapGesture().onEnded { handleTap($0.location, size: size) })
     }
 
     // 滚动：整章连续滚动
@@ -476,11 +476,11 @@ private final class ReaderScrollProgress {
 
     // 单页 + 点按三区（左翻上页 / 中弹菜单 / 右翻下页）
     @ViewBuilder
-    func pageView(i: Int, size: CGSize, interactive: Bool = true) -> some View {
+    func pageView(i: Int, size: CGSize, interactive: Bool = true, tapViewport: CGSize? = nil, tapOffset: CGFloat = 0) -> some View {
         let range = pages.indices.contains(i) ? pages[i] : NSRange(location: 0, length: 0)
         let sub = attributed.attributedSubstring(from: range)
-        PageTextView(attributed: sub, pageSize: pageSize, chapterOffset: range.location)
-            .frame(width: pageSize.width, height: pageSize.height)
+        PageTextView(attributed: sub, pageSize: pageSize, viewportSize: size, chapterOffset: range.location,
+                     onTap: interactive ? { point in handleTap(CGPoint(x: point.x + tapOffset, y: point.y), size: tapViewport ?? size) } : nil)
             .frame(width: size.width, height: size.height)
             .background(Color.clear)
             .overlay(alignment: .top) {
@@ -511,9 +511,6 @@ private final class ReaderScrollProgress {
                     .allowsHitTesting(false)
                 }
             }
-            .simultaneousGesture(SpatialTapGesture().onEnded { event in
-                if interactive { handleTap(event.location, size: size) }
-            })
     }
 
     func handleTap(_ point: CGPoint, size: CGSize) {

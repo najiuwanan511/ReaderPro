@@ -197,6 +197,11 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parsed.path
+        if path == '/fixture-routable-host':
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as route:
+                route.connect(('192.0.2.1', 80))
+                data = route.getsockname()[0].encode('ascii')
+            self.send_response(200); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
         if path.startswith('/parity/'):
             status = 200
             query = parse_qs(parsed.query)
