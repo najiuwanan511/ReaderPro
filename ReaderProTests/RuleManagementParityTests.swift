@@ -3,6 +3,67 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testFileSourceDownloadRuleImportsReadableOfflineChapters() async throws {
+        let source = try JSONDecoder().decode(LegadoSource.self, from: Data(#"{"bookSourceName":"文件源","bookSourceUrl":"http://127.0.0.1:8765","bookSourceType":3,"ruleBookInfo":{"downloadUrls":"$.downloads[*]"}}"#.utf8))
+        let book = SourceBook(title: "文件小说", author: "作者", url: "http://127.0.0.1:8765/parity/file-info")
+        let addresses = try await source.fileDownloadURLs(book: book)
+        XCTAssertEqual(addresses, ["http://127.0.0.1:8765/parity/book.txt"])
+        let local = try await source.downloadBookFile(try XCTUnwrap(addresses.first), book: book, txtRules: [])
+        defer { try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(local.fileName)) }
+        XCTAssertEqual(local.kind, "txt"); XCTAssertEqual(local.title, "文件小说"); XCTAssertEqual(local.author, "作者")
+        XCTAssertEqual(local.chapters.count, 2); XCTAssertTrue(local.chapters[1].text.contains("离线内容二"))
+    }
+
+    func testComicImportKeepsSameNamedImagesInDifferentFoldersAndFilesDoNotOverwrite() throws {
+        let archive = writeStoredZip([(name: "a/1.png", data: Data([1,2,3])), (name: "b/1.png", data: Data([4,5,6]))])
+        guard case .book(let book) = try BookFileImporter.parse(archive, name: "comic.cbz", txtRules: []) else { return XCTFail("Not a comic") }
+        defer {
+            try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(book.fileName))
+            try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(book.id))
+        }
+        XCTAssertEqual(book.imageNames.count, 2); XCTAssertEqual(Set(book.imageNames).count, 2)
+        let images = try book.imageNames.map { try Data(contentsOf: BookStore.filesDir.appendingPathComponent(book.id).appendingPathComponent($0)) }
+        XCTAssertEqual(images, [Data([1,2,3]), Data([4,5,6])])
+        guard case .book(let first) = try BookFileImporter.parse(Data("第1章\n甲".utf8), name: "same.txt", txtRules: []),
+              case .book(let second) = try BookFileImporter.parse(Data("第1章\n乙".utf8), name: "same.txt", txtRules: []) else { return XCTFail("Not text") }
+        defer {
+            try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(first.fileName))
+            try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(second.fileName))
+        }
+        XCTAssertNotEqual(first.fileName, second.fileName); XCTAssertEqual(first.title, second.title)
+        XCTAssertEqual(try String(contentsOf: BookStore.filesDir.appendingPathComponent(first.fileName)), "第1章\n甲")
+    }
+
+    func testWebResourceCaptureExecutesScriptAndReturnsResourceInsteadOfScriptResult() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"
+        let output = try await source.withRules {
+            let output = LegadoJS.run(#"java.webViewGetSource('<html><body>播放器</body></html>',baseUrl,'fetch("/parity/search?capture=1");"ignored"','.*parity/search[?]capture=1',false,10)"#,
+                                      input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check(); return output
+        }
+        XCTAssertEqual(output, "http://127.0.0.1:8765/parity/search?capture=1")
+    }
+
+    func testWebNavigationCaptureReturnsMatchingCustomScheme() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"
+        let output = try await source.withRules {
+            let output = LegadoJS.run(#"java.webViewGetOverrideUrl('<html><body>跳转</body></html>',baseUrl,'location.href="reader-fixture://video/episode/1"','reader-fixture://video/episode/\\d+',false,0)"#,
+                                      input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check(); return output
+        }
+        XCTAssertEqual(output, "reader-fixture://video/episode/1")
+    }
+
+    func testBatchCanExplicitlySkipSourceRateLimit() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"; source.concurrentRate = "1/60000"
+        let output = try await source.withRules {
+            let json = LegadoJS.run(#"java.ajaxAll(['/parity/search?page=1','/parity/search?page=2'],true).map(function(r){return r.code();}).join(',')"#,
+                                    input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check(); return json
+        }
+        XCTAssertEqual(output, "200,200")
+    }
+
     func testHttpTtsExpandsSpeakTextAndSpeedIntoActualAudioRequest() async throws {
         let json = #"{"id":100,"name":"测试朗读","url":"http://127.0.0.1:8765/parity/tts?text={{speakText}}&speed={{speakSpeed}}","contentType":"audio/wav","loginUi":[{"name":"接口","type":"text"}]}"#
         let engine = try JSONDecoder().decode(HttpTTS.self, from: Data(json.utf8))

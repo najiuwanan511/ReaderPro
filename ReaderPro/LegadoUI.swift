@@ -87,6 +87,8 @@ struct SourceBookDetailView: View {
     @State private var chapterQuery = ""
     @State private var readingBook: LocalBook?
     @State private var editingBook: LocalBook?
+    @State private var downloadURLs: [String] = []
+    @State private var downloadingFile = false
 
     private var choices: [SourceBook] { [result] + alternatives.filter { $0.id != result.id } }
     private var selected: SourceBook { choices[min(sourceIndex, choices.count - 1)] }
@@ -123,6 +125,15 @@ struct SourceBookDetailView: View {
                         }
                         if !displayBook.intro.isEmpty { Text(displayBook.intro).font(.system(size: 14)).foregroundStyle(.secondary).lineSpacing(5) }
                         Divider()
+                        if source?.isFile == true {
+                            Text("文件下载").font(.headline)
+                            ForEach(Array(downloadURLs.enumerated()), id: \.offset) { index, address in
+                                Button("下载并阅读 · " + (URL(string: SourceHTTP.options(address).url)?.lastPathComponent.removingPercentEncoding ?? "文件 \(index + 1)")) {
+                                    Task { await downloadFile(address) }
+                                }.disabled(downloadingFile)
+                            }
+                            if downloadingFile { ProgressView("正在下载并解析文件…") }
+                        }
                         HStack {
                             Text(source?.isVideo == true ? "选集 · \(chapters.count) 集" : "目录 · \(chapters.count) 章").font(.system(size: 16, weight: .medium))
                             Spacer()
@@ -215,19 +226,27 @@ struct SourceBookDetailView: View {
             Button { store.updateBook(makeBook()) } label: {
                 Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
             }.buttonStyle(.bordered).disabled(existingBook != nil || chapters.isEmpty || loading)
-            Button { openChapter(nil) } label: {
+            Button {
+                if source?.isFile == true, let address = downloadURLs.first { Task { await downloadFile(address) } }
+                else { openChapter(nil) }
+            } label: {
                 Text(source?.isVideo == true ? (existingBook == nil ? "开始播放" : "继续播放") : (existingBook == nil ? "开始阅读" : "继续阅读")).frame(maxWidth: .infinity, minHeight: 46)
-            }.buttonStyle(.borderedProminent).disabled(chapters.isEmpty || loading)
+            }.buttonStyle(.borderedProminent).disabled(loading || downloadingFile || (source?.isFile == true ? downloadURLs.isEmpty : chapters.isEmpty))
         }.font(.system(size: 15)).padding(.horizontal, 16).padding(.vertical, 8)
             .background(AppTheme.surface.shadow(color: .black.opacity(0.07), radius: 4, y: -2))
     }
 
     @MainActor private func load() async {
-        loading = true; errorText = ""; chapters = []; info = nil
+        loading = true; errorText = ""; chapters = []; info = nil; downloadURLs = []
         let target = selected
         guard let source else { errorText = "书源已被删除，请重新搜索。"; loading = false; return }
         do {
             let fetched = try await withTimeout(30) { try await source.fetchBookInfo(book: target) }
+            if source.isFile {
+                let addresses = try await withTimeout(30) { try await source.fileDownloadURLs(book: fetched) }
+                guard !Task.isCancelled, selected.id == target.id else { return }
+                info = fetched; downloadURLs = addresses; loading = false; return
+            }
             let fetchedChapters = try await withTimeout(120) { try await source.fetchChapters(book: fetched) }
             guard !Task.isCancelled, selected.id == target.id else { return }
             info = fetched; chapters = fetchedChapters; loading = false
@@ -236,6 +255,19 @@ struct SourceBookDetailView: View {
             guard !Task.isCancelled, selected.id == target.id else { return }
             loading = false; errorText = "目录加载失败：\(sourceErrorMessage(error))"
         }
+    }
+
+    @MainActor private func downloadFile(_ address: String) async {
+        guard !downloadingFile, let source else { return }
+        downloadingFile = true; errorText = ""
+        defer { downloadingFile = false }
+        let target = displayBook, rules = ReaderRuleLibrary.shared.txtRules
+        do {
+            let worker = Task.detached { try await source.downloadBookFile(address, book: target, txtRules: rules) }
+            let local = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+            guard !Task.isCancelled, selected.id == target.id else { return }
+            store.updateBook(local); readingBook = local
+        } catch { errorText = sourceErrorMessage(error) }
     }
 
     private func makeBook() -> LocalBook {

@@ -3,6 +3,7 @@ import Foundation
 /// Legado concurrentRate is requests per milliseconds, not a maximum number
 /// of currently active requests. A single integer means one request per interval.
 final class SourceRateLimiter: @unchecked Sendable {
+    @TaskLocal static var skipped = false
     static let shared = SourceRateLimiter()
     struct Rate: Equatable {
         let count: Int
@@ -32,6 +33,7 @@ final class SourceRateLimiter: @unchecked Sendable {
     }
 
     func wait() async throws {
+        guard !Self.skipped else { return }
         guard let source = LegadoJSCtx.ruleSource, let rate = Rate(source.concurrentRate) else { return }
         while true {
             try Task.checkCancellation()
@@ -43,6 +45,7 @@ final class SourceRateLimiter: @unchecked Sendable {
     }
 
     func waitBlocking() throws {
+        guard !Self.skipped else { return }
         guard let source = LegadoJSCtx.ruleSource, let rate = Rate(source.concurrentRate) else { return }
         while true {
             try Task.checkCancellation()

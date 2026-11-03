@@ -156,6 +156,15 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/parity/'):
             status = 200
             query = parse_qs(parsed.query)
+            if path == '/parity/book.txt':
+                data = '第一章 开始\n离线内容一\n第二章 继续\n离线内容二'.encode('utf-8')
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/plain; charset=utf-8')
+                self.send_header('Content-Disposition', 'attachment; filename="fixture.txt"')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == '/parity/tts':
                 if query.get('text', [''])[0] != '你好世界' or query.get('speed', [''])[0] != '12':
                     self.send_error(400, 'incorrect TTS template expansion')
@@ -185,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
                     state['active'] -= 1
                     maximum = state['max']
                 payload = {"index": query.get('index', [''])[0], "key": query.get('key', [''])[0], "page": query.get('page', [''])[0], "maxActive": maximum}
+            elif path == '/parity/file-info':
+                payload = {"downloads": ["/parity/book.txt"]}
             elif path == '/parity/protected':
                 status, payload = 401, {"error": "login required"}
             elif path == '/parity/toc':

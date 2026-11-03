@@ -341,67 +341,9 @@ struct BookshelfView: View {
     }
 
     func importFile(_ url: URL) {
-        let ok = url.startAccessingSecurityScopedResource()
-        defer { if ok { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else { errorText = "读不到这个文件"; showError = true; return }
-        let ext = url.pathExtension.lowercased()
-        let fileName = url.lastPathComponent
-        let dest = BookStore.filesDir.appendingPathComponent(fileName)
-        try? data.write(to: dest)
-        if ext == "txt" {
-            let text = decodeTextData(data)
-            var book = LocalBook(title: (fileName as NSString).deletingPathExtension, fileName: fileName, kind: "txt")
-            book.chapters = splitTxtChapters(text, bookTitle: book.title)
-            store.updateBook(book)
-        } else if ext == "epub" {
-            if let book = parseEpub(data, fileName: fileName) { store.updateBook(book) }
-            else { errorText = "这个 EPUB 解析失败（可能是加密或结构异常）"; showError = true }
-        } else if ext == "mobi" || ext == "azw3" || ext == "azw" {
-            if let book = parseMobi(data, fileName: fileName) { store.updateBook(book) }
-            else { errorText = "这个 MOBI / AZW3 解析失败（可能是带 DRM 的加密文件，或 KF8 结构过于复杂）"; showError = true }
-        } else if ext == "docx" {
-            if let book = parseDocx(data, fileName: fileName) { store.updateBook(book) }
-            else { errorText = "这个 DOCX 解析失败"; showError = true }
-        } else if ext == "fb2" {
-            if let book = parseFb2(data, fileName: fileName) { store.updateBook(book) }
-            else { errorText = "这个 FB2 解析失败"; showError = true }
-        } else if ext == "pdf" {
-            if let book = parsePdf(data, fileName: fileName) { store.updateBook(book) }
-            else { errorText = "这个 PDF 没有可提取的文字层（纯图片 PDF 请用漫画里的 OCR）"; showError = true }
-        } else if ext == "cbz" || ext == "zip" {
-            if let (book, files) = parseCbz(data, fileName: fileName) {
-                let dir = BookStore.filesDir.appendingPathComponent(book.id)
-                try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-                for (name, d) in files { try? d.write(to: dir.appendingPathComponent((name as NSString).lastPathComponent)) }
-                store.updateBook(book)
-            } else { errorText = "这个 CBZ 里没有找到图片"; showError = true }
-        } else if ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus"].contains(ext) {
-            // 音频书（对标阅读Sigma 带歌词音频播放）
-            var book = LocalBook(title: (fileName as NSString).deletingPathExtension, fileName: fileName, kind: "audio")
-            book.chapters = [BookChapter(title: book.title, text: "")]
-            store.updateBook(book)
-        } else if ["mp4", "mov", "m4v", "mkv", "m3u8"].contains(ext) {
-            // 视频书（对标阅读Sigma 带弹幕视频播放）
-            let fileURL = dest.absoluteString
-            var book = LocalBook(title: (fileName as NSString).deletingPathExtension, fileName: fileName, kind: "video")
-            book.chapters = [BookChapter(title: "第 1 集", text: "__URL__" + fileURL)]
-            store.updateBook(book)
-        } else if ext == "lrc" {
-            // 歌词：匹配同名音频书，把歌词挂上去
-            let base = (fileName as NSString).deletingPathExtension
-            let lyricText = decodeTextData(data)
-            if let i = store.books.firstIndex(where: { $0.isAudio && ($0.fileName as NSString).deletingPathExtension == base }) {
-                store.books[i].lyrics = lyricText
-                store.save()
-            } else if let i = store.books.firstIndex(where: { $0.isAudio }) {
-                store.books[i].lyrics = lyricText
-                store.save()
-            } else {
-                errorText = "没找到同名音频书来挂歌词，请先导入音频再导入同名 .lrc"
-                showError = true
-            }
-        } else {
-            errorText = "支持 TXT、EPUB、DOCX、FB2、MOBI、AZW3、PDF、CBZ（ZIP 漫画包）、音频（MP3/M4A/FLAC）、视频（MP4/M3U8）、歌词（LRC）"; showError = true
+        Task { @MainActor in
+            do { try store.applyFileImport(await BookFileImporter.importURL(url)) }
+            catch { errorText = sourceErrorMessage(error); showError = true }
         }
     }
 

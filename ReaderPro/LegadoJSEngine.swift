@@ -211,11 +211,11 @@ final class LegadoJS {
             return json
         }
         java.setObject(request, forKeyedSubscript: "_request" as NSString)
-        let requests: @convention(block) (String) -> String = { json in
+        let requests: @convention(block) (String, Bool) -> String = { json, skipRateLimit in
             do {
                 let addresses = try JSONDecoder().decode([String].self, from: Data(json.utf8))
                 let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
-                let results = try SourceJSBridge.requestAll(addresses, base: baseUrl, headers: headers)
+                let results = try SourceJSBridge.requestAll(addresses, base: baseUrl, headers: headers, skipRateLimit: skipRateLimit)
                 return String(decoding: try JSONSerialization.data(withJSONObject: results), as: UTF8.self)
             } catch {
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
@@ -237,10 +237,12 @@ final class LegadoJS {
         java.setObject(importScript, forKeyedSubscript: "importScript" as NSString)
         let invalidateImportedScripts: @convention(block) () -> Void = { SourceJSBridge.invalidateImportedScripts() }
         java.setObject(invalidateImportedScripts, forKeyedSubscript: "_invalidateImportedScripts" as NSString)
-        let web: @convention(block) (String, String, String) -> String = { html, address, script in
+        let web: @convention(block) (String, String, String, String, String, Bool, Double) -> String = { html, address, script, resourceRegex, navigationRegex, cacheFirst, delay in
             do {
                 let request = try SourceHTTP.request(address.isEmpty ? baseUrl : address, base: baseUrl, headers: LegadoJSCtx.headers)
-                return try SourceJSBridge.web(request, html: html, script: script).text
+                return try SourceJSBridge.web(request, html: html, script: script, delay: max(0, delay) / 1000,
+                                              resourceRegex: resourceRegex.isEmpty ? nil : resourceRegex,
+                                              navigationRegex: navigationRegex.isEmpty ? nil : navigationRegex, cacheFirst: cacheFirst).text
             } catch {
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
                 return ""
@@ -332,6 +334,8 @@ final class LegadoJS {
         let actualSource = LegadoJSCtx.ruleSource
         installRule("ruleSearch", type: "SearchRule", rule: actualSource?.ruleSearch, fields: ["checkKeyWord"] + bookFields)
         installRule("ruleExplore", type: "ExploreRule", rule: actualSource?.ruleExplore, fields: bookFields)
+        installRule("ruleBookInfo", type: "BookInfoRule", rule: actualSource?.ruleBookInfo,
+                    fields: ["init", "name", "author", "intro", "kind", "lastChapter", "updateTime", "coverUrl", "tocUrl", "wordCount", "canReName", "downloadUrls"])
         installRule("ruleToc", type: "TocRule", rule: actualSource?.ruleToc,
                     fields: ["preUpdateJs", "chapterList", "chapterName", "chapterUrl", "formatJs", "isVolume", "isVip", "isPay", "updateTime", "nextTocUrl"])
         installRule("ruleContent", type: "ContentRule", rule: actualSource?.ruleContent,
@@ -776,7 +780,7 @@ final class LegadoJS {
         return _response(java._request(String(url), '', '', typeof headers === 'string' ? headers : JSON.stringify(headers || {}), timeout || 20000, true));
     };
     java.ajax = function(url, timeout) { return java.connect(Array.isArray(url) ? url[0] : url, {}, timeout).body(); };
-    java.ajaxAll = function(urls) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)))).map(function(data){return _response(JSON.stringify(data));})); };
+    java.ajaxAll = function(urls, skipRateLimit) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)), !!skipRateLimit)).map(function(data){return _response(JSON.stringify(data));})); };
     ['get','head','post'].forEach(function(method) {
         var storedGet = java.get;
         java[method] = function(url, body, headers, timeout) {
@@ -795,7 +799,9 @@ final class LegadoJS {
     java.ruleUrl = baseUrl;
     java.getSource = function() { return source; };
     java.getBook = function() { return book; };
-    java.webView = function(html, url, script) { return java._webView(html == null ? '' : String(html), url == null ? baseUrl : String(url), script == null ? '' : String(script)); };
+    java.webView = function(html, url, script, cacheFirst) { return java._webView(html == null ? '' : String(html), url == null ? baseUrl : String(url), script == null ? '' : String(script), '', '', !!cacheFirst, 0); };
+    java.webViewGetSource = function(html,url,script,regex,cacheFirst,delay) { return java._webView(html==null?'':String(html),url==null?baseUrl:String(url),script==null?'':String(script),String(regex),'',!!cacheFirst,Number(delay)||0); };
+    java.webViewGetOverrideUrl = function(html,url,script,regex,cacheFirst,delay) { return java._webView(html==null?'':String(html),url==null?baseUrl:String(url),script==null?'':String(script),'',String(regex),!!cacheFirst,Number(delay)||0); };
     function _element(html) {
         return {
             outerHtml:function(){return html;}, toString:function(){return html;}, toJSON:function(){return html;},

@@ -19,6 +19,9 @@ struct SourceRuleSnapshot {
     private let mediaCapture = LegadoJSCtx.mediaCapture
     private let tls = SourceTLS.allowsInvalidCertificates
     private let session = SourceHTTP.testSession
+    private let skipRateLimit = SourceRateLimiter.skipped
+    private let speakText = LegadoJSCtx.speakText
+    private let speakSpeed = LegadoJSCtx.speakSpeed
     func perform<T>(_ operation: () throws -> T) rethrows -> T {
         try LegadoJSCtx.$deadline.withValue(deadline) {
             try LegadoJSCtx.$sourceUrl.withValue(sourceUrl) {
@@ -37,7 +40,11 @@ struct SourceRuleSnapshot {
                                                                 try LegadoJSCtx.$mediaCapture.withValue(mediaCapture) {
                                                                     try SourceTLS.$allowsInvalidCertificates.withValue(tls) {
                                                                         try SourceHTTP.$testSession.withValue(session) {
-                                                                            try operation()
+                                                                            try SourceRateLimiter.$skipped.withValue(skipRateLimit) {
+                                                                                try LegadoJSCtx.$speakText.withValue(speakText) {
+                                                                                    try LegadoJSCtx.$speakSpeed.withValue(speakSpeed) { try operation() }
+                                                                                }
+                                                                            }
                                                                         }
                                                                     }
                                                                 }

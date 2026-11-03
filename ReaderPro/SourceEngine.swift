@@ -69,6 +69,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         enum CodingKeys: String, CodingKey, CaseIterable {
             case bookList, name, author, bookUrl, coverUrl, intro, tocUrl, chapterList, chapterName, chapterUrl, content, nextContentUrl, nextTocUrl, kind, wordCount, lastChapter, replaceRegex, imageUrl, checkKeyWord
             case updateTime, preUpdateJs, formatJs, isVolume, isVip, isPay, subContent, title, webJs, sourceRegex, imageStyle, imageDecode, payAction, callBackJs
+            case downloadUrls, canReName
             case initRule = "init"
         }
         init() {}

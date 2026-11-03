@@ -3,7 +3,7 @@ import WebKit
 import Security
 import UIKit
 
-@MainActor final class SourceWebLoader: NSObject, WKNavigationDelegate {
+@MainActor final class SourceWebLoader: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     private static var active: [UUID: SourceWebLoader] = [:]
     private let id = UUID()
     private var webView: WKWebView?
@@ -15,8 +15,13 @@ import UIKit
     private var startedPolling = false
     private var allowsInvalidCertificates = false
     private var cookiesEnabled = true
+    private var resourcePattern: NSRegularExpression?
+    private var navigationPattern: NSRegularExpression?
+    private var initialURL = ""
+    private var capturesURL: Bool { resourcePattern != nil || navigationPattern != nil }
 
-    static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0) async throws -> SourcePage {
+    static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0,
+                     resourceRegex: String? = nil, navigationRegex: String? = nil, cacheFirst: Bool = false) async throws -> SourcePage {
         // The iOS 17 Swift-only WebKit proxy overlay can link against
         // libswiftWebKit, which is absent on supported iOS simulator/runtime
         // combinations. Never silently bypass a configured source proxy or
@@ -29,6 +34,9 @@ import UIKit
         try await SourceRateLimiter.shared.wait()
         while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
         let loader = SourceWebLoader()
+        loader.resourcePattern = try resourceRegex.map { try NSRegularExpression(pattern: $0) }
+        loader.navigationPattern = try navigationRegex.map { try NSRegularExpression(pattern: $0) }
+        loader.initialURL = request.url?.absoluteString ?? ""
         loader.allowsInvalidCertificates = SourceTLS.allowsInvalidCertificates
         loader.cookiesEnabled = LegadoJSCtx.ruleSource?.enabledCookieJar ?? true
         return try await withTaskCancellationHandler {
@@ -38,6 +46,10 @@ import UIKit
                 loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
                 config.websiteDataStore = loader.allowsInvalidCertificates || !loader.cookiesEnabled ? .nonPersistent() : .default()
+                if loader.resourcePattern != nil {
+                    config.userContentController.add(loader, name: "readerResource")
+                    config.userContentController.addUserScript(WKUserScript(source: resourceObserver, injectionTime: .atDocumentStart, forMainFrameOnly: false))
+                }
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
@@ -63,7 +75,11 @@ import UIKit
                     }
                     guard loader.continuation != nil else { return }
                     if let html, !html.isEmpty { web.loadHTMLString(html, baseURL: request.url) }
-                    else { web.load(request) }
+                    else {
+                        var configured = request
+                        if cacheFirst { configured.cachePolicy = .returnCacheDataElseLoad }
+                        web.load(configured)
+                    }
                 }
             }
         } onCancel: {
@@ -78,6 +94,12 @@ import UIKit
             try? await Task.sleep(nanoseconds: UInt64(max(0.35, min(delay, 3600)) * 1_000_000_000))
             while !Task.isCancelled, continuation != nil {
                 do {
+                    if capturesURL {
+                        // Capture APIs execute the script for its side effects;
+                        // a script return value is not the requested URL.
+                        if !script.isEmpty { _ = try await webView.evaluateJavaScript(script) }
+                        return
+                    }
                     let value = try await webView.evaluateJavaScript(script.isEmpty ? "document.documentElement.outerHTML" : script)
                     if let value, !(value is NSNull) {
                         let text: String
@@ -99,6 +121,46 @@ import UIKit
         }
     }
 
+    private static let resourceObserver = #"""
+    (function(){
+      function report(value){try{if(value)window.webkit.messageHandlers.readerResource.postMessage(new URL(String(value),document.baseURI).href);}catch(e){}}
+      var open=XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open=function(method,url){report(url);return open.apply(this,arguments);};
+      var fetch=window.fetch;
+      window.fetch=function(input){report(typeof input==='string'?input:input.url);return fetch.apply(this,arguments);};
+      if(window.PerformanceObserver){try{new PerformanceObserver(function(list){list.getEntries().forEach(function(e){report(e.name);});}).observe({type:'resource',buffered:true});}catch(e){}}
+      document.addEventListener('load',function(e){var n=e.target;if(n)report(n.currentSrc||n.src||n.href);},true);
+      document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('[src],link[href]').forEach(function(n){report(n.currentSrc||n.src||n.href);});});
+    })();
+    """#
+
+    private func matches(_ value: String, pattern: NSRegularExpression?) -> Bool {
+        guard let pattern else { return false }
+        let range = NSRange(value.startIndex..., in: value)
+        return pattern.firstMatch(in: value, range: range)?.range == range
+    }
+
+    private func captured(_ address: String) {
+        Task {
+            if cookiesEnabled, let webView {
+                for cookie in await webView.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+            }
+            finish(.success(.init(text: address, url: initialURL)))
+        }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let address = message.body as? String, matches(address, pattern: resourcePattern) else { return }
+        captured(address)
+    }
+
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if let address = navigationAction.request.url?.absoluteString, matches(address, pattern: navigationPattern) {
+            decisionHandler(.cancel); captured(address)
+        } else { decisionHandler(.allow) }
+    }
+
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(.failure(error)) }
 
@@ -117,6 +179,7 @@ import UIKit
         guard let continuation else { return }
         self.continuation = nil
         timer?.cancel(); polling?.cancel(); webView?.stopLoading(); webView?.navigationDelegate = nil
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "readerResource")
         webView?.removeFromSuperview(); webView = nil
         Self.active[id] = nil
         continuation.resume(with: result)
@@ -130,12 +193,14 @@ extension SourceJSBridge {
         func set(_ result: Result<SourcePage, Error>) { lock.lock(); value = result; lock.unlock() }
         func get() -> Result<SourcePage, Error>? { lock.lock(); defer { lock.unlock() }; return value }
     }
-    static func web(_ request: URLRequest, html: String? = nil, script: String = "", delay: Double = 0) throws -> SourcePage {
+    static func web(_ request: URLRequest, html: String? = nil, script: String = "", delay: Double = 0,
+                    resourceRegex: String? = nil, navigationRegex: String? = nil, cacheFirst: Bool = false) throws -> SourcePage {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "脚本兼容性", message: "WebView 脚本必须在后台书源任务中执行") }
         let box = WebBox()
         let timeout = max(0.1, min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20))
         let task = Task { @MainActor in
-            do { box.set(.success(try await SourceWebLoader.load(request, html: html, script: script, timeout: timeout, delay: delay))) }
+            do { box.set(.success(try await SourceWebLoader.load(request, html: html, script: script, timeout: timeout, delay: delay,
+                                                                resourceRegex: resourceRegex, navigationRegex: navigationRegex, cacheFirst: cacheFirst))) }
             catch { box.set(.failure(error)) }
         }
         let deadline = Date().addingTimeInterval(timeout + 1)

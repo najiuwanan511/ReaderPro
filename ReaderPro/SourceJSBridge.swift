@@ -155,7 +155,7 @@ enum SourceJSBridge {
         var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
     }
 
-    static func requestAll(_ addresses: [String], base: String, headers: [String: String]) throws -> [[String: Any]] {
+    static func requestAll(_ addresses: [String], base: String, headers: [String: String], skipRateLimit: Bool = false) throws -> [[String: Any]] {
         guard !addresses.isEmpty else { return [] }
         let snapshot = SourceRuleSnapshot(), batch = Batch(count: addresses.count), group = DispatchGroup()
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(30))
@@ -166,8 +166,10 @@ enum SourceJSBridge {
                 snapshot.perform {
                     while let index = batch.take() {
                         do {
-                            let value = try request(addresses[index], base: base, headers: headers,
-                                                    timeout: max(0.1, deadline.timeIntervalSinceNow), cancelled: { batch.cancelled })
+                            let value = try SourceRateLimiter.$skipped.withValue(skipRateLimit || SourceRateLimiter.skipped) {
+                                try request(addresses[index], base: base, headers: headers,
+                                            timeout: max(0.1, deadline.timeIntervalSinceNow), cancelled: { batch.cancelled })
+                            }
                             batch.save(value, at: index)
                         } catch { batch.save(["error": sourceErrorMessage(error)], at: index) }
                     }
