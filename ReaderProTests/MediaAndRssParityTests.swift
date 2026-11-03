@@ -3,6 +3,20 @@ import WebKit
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
+    func testRssWebRequestsParseHeadersAndReturnBodyRatherThanResponseEnvelope() async throws {
+        var source = RssSource(); source.sourceUrl = "http://127.0.0.1:8765"
+        let headers = #"{"X-Login":"rss-bridge-token"}"#
+        let result = try await RssWebBridge.evaluate(command: "getAwait", args: [source.sourceUrl + "/bridge-login-check", headers, "5000"], source: source, base: source.sourceUrl)
+        let value = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: String])
+        XCTAssertEqual(value["custom"], "rss-bridge-token")
+        let parsed = try await RssWebBridge.evaluate(command: "getStringAwait", args: ["p@text", "<p>网页解析结果</p>"], source: source, base: source.sourceUrl)
+        XCTAssertEqual(parsed, "网页解析结果")
+        let file = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "rsa-vector", withExtension: "json"))
+        let vector = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: String])
+        let signed = try await RssWebBridge.evaluate(command: "createSignHexAwait", args: ["SHA256withRSA", try XCTUnwrap(vector["publicSPKI"]), try XCTUnwrap(vector["privatePKCS8"]), try XCTUnwrap(vector["message"])], source: source, base: source.sourceUrl)
+        XCTAssertEqual(SourceCrypto.hex(signed)?.base64EncodedString(), vector["sha256"])
+    }
+
     @MainActor func testRssWebPageRunsAsyncRulesSharesVariablesAndOpensBookSearch() async throws {
         var source = RssSource(); source.sourceName = "网页桥样例"; source.sourceUrl = "http://127.0.0.1:8765/rss-bridge-" + UUID().uuidString
         source.preloadJs = "// enable native bridge"

@@ -42,21 +42,30 @@ enum SourceCrypto {
         return key
     }
 
-    static func rsaSign(_ data: Data, key: Data, algorithm: String) throws -> Data {
-        let spec: SecKeyAlgorithm
+    static func signatureAlgorithm(_ algorithm: String) throws -> SecKeyAlgorithm {
         switch algorithm.uppercased().replacingOccurrences(of: "-", with: "") {
-        case "SHA1WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA1
-        case "SHA256WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA256
-        case "SHA384WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA384
-        case "SHA512WITHRSA": spec = .rsaSignatureMessagePKCS1v15SHA512
+        case "SHA1WITHRSA": return .rsaSignatureMessagePKCS1v15SHA1
+        case "SHA224WITHRSA": return .rsaSignatureMessagePKCS1v15SHA224
+        case "SHA256WITHRSA": return .rsaSignatureMessagePKCS1v15SHA256
+        case "SHA384WITHRSA": return .rsaSignatureMessagePKCS1v15SHA384
+        case "SHA512WITHRSA": return .rsaSignatureMessagePKCS1v15SHA512
         default: throw SourceFailure(stage: "脚本兼容性", message: "不支持的 RSA 签名算法：" + algorithm)
         }
+    }
+
+    static func rsaSign(_ data: Data, key: Data, algorithm: String) throws -> Data {
+        let spec = try signatureAlgorithm(algorithm)
         let privateKey = try rsaKey(key, isPrivate: true)
         var error: Unmanaged<CFError>?
         guard let signed = SecKeyCreateSignature(privateKey, spec, data as CFData, &error) else {
             throw SourceFailure(stage: "脚本加密", message: error.map { ($0.takeRetainedValue() as Error).localizedDescription } ?? "RSA 签名失败")
         }
         return signed as Data
+    }
+
+    static func rsaVerify(_ data: Data, signature: Data, key: Data, algorithm: String) throws -> Bool {
+        let spec = try signatureAlgorithm(algorithm), publicKey = try rsaKey(key, isPrivate: false)
+        return SecKeyVerifySignature(publicKey, spec, data as CFData, signature as CFData, nil)
     }
 
     // Legado's AsymmetricCrypto accepts RSA keys in Java's PKCS#8/SPKI
@@ -113,6 +122,12 @@ enum SourceCrypto {
     static func bytes(_ value: JSValue) -> Data {
         if value.isArray { return Data((value.toArray() ?? []).compactMap { ($0 as? NSNumber).map { UInt8(truncating: $0) } }) }
         return Data((value.toString() ?? "").utf8)
+    }
+    static func keyBytes(_ value: JSValue) -> Data {
+        guard !value.isArray else { return bytes(value) }
+        let text = (value.toString() ?? "").components(separatedBy: .newlines)
+            .filter { !$0.hasPrefix("-----") }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
+        return Data(base64Encoded: text, options: .ignoreUnknownCharacters) ?? bytes(value)
     }
     static func hex(_ text: String) -> Data? {
         guard text.count % 2 == 0, text.range(of: #"^[0-9a-fA-F]*$"#, options: .regularExpression) != nil else { return nil }
@@ -220,13 +235,40 @@ enum SourceCrypto {
         java.setObject(encode64, forKeyedSubscript: "base64Encode" as NSString)
         java.setObject(hmac, forKeyedSubscript: "_hmac" as NSString)
         let sign: @convention(block) (JSValue, JSValue, String) -> JSValue? = { input, key, algorithm in
-            do { return JSValue(object: try rsaSign(bytes(input), key: bytes(key), algorithm: algorithm).map(Int.init), in: JSContext.current()) }
+            do { return JSValue(object: try rsaSign(bytes(input), key: keyBytes(key), algorithm: algorithm).map(Int.init), in: JSContext.current()) }
             catch {
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
                 return nil
             }
         }
         java.setObject(sign, forKeyedSubscript: "_rsaSign" as NSString)
+        let verify: @convention(block) (JSValue, JSValue, JSValue, String) -> Bool = { input, signature, key, algorithm in
+            do {
+                let signed: Data
+                if signature.isArray { signed = bytes(signature) }
+                else {
+                    let text = signature.toString() ?? ""
+                    guard let decoded = hex(text) ?? base64(text) else { return false }
+                    signed = decoded
+                }
+                return try rsaVerify(bytes(input), signature: signed, key: keyBytes(key), algorithm: algorithm)
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return false
+            }
+        }
+        java.setObject(verify, forKeyedSubscript: "_rsaVerify" as NSString)
+        let randomKeys: @convention(block) () -> JSValue? = {
+            var error: Unmanaged<CFError>?
+            let attributes = [kSecAttrKeyType as String: kSecAttrKeyTypeRSA, kSecAttrKeySizeInBits as String: 2048] as [String: Any]
+            guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error), let publicKey = SecKeyCopyPublicKey(key),
+                  let privateData = SecKeyCopyExternalRepresentation(key, &error) as Data?,
+                  let publicData = SecKeyCopyExternalRepresentation(publicKey, &error) as Data? else {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: "无法生成 RSA 密钥", in: JSContext.current()); return nil
+            }
+            return JSValue(object: ["privateKey": privateData.map(Int.init), "publicKey": publicData.map(Int.init)], in: JSContext.current())
+        }
+        java.setObject(randomKeys, forKeyedSubscript: "_rsaKeyPair" as NSString)
         let asymmetric: @convention(block) (JSValue, JSValue, String, Bool, Bool, String) -> JSValue? = { input, key, algorithm, decrypt, usePublicKey, output in
             do {
                 let raw: Data
@@ -250,6 +292,25 @@ enum SourceCrypto {
         }
         java.setObject(asymmetric, forKeyedSubscript: "_rsaCrypt" as NSString)
         context.evaluateScript(#"""
+        java.createSign = function(algorithm) {
+            var publicKey = null, privateKey = null;
+            function keys() {
+                if (publicKey == null && privateKey == null) {
+                    var pair=java._rsaKeyPair();publicKey=pair.publicKey;privateKey=pair.privateKey;
+                }
+            }
+            function signed(value) { keys();if(privateKey==null)throw Error('RSA private key is not configured');return java._rsaSign(value,privateKey,algorithm); }
+            return {
+                setPublicKey:function(key){publicKey=key;return this;},
+                setPrivateKey:function(key){privateKey=key;return this;},
+                sign:function(value){return signed(value);},
+                signHex:function(value){return signed(value).map(function(b){return ('0'+(b&255).toString(16)).slice(-2);}).join('');},
+                signBase64:function(value){return java.base64Encode(signed(value));},
+                verify:function(value,signature){keys();if(publicKey==null)throw Error('RSA public key is not configured');return java._rsaVerify(value,signature,publicKey,algorithm);},
+                getPublicKeyBase64:function(){keys();return java.base64Encode(publicKey);},
+                getPrivateKeyBase64:function(){keys();return java.base64Encode(privateKey);}
+            };
+        };
         java.createAsymmetricCrypto = function(algorithm) {
             var publicKey = null, privateKey = null;
             function run(value, usePublicKey, decrypt, output) {

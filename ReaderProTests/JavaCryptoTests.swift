@@ -100,6 +100,20 @@ final class JavaCryptoTests: XCTestCase {
             signed;
             """#, input: String(decoding: try JSONSerialization.data(withJSONObject: fixture), as: UTF8.self), baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
             XCTAssertEqual(output, fixture["sha256"])
+            let signAPI = LegadoJS.run(#"""
+            var f=JSON.parse(result);
+            var sign=java.createSign('SHA256withRSA')
+                .setPublicKey(java.base64DecodeToByteArray(f.publicSPKI))
+                .setPrivateKey(java.base64DecodeToByteArray(f.privatePKCS8));
+            var signature=sign.signBase64(f.message),hex=sign.signHex(f.message);
+            JSON.stringify({signature:signature,valid:sign.verify(f.message,hex),
+                changed:sign.verify(f.message+'changed',signature),
+                bytes:sign.verify(java.strToBytes(f.message),sign.sign(java.strToBytes(f.message)))});
+            """#, input: String(decoding: try JSONSerialization.data(withJSONObject: fixture), as: UTF8.self), baseUrl: "https://example.org", sourceKey: "", sourceUrl: "https://example.org")
+            let values = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(signAPI.utf8)) as? [String: Any])
+            XCTAssertEqual(values["signature"] as? String, fixture["sha256"])
+            XCTAssertEqual(values["valid"] as? Bool, true); XCTAssertEqual(values["changed"] as? Bool, false)
+            XCTAssertEqual(values["bytes"] as? Bool, true)
             try failures.check()
         }
     }

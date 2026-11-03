@@ -69,13 +69,23 @@ final class RssWebBridge: NSObject, WKScriptMessageHandlerWithReply {
         let script: String
         switch command {
         case "run": script = args.first ?? ""
-        case "ajaxAwait": script = "java.ajax(" + argument(0) + ")"
+        case "ajaxAwait": script = "java.ajax(" + argument(0) + ",Number(" + argument(1, fallback: "9000") + "))"
         case "connectAwait", "getAwait", "headAwait", "postAwait":
             let method = command == "connectAwait" ? "connect" : command.replacingOccurrences(of: "Await", with: "")
-            let parameters = command == "postAwait" ? [argument(0), argument(1), argument(2)] : [argument(0), argument(1, fallback: "'{}'")]
-            script = "var r=java." + method + "(" + parameters.joined(separator: ",") + ");JSON.stringify({body:r.body(),code:r.code(),url:r.url(),headers:r.headers()})"
+            let headersIndex = command == "postAwait" ? 2 : 1
+            let header = "JSON.parse(" + argument(headersIndex, fallback: "'{}'") + "||'{}')"
+            let timeout = "Number(" + argument(headersIndex + 1, fallback: "9000") + ")"
+            let parameters = command == "postAwait" ? [argument(0), argument(1), header, timeout] : [argument(0), header, timeout]
+            let output = command == "headAwait" ? "JSON.stringify(r.headers())" : command == "connectAwait" ? "'Response{code='+r.code()+', url='+r.url()+'}'" : "r.body()"
+            script = "var r=java." + method + "(" + parameters.joined(separator: ",") + ");" + output
         case "getStringAwait": script = "java.setContent(" + argument(1, fallback: "''") + ");java.getString(" + argument(0) + ")"
-        case "webViewAwait", "webViewGetSourceAwait", "downloadFileAwait", "readTxtFileAwait", "importScriptAwait":
+        case "webViewAwait", "webViewGetSourceAwait":
+            let name = command.replacingOccurrences(of: "Await", with: ""), cacheIndex = command == "webViewAwait" ? 3 : 4
+            var parameters = (0..<cacheIndex).map { argument($0) }
+            parameters.append(args.indices.contains(cacheIndex) && args[cacheIndex].lowercased() == "true" ? "true" : "false")
+            if command == "webViewGetSourceAwait" { parameters.append("Number(" + argument(5, fallback: "0") + ")") }
+            script = "java." + name + "(" + parameters.joined(separator: ",") + ")"
+        case "downloadFileAwait", "readTxtFileAwait", "importScriptAwait":
             let name = command.replacingOccurrences(of: "Await", with: "")
             script = "java." + name + "(" + args.map(sourceJSONString).joined(separator: ",") + ")"
         case "decryptStrAwait", "encryptBase64Await", "encryptHexAwait":
