@@ -229,6 +229,9 @@ struct SourceFixtureRoot: View {
                 if ProcessInfo.processInfo.arguments.contains("--video-web-fixture") {
                     store.sources[0].ruleContent.content = "@js:java.startBrowser('/video/embed?ep='+(chapter.index+1),title); result='';"
                 }
+                if ProcessInfo.processInfo.arguments.contains("--video-hls-fixture") {
+                    store.sources[0].ruleContent.content = "@js:'http://127.0.0.1:8765/video/hls/index.m3u8';"
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("--discovery-scroll-fixture") {
                 store.sources = (0..<40).map { index in

@@ -117,7 +117,7 @@ struct SourceBookDetailView: View {
                         if !displayBook.intro.isEmpty { Text(displayBook.intro).font(.system(size: 14)).foregroundStyle(.secondary).lineSpacing(5) }
                         Divider()
                         HStack {
-                            Text("目录 · \(chapters.count) 章").font(.system(size: 16, weight: .medium))
+                            Text(source?.isVideo == true ? "选集 · \(chapters.count) 集" : "目录 · \(chapters.count) 章").font(.system(size: 16, weight: .medium))
                             Spacer()
                             Button { reversed.toggle() } label: { Label(reversed ? "倒序" : "正序", systemImage: "arrow.up.arrow.down") }.font(.caption)
                         }
@@ -147,7 +147,7 @@ struct SourceBookDetailView: View {
                 }
             }
             .background(AppTheme.surface)
-            .navigationTitle("书籍详情")
+            .navigationTitle(source?.isVideo == true ? "视频详情" : "书籍详情")
             .readerNavigationStyle()
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } } }
             .safeAreaInset(edge: .bottom, spacing: 0) { actions }
@@ -194,7 +194,7 @@ struct SourceBookDetailView: View {
                 Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
             }.buttonStyle(.bordered).disabled(existingBook != nil || chapters.isEmpty || loading)
             Button { openChapter(nil) } label: {
-                Text(existingBook == nil ? "开始阅读" : "继续阅读").frame(maxWidth: .infinity, minHeight: 46)
+                Text(source?.isVideo == true ? (existingBook == nil ? "开始播放" : "继续播放") : (existingBook == nil ? "开始阅读" : "继续阅读")).frame(maxWidth: .infinity, minHeight: 46)
             }.buttonStyle(.borderedProminent).disabled(chapters.isEmpty || loading)
         }.font(.system(size: 15)).padding(.horizontal, 16).padding(.vertical, 8)
             .background(AppTheme.surface.shadow(color: .black.opacity(0.07), radius: 4, y: -2))

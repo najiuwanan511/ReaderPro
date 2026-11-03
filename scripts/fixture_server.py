@@ -153,6 +153,21 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parsed.path
+        if path.startswith('/video/hls/'):
+            if self.headers.get('X-Video') != 'ReaderPro' or self.headers.get('Referer') != 'http://127.0.0.1:8765/video/book':
+                self.send_error(403, 'missing HLS source headers')
+                return
+            name = path.rsplit('/', 1)[-1]
+            if name not in ('index.m3u8', 'segment00.ts', 'segment01.ts'):
+                self.send_error(404)
+                return
+            data = (Path('scripts/fixtures/hls') / name).read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/vnd.apple.mpegurl' if name.endswith('.m3u8') else 'video/mp2t')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path.startswith('/video/episode') and path.endswith('.mp4'):
             # AVFoundation must send the headers returned by the source rules.
             if self.headers.get('X-Video') != 'ReaderPro' or self.headers.get('Referer') != 'http://127.0.0.1:8765/video/book':
