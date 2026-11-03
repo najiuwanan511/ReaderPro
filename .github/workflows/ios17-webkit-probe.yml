@@ -6,9 +6,15 @@ on:
       - scripts/ios17-webkit-probe/**
       - .github/workflows/ios17-webkit-probe.yml
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Diagnostic runner architecture (production regression remains ARM64)
+        type: choice
+        options: [macos-15, macos-15-intel]
+        default: macos-15
 jobs:
   transport-probe:
-    runs-on: macos-15
+    runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
