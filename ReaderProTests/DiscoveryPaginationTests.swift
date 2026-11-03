@@ -19,6 +19,18 @@ private final class DiscoveryPageProtocol: URLProtocol {
 }
 
 final class DiscoveryPaginationTests: XCTestCase {
+    func testDiscoveryScriptsCanReadSourceNameAndNotificationTag() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://discovery-tag.test"
+        source.bookSourceName = "回归测试书源"
+        try await source.withRules {
+            let value = LegadoJS.run("[source.bookSourceName,java.getSource().bookSourceName,java.getTag()].join('|')",
+                                     input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check()
+            XCTAssertEqual(value, "回归测试书源|回归测试书源|回归测试书源")
+        }
+    }
+
     func testDiscoveryExpandsRequestedPageAndEndsOnEmptyLaterPage() async throws {
         var source = LegadoSource()
         source.bookSourceUrl = "https://discover-pages.test"

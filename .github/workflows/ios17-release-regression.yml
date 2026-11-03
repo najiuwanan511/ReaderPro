@@ -47,7 +47,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
-            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/ios17-build.log
+            ONLY_ACTIVE_ARCH=YES ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/ios17-build.log
           xcrun simctl shutdown "$READER_SIMULATOR_ID"
           xcrun simctl boot "$READER_SIMULATOR_ID"
           xcrun simctl bootstatus "$READER_SIMULATOR_ID" -b

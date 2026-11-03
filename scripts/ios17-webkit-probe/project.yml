@@ -1,0 +1,41 @@
+name: ProxyProbe
+targets:
+  ProxyProbe:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - App.swift
+      - ../../ReaderPro/SourceWebProxy.m
+      - ../../ReaderPro/SourceWebProxy.h
+    info:
+      path: Info.plist
+      properties:
+        CFBundleIdentifier: com.selfuse.readerpro.proxyprobe
+        UILaunchScreen: {}
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: Probe-Bridging-Header.h
+        PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.readerpro.proxyprobe
+  ProxyProbeTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources: [ProxyProbeTests.swift]
+    dependencies:
+      - target: ProxyProbe
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: Probe-Bridging-Header.h
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  ProxyProbe:
+    build:
+      targets:
+        ProxyProbe: all
+    test:
+      targets: [ProxyProbeTests]

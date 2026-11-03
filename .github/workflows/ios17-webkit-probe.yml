@@ -1,0 +1,40 @@
+name: iOS 17 WebKit transport probe
+on:
+  workflow_dispatch:
+jobs:
+  transport-probe:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare isolated WebKit host and iOS 17
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          brew install xcodegen
+          xcodegen generate --spec scripts/ios17-webkit-probe/project.yml --project scripts/ios17-webkit-probe
+          mkdir -p build
+          python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
+          if ! xcrun simctl list runtimes available | grep -q 'iOS 17.0'; then
+            xcodebuild -downloadPlatform iOS -buildVersion 17.0 > build/runtime-download.log 2>&1
+          fi
+          DEVICE=$(xcrun simctl create ReaderPro-WebKitProbe com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-0)
+          echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
+          curl --fail --silent http://127.0.0.1:8765/health
+      - name: Compare data stores and warmup with identical proxy requests
+        run: |
+          set -o pipefail
+          xcodebuild test -project scripts/ios17-webkit-probe/ProxyProbe.xcodeproj -scheme ProxyProbe -configuration Debug \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -resultBundlePath build/WebKitProbe.xcresult ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/webkit-probe.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios17-webkit-probe
+          path: |
+            build/webkit-probe.log
+            build/fixture-server.log
+            build/WebKitProbe.xcresult

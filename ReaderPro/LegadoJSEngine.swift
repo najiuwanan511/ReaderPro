@@ -376,6 +376,7 @@ final class LegadoJS {
         let putConcurrent: @convention(block) (JSValue) -> Void = { v in concurrentBox.value = Int(v.toNumber()?.intValue ?? 0) }
         source.setObject(sourceUrl, forKeyedSubscript: "key" as NSString)
         source.setObject(sourceUrl, forKeyedSubscript: "bookSourceUrl" as NSString)
+        source.setObject(LegadoJSCtx.ruleSource?.bookSourceName ?? "", forKeyedSubscript: "bookSourceName" as NSString)
         // Some sources store their decoder library here and eval it from
         // search/info/category rules. Apply the same token-aware Java string
         // adaptation as jsLib; the persisted source comment remains original.
