@@ -211,6 +211,10 @@ struct SourceFixtureRoot: View {
                 source.loginUrl = "/login/web"; source.bookSourceName = "网页登录测试源"
                 source.searchUrl = "/login/protected?key={{key}}"
             }
+            if ProcessInfo.processInfo.arguments.contains("--source-verification-fixture") {
+                source.bookSourceName = "等待验证测试源"
+                source.searchUrl = "@js:java.startBrowserAwait(source.bookSourceUrl+'/login/web','搜索验证',false);source.bookSourceUrl+'/login/protected?key='+key"
+            }
             if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") &&
                 (ProcessInfo.processInfo.arguments.contains("--source-login-fixture") || ProcessInfo.processInfo.arguments.contains("--source-web-login-fixture")) {
                 try? SourceLoginInfo.remove(source.bookSourceUrl); try? SourceLoginHeaders.remove(source.bookSourceUrl)

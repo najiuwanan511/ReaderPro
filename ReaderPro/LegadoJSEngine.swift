@@ -249,6 +249,30 @@ final class LegadoJS {
             }
         }
         java.setObject(web, forKeyedSubscript: "_webView" as NSString)
+        let verification: @convention(block) (String, String, String, Bool, Bool) -> String = { address, title, html, refetch, image in
+            do {
+                let request = try SourceHTTP.request(address, base: baseUrl, headers: LegadoJSCtx.headers)
+                let verified = try SourceJSBridge.verify(request, title: title, html: html.isEmpty ? nil : html, image: image)
+                if image { return verified.text }
+                let response: [String: Any]
+                if refetch { response = try SourceJSBridge.request(verified.url, base: baseUrl, headers: LegadoJSCtx.headers) }
+                else { response = ["text": verified.text, "url": verified.url, "status": 200, "headers": [String: String]()] }
+                return String(decoding: try JSONSerialization.data(withJSONObject: response), as: UTF8.self)
+            } catch { JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current()); return "" }
+        }
+        java.setObject(verification, forKeyedSubscript: "_verify" as NSString)
+        let browse: @convention(block) (String, String, JSValue) -> Void = { address, title, html in
+            do {
+                let request = try SourceHTTP.request(address, base: baseUrl, headers: LegadoJSCtx.headers)
+                let source = LegadoJSCtx.ruleSource, content = html.isNull || html.isUndefined ? nil : html.toString()
+                Task { @MainActor in
+                    do { _ = try await SourceVerification.open(request: request, title: title, html: content, source: source, timeout: 180) }
+                    catch { if !(error is CancellationError) { SourceExecutionLog.shared.add(sourceErrorMessage(error), source: sourceUrl) } }
+                }
+            } catch { JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current()) }
+        }
+        java.setObject(browse, forKeyedSubscript: "startBrowser" as NSString)
+        java.setObject(browse, forKeyedSubscript: "openUrl" as NSString)
         let select: @convention(block) (String, String) -> String = { text, selector in encodedStrings(LegadoDOM.css(text, selector).map(\.full)) }
         let attribute: @convention(block) (String, String) -> String = { text, name in
             LegadoDOM.css(text, "body > *").first.map { htmlAttrs($0.open)[name.lowercased()] ?? "" } ?? ""
@@ -815,6 +839,8 @@ final class LegadoJS {
     java.webView = function(html, url, script, cacheFirst) { return java._webView(html == null ? '' : String(html), url == null ? baseUrl : String(url), script == null ? '' : String(script), '', '', !!cacheFirst, 0); };
     java.webViewGetSource = function(html,url,script,regex,cacheFirst,delay) { return java._webView(html==null?'':String(html),url==null?baseUrl:String(url),script==null?'':String(script),String(regex),'',!!cacheFirst,Number(delay)||0); };
     java.webViewGetOverrideUrl = function(html,url,script,regex,cacheFirst,delay) { return java._webView(html==null?'':String(html),url==null?baseUrl:String(url),script==null?'':String(script),'',String(regex),!!cacheFirst,Number(delay)||0); };
+    java.startBrowserAwait=function(url,title,refetch,html){return _response(java._verify(String(url),title==null?'':String(title),html==null?'':String(html),refetch!==false,false));};
+    java.getVerificationCode=function(url){return java._verify(String(url),'图片验证码','',false,true);};
     function _element(html) {
         return {
             outerHtml:function(){return html;}, toString:function(){return html;}, toJSON:function(){return html;},

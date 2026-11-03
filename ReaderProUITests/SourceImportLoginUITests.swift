@@ -1,6 +1,22 @@
 import XCTest
 
 final class SourceImportLoginUITests: XCTestCase {
+    func testSearchRuleWaitsForVisibleVerificationAndResumesUsingCookies() {
+        continueAfterFailure = false; executionTimeAllowance = 300
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-web-login-fixture", "--source-verification-fixture"]
+        app.launch(); app.tabBars.buttons["搜索"].tap()
+        let field = app.textFields["bookSearch"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("登录")
+        app.buttons["submitBookSearch"].tap()
+        let link = app.webViews.links["确认登录测试账号"]
+        XCTAssertTrue(link.waitForExistence(timeout: 20)); link.tap()
+        XCTAssertTrue(app.webViews.staticTexts["网页登录完成"].waitForExistence(timeout: 10))
+        app.buttons["验证完成"].tap()
+        XCTAssertTrue(app.staticTexts["已登录可搜索小说"].waitForExistence(timeout: 30))
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     func testDiscoveryLongPressLoginSwitchesInterfaceAndKeepsSelection() {
         continueAfterFailure = false; executionTimeAllowance = 300
         let app = XCUIApplication()
