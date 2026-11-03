@@ -268,8 +268,16 @@ final class LegadoJS {
         // `key` remains the current search keyword.
         let getKey: @convention(block) () -> String = { sourceUrl }
         let getSourceUrl: @convention(block) () -> String = { sourceUrl }
-        let getLoginMap: @convention(block) () -> [String: String] = { loginInfo }
-        let getLoginStr: @convention(block) () -> String = { loginInfo.map { "\($0.key)=\($0.value)" }.joined(separator: "&") }
+        let loginContext = LegadoJSCtx.loginContext
+        let savedLogin = loginInfo.isEmpty ? SourceLoginInfo.map(sourceUrl) : loginInfo
+        let getLoginMap: @convention(block) () -> [String: String] = { loginContext?.values ?? savedLogin }
+        let getLoginStr: @convention(block) () -> JSValue? = {
+            guard let context = JSContext.current() else { return nil }
+            let values = loginContext?.values ?? savedLogin
+            guard !values.isEmpty else { return JSValue(nullIn: context) }
+            let data = try? JSONSerialization.data(withJSONObject: values, options: .sortedKeys)
+            return JSValue(object: data.map { String(decoding: $0, as: UTF8.self) } ?? "{}", in: context)
+        }
         let getHeader: @convention(block) () -> [String: String] = { header }
         let concurrentBox = ConcurrentBox()
         let getConcurrent: @convention(block) () -> Int = { concurrentBox.value }
@@ -311,6 +319,24 @@ final class LegadoJS {
         source.setObject(getSourceUrl, forKeyedSubscript: "getBookSourceUrl" as NSString)
         source.setObject(getLoginMap, forKeyedSubscript: "getLoginInfoMap" as NSString)
         source.setObject(getLoginStr, forKeyedSubscript: "getLoginInfo" as NSString)
+        let putLoginInfo: @convention(block) (String) -> Bool = { raw in
+            do {
+                guard let values = try JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: String] else {
+                    throw SourceFailure(stage: "书源登录", message: "登录信息必须为字符串字典")
+                }
+                try SourceLoginInfo.put(values, source: sourceUrl); loginContext?.values = values
+                return true
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return false
+            }
+        }
+        let removeLoginInfo: @convention(block) () -> Void = {
+            do { try SourceLoginInfo.remove(sourceUrl); loginContext?.values = [:] }
+            catch { JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current()) }
+        }
+        source.setObject(putLoginInfo, forKeyedSubscript: "putLoginInfo" as NSString)
+        source.setObject(removeLoginInfo, forKeyedSubscript: "removeLoginInfo" as NSString)
         let getLoginHeader: @convention(block) () -> JSValue? = {
             guard let context = JSContext.current() else { return nil }
             guard let value = SourceLoginHeaders.get(sourceUrl) else { return JSValue(nullIn: context) }
@@ -398,6 +424,53 @@ final class LegadoJS {
         ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
         ctx.evaluateScript(Self.compatibilityScript)
+        ctx.evaluateScript(#"""
+        function _loginMap(value) {
+            Object.defineProperties(value, {
+                get: {value:function(k){return this[k] == null ? null : this[k];}},
+                put: {value:function(k,v){var old=this[k];this[k]=String(v);return old;}},
+                containsKey: {value:function(k){return Object.prototype.hasOwnProperty.call(this,k);}},
+                size: {value:function(){return Object.keys(this).length;}},
+                isEmpty: {value:function(){return Object.keys(this).length===0;}},
+                keySet: {value:function(){return _array(Object.keys(this));}}
+            });
+            return value;
+        }
+        var _getLoginInfoMap = source.getLoginInfoMap;
+        source.getLoginInfoMap = function(){return _loginMap(_getLoginInfoMap());};
+        source.login = function(){eval(source.loginUrl.replace(/^@js:/,'').replace(/^<js>/,'').replace(/<\/js>\s*$/,'')); if(typeof login==='function') return login(); throw Error('书源未实现 login 函数');};
+        """#)
+        if let loginContext {
+            ctx.setObject(loginContext.isLongClick, forKeyedSubscript: "isLongClick" as NSString)
+            ctx.evaluateScript("result = _loginMap(result)")
+            let update: @convention(block) (JSValue) -> Void = { value in
+                if value.isNull || value.isUndefined { loginContext.resetDefaults = true; return }
+                if let fields = value.toDictionary() as? [String: Any] {
+                    for (key, item) in fields {
+                        let text = item is NSNull ? "" : String(describing: item)
+                        loginContext.updates[key] = text; loginContext.values[key] = text
+                    }
+                }
+            }
+            let rebuild: @convention(block) () -> Void = { loginContext.rebuild = true }
+            let toast: @convention(block) (String) -> Void = { loginContext.message = $0 }
+            let copy: @convention(block) (String) -> Void = { loginContext.copyText = $0 }
+            let browser: @convention(block) (String) -> Void = { url in loginContext.browser = SourceLoginBrowser(url: resolveUrl(url, base: baseUrl)) }
+            let showBrowser: @convention(block) (String, JSValue, JSValue) -> Void = { url, html, script in
+                loginContext.browser = SourceLoginBrowser(url: resolveUrl(url, base: baseUrl),
+                    html: html.isNull || html.isUndefined ? nil : html.toString(),
+                    script: script.isNull || script.isUndefined ? nil : script.toString())
+            }
+            java.setObject(update, forKeyedSubscript: "upLoginData" as NSString)
+            java.setObject(rebuild, forKeyedSubscript: "reLoginView" as NSString)
+            java.setObject(rebuild, forKeyedSubscript: "refreshExplore" as NSString)
+            java.setObject(toast, forKeyedSubscript: "toast" as NSString)
+            java.setObject(toast, forKeyedSubscript: "longToast" as NSString)
+            java.setObject(copy, forKeyedSubscript: "copyText" as NSString)
+            java.setObject(browser, forKeyedSubscript: "startBrowser" as NSString)
+            java.setObject(browser, forKeyedSubscript: "openUrl" as NSString)
+            java.setObject(showBrowser, forKeyedSubscript: "showBrowser" as NSString)
+        }
         if structuredResult is [String] {
             ctx.evaluateScript("result = _elements(result)")
         }
@@ -406,7 +479,7 @@ final class LegadoJS {
         }
         let refreshExplore: @convention(block) () -> Void = { ExploreInfo.refresh(sourceUrl) }
         ctx.setObject(infoMap, forKeyedSubscript: "_exploreInfo" as NSString)
-        java.setObject(refreshExplore, forKeyedSubscript: "refreshExplore" as NSString)
+        if loginContext == nil { java.setObject(refreshExplore, forKeyedSubscript: "refreshExplore" as NSString) }
         ctx.evaluateScript(Self.exploreInfoScript)
         SourceCrypto.install(java, context: ctx)
         let digest: @convention(block) (JSValue, String) -> String = { text, algorithm in

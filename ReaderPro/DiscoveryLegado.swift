@@ -104,6 +104,7 @@ struct SourceExploreCard: View {
     @State private var categoryError = ""
     @State private var actionError = ""
     @State private var retry = 0
+    @State private var showLogin = false
     private var cacheKey: String { source.exploreCacheKey + "|\(retry)|\(ExploreInfo.revision(source.bookSourceUrl))" }
 
     var body: some View {
@@ -122,6 +123,7 @@ struct SourceExploreCard: View {
                 .accessibilityIdentifier("source-explore-\(source.bookSourceUrl)")
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
                 .contextMenu {
+                    if source.hasLogin { Button("登录") { showLogin = true } }
                     Button("刷新发现分类") { retry += 1; expanded = true }
                 }
             if expanded { categoryContent }
@@ -143,6 +145,7 @@ struct SourceExploreCard: View {
         }
         .onChange(of: expanded) { _, open in if !open { ExploreInfo.savePending(source.bookSourceUrl) } }
         .onDisappear { ExploreInfo.savePending(source.bookSourceUrl) }
+        .sheet(isPresented: $showLogin, onDismiss: { retry += 1 }) { SourceLoginView(source: source) }
     }
     @ViewBuilder private var categoryContent: some View {
         if loading { ProgressView().frame(maxWidth: .infinity).padding(12) }

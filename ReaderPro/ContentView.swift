@@ -395,6 +395,7 @@ struct SourceView: View {
     @StateObject private var searchState = SourceSearchController()
     @State private var showSearchErrors = false
     @State private var showImport = false
+    @StateObject private var importModel = SourceImportModel()
     @State private var importText = ""
     @State private var importError = ""
     @State private var importStatus = ""
@@ -468,9 +469,8 @@ struct SourceView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("粘贴 Legado 书源、订阅源 JSON 或网络链接。自动识别类型，订阅源保存到「订阅源管理」，可在「订阅」中查看。").font(.footnote).foregroundStyle(.secondary)
                     TextEditor(text: $importText).border(Color.gray.opacity(0.3))
-                    if !importError.isEmpty { Text(importError).foregroundStyle(.red).font(.footnote) }
-                    if !importStatus.isEmpty { Text(importStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
-                    Button("导入") { importSource() }
+                    SourceImportStatusView(model: importModel)
+                    Button("导入") { importSource() }.disabled(importModel.running || importText.isEmpty)
                     Spacer()
                 }.padding()
                 .navigationTitle("导入书源")
@@ -494,33 +494,8 @@ struct SourceView: View {
         searchFocused = false
         searchState.start(store.enabledSources, key: key)
     }
-    func importSource() {
-        let trimmed = importText.trimmingCharacters(in: .whitespacesAndNewlines)
-        importError = ""
-        importStatus = ""
-        if trimmed.hasPrefix("http") {
-            importStatus = "正在拉取链接…"
-            Task {
-                do {
-                    let result = try await importSourcePacksFromURL(trimmed)
-                    await MainActor.run {
-                        importText = ""
-                        importStatus = store.mergeImportedSources(result)
-                    }
-                } catch {
-                    await MainActor.run { importStatus = ""; importError = "拉取失败：\(error.localizedDescription)" }
-                }
-            }
-            return
-        }
-        let result = importSourceDocument(importText)
-        if result.isEmpty {
-            importError = "解析失败：请粘贴 Legado 书源、订阅源 JSON 或网络链接。"
-        } else {
-            importText = ""
-            importStatus = store.mergeImportedSources(result)
-        }
-    }
+    func importSource() { importModel.start(importText, store: store) }
+
 }
 
 // MARK: - Settings

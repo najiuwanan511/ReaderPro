@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 
 struct SourceManagementView: View {
     @ObservedObject var store: BookStore
+    @StateObject private var importModel = SourceImportModel()
+    @State private var showImportProgress = false
     @State private var showFileImport = false
     @State private var showFileResult = false
     @State private var fileImportMessage = ""
@@ -200,13 +202,13 @@ struct SourceManagementView: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showImportOptions = true } label: {
-                    if importingFile { ProgressView() }
+                    if importModel.running { ProgressView() }
                     else {
                         Label("导入书源", systemImage: "square.and.arrow.down")
                             .labelStyle(.iconOnly)
                             .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
                     }
-                }.disabled(importingFile).accessibilityLabel("导入书源")
+                }.disabled(importModel.running).accessibilityLabel("导入书源")
             }
         }
         .confirmationDialog("导入书源或订阅源", isPresented: $showImportOptions, titleVisibility: .visible) {
@@ -232,17 +234,9 @@ struct SourceManagementView: View {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
                     TextEditor(text: $pasteText).border(Color.gray.opacity(0.3))
-                    if !pasteError.isEmpty { Text(pasteError).foregroundStyle(.red).font(.footnote) }
-                    if !pasteStatus.isEmpty { Text(pasteStatus).foregroundStyle(AppTheme.accentDeep).font(.footnote) }
-                    Button("导入") {
-                        pasteError = ""; pasteStatus = ""
-                        let result = importSourceDocument(pasteText)
-                        if result.isEmpty { pasteError = "解析失败：请粘贴 Legado 书源或订阅源 JSON；网络链接请使用网络导入。" }
-                        else {
-                            pasteText = ""
-                            pasteStatus = store.mergeImportedSources(result)
-                        }
-                    }
+                    SourceImportStatusView(model: importModel)
+                    Button("导入") { importModel.start(pasteText, store: store) }
+                        .disabled(importModel.running || pasteText.isEmpty)
                     Spacer()
                 }.padding().navigationTitle("粘贴导入").toolbar { Button("关闭") { showPaste = false } }
             }
@@ -253,34 +247,20 @@ struct SourceManagementView: View {
                     TextField("https://… 书源或订阅源链接", text: $networkURL)
                         .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .accessibilityIdentifier("sourceNetworkImportURL")
-                    if !networkError.isEmpty { Text(networkError).foregroundStyle(.red).font(.footnote) }
-                    Button(networkLoading ? "拉取中…" : "拉取并导入") {
-                        networkLoading = true; networkError = ""; networkResult = ""; networkHasRssSources = false
-                        Task {
-                            do {
-                                let result = try await importSourcePacksFromURL(networkURL)
-                                await MainActor.run {
-                                    networkLoading = false
-                                    networkResult = store.mergeImportedSources(result)
-                                    networkHasRssSources = !result.rssSources.isEmpty
-                                    networkURL = ""
-                                }
-                            } catch {
-                                await MainActor.run { networkLoading = false; networkError = "拉取失败：\(error.localizedDescription)" }
-                            }
-                        }
-                    }.disabled(networkLoading || networkURL.isEmpty)
-                    if !networkResult.isEmpty {
-                        Text(networkResult).font(.footnote).foregroundStyle(AppTheme.accentDeep)
-                            .accessibilityIdentifier("sourceNetworkImportResult")
-                        if networkHasRssSources {
-                            NavigationLink("查看订阅源") { RssSourceManagementView(store: store) }
-                        }
-                    }
-                    Text("大合集（上千个书源）要从 CDN 下载十几 MB，可能需要几十秒，请耐心等待，不要重复点击。")
+                    Button(importModel.running ? "导入中…" : "拉取并导入") { importModel.start(networkURL, store: store) }
+                        .disabled(importModel.running || networkURL.isEmpty)
+                    SourceImportStatusView(model: importModel)
+                    if importModel.hasRssSources { NavigationLink("查看订阅源") { RssSourceManagementView(store: store) } }
+                    Text("仅下载和解析书源文件，不逐个访问或校验书源网站。子合集会显示已处理数量，可随时取消。")
                         .font(.caption2).foregroundStyle(.secondary)
                     Spacer()
                 }.padding().navigationTitle("网络导入").toolbar { Button("关闭") { showNetwork = false } }
+            }
+        }
+        .sheet(isPresented: $showImportProgress) {
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 16) { SourceImportStatusView(model: importModel); Spacer() }.padding()
+                    .navigationTitle("书源导入").toolbar { Button("关闭") { showImportProgress = false } }
             }
         }
         .sheet(isPresented: $showQR) {
@@ -299,24 +279,7 @@ struct SourceManagementView: View {
         }
     }
     private func importSourceFile(_ url: URL) {
-        importingFile = true
-        Task {
-            let message = await Task.detached(priority: .userInitiated) { () -> SourcePackImportResult? in
-                let access = url.startAccessingSecurityScopedResource()
-                defer { if access { url.stopAccessingSecurityScopedResource() } }
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return importSourceDocument(decodeTextData(data))
-            }.value
-            await MainActor.run {
-                importingFile = false
-                if let result = message, !result.isEmpty {
-                    fileImportMessage = store.mergeImportedSources(result)
-                } else {
-                    fileImportMessage = "未能读取书源或订阅源，请选择包含 Legado JSON 的文件。"
-                }
-                showFileResult = true
-            }
-        }
+        importModel.start(file: url, store: store); showImportProgress = true
     }
 
     // 当前选中（编辑模式）对应的书源
@@ -372,27 +335,9 @@ struct SourceManagementView: View {
     }
 
     func handleQR(_ code: String) {
-        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed.hasPrefix("http") {
-            qrResult = "扫到链接，正在拉取…"
-            Task {
-                do {
-                    let result = try await importSourcePacksFromURL(trimmed)
-                    await MainActor.run {
-                        qrResult = store.mergeImportedSources(result)
-                    }
-                } catch {
-                    await MainActor.run { qrError = "拉取失败：\(error.localizedDescription)" }
-                }
-            }
-        } else {
-            let result = importSourceDocument(trimmed)
-            if result.isEmpty { qrError = "这个二维码不是书源、订阅源 JSON 或链接" }
-            else {
-                qrResult = store.mergeImportedSources(result)
-            }
-        }
+        importModel.start(code, store: store); showImportProgress = true
     }
+
 }
 
 // MARK: - QR scanner (AVFoundation)
@@ -449,6 +394,7 @@ struct SourceDetailView: View {
     @State private var testing = false
     @State private var testError = ""
     @State private var showBrowser = false
+    @State private var showLogin = false
     @State private var showEditor = false
     @State private var sourceJSON = ""
     @State private var legacyCertificates = false
@@ -463,6 +409,7 @@ struct SourceDetailView: View {
                 LabeledContent("发现地址", value: source.effectiveDiscoverUrl.isEmpty ? "（空）" : source.effectiveDiscoverUrl)
             }
             Section("打开") {
+                if source.hasLogin { Button("登录 / 接口设置") { showLogin = true } }
                 Button { sourceJSON = Self.prettyJSON(source); showEditor = true } label: {
                     Label("在代码编辑器打开（查看/改规则）", systemImage: "chevron.left.forwardslash.chevron.right")
                 }
@@ -514,6 +461,7 @@ struct SourceDetailView: View {
         .navigationTitle(source.bookSourceName)
         .onAppear { legacyCertificates = SourceTLS.isAllowed(source.bookSourceUrl) }
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showLogin) { SourceLoginView(source: source) }
         .sheet(isPresented: $showBrowser) {
             NavigationStack { BrowserView(initialURL: source.bookSourceUrl) }
         }

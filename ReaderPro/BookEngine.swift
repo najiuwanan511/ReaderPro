@@ -545,18 +545,37 @@ class BookStore: ObservableObject {
         if !metaExists && replaceRules.isEmpty { replaceRules = ReplaceRule.defaults }
         if metaExists && sources.count != beforeCount { save() }
     }
-    func save() {
-        saveBooks()
-        let m = Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
+    private static let persistenceQueue = DispatchQueue(label: "ReaderPro.persistence", qos: .userInitiated)
+    private func metadataSnapshot() -> Meta {
+        Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
                      fontSize: fontSize, lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing,
                      pagePaddingH: pagePaddingH, pagePaddingV: pagePaddingV, brightness: brightness,
                      pageTurn: pageTurn, pageTurnSpeed: pageTurnSpeed, fontName: fontName, showHeader: showHeader, showFooter: showFooter,
                      ttsRate: ttsRate, ttsPitch: ttsPitch, theme: theme,
                      webdavURL: webdavURL, webdavUser: webdavUser, webdavPassword: webdavPassword, webdavPath: webdavPath)
-        if let d = try? JSONEncoder().encode(m) { try? d.write(to: Self.metaURL) }
+    }
+    private static func writeSnapshot(_ meta: Meta, books: [LocalBook]) throws {
+        try JSONEncoder().encode(books).write(to: booksURL, options: .atomic)
+        try JSONEncoder().encode(meta).write(to: metaURL, options: .atomic)
+    }
+    func save() {
+        let meta = metadataSnapshot(); let snapshot = books
+        Self.persistenceQueue.sync { try? Self.writeSnapshot(meta, books: snapshot) }
+    }
+    func saveAsync() async throws {
+        let meta = metadataSnapshot(); let snapshot = books
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            Self.persistenceQueue.async {
+                do { try Self.writeSnapshot(meta, books: snapshot); continuation.resume() }
+                catch { continuation.resume(throwing: error) }
+            }
+        }
     }
     func saveBooks() {
-        if let data = try? JSONEncoder().encode(books) { try? data.write(to: Self.booksURL, options: .atomic) }
+        let snapshot = books
+        Self.persistenceQueue.sync {
+            if let data = try? JSONEncoder().encode(snapshot) { try? data.write(to: Self.booksURL, options: .atomic) }
+        }
     }
     func updateBook(_ book: LocalBook) {
         if let i = books.firstIndex(where: { $0.id == book.id }) { books[i] = book } else { books.insert(book, at: 0) }
@@ -578,48 +597,51 @@ class BookStore: ObservableObject {
     var enabledSources: [LegadoSource] { sources.filter { $0.enabled } }
 
     /// All import entry points route each schema to its own persisted collection.
-    func mergeImportedSources(_ document: SourcePackImportResult) -> String {
+    func mergeImportedSources(_ document: SourcePackImportResult, persist: Bool = true) -> String {
         var lines: [String] = []
         if !document.sources.isEmpty {
-            let result = mergeSources(document.sources)
+            let result = mergeSources(document.sources, persist: false)
             lines.append("解析到 \(document.sources.count) 个书源：新增 \(result.added)，更新 \(result.updated)，重复 \(result.duplicates)")
         }
         if !document.rssSources.isEmpty {
             let existing = Set(rssSources.map(rssSourceIdentityKey))
             let added = document.rssSources.filter { !existing.contains(rssSourceIdentityKey($0)) }.count
             rssSources = mergeRssSources(rssSources, incoming: document.rssSources)
-            save()
             lines.append("已识别 \(document.rssSources.count) 个订阅源：新增 \(added)，更新 \(document.rssSources.count - added)。")
             lines.append("已保存到「订阅源管理」，可在「订阅」中查看。")
         }
         if document.fetchedPacks > 0 || !document.failures.isEmpty { lines.append(document.diagnostics) }
         else if document.skipped > 0 { lines.append("跳过 \(document.skipped) 个格式不对的条目") }
+        if persist { save() }
         return lines.joined(separator: "\n")
     }
 
     /// Merge by Legado's full source URL. Re-importing a pack updates
     /// its rules instead of creating hundreds of duplicate rows.
     @discardableResult
-    func mergeSources(_ incoming: [LegadoSource]) -> SourceMergeResult {
+    func mergeSources(_ incoming: [LegadoSource], persist: Bool = true) -> SourceMergeResult {
+        var merged = sources
+        merged.reserveCapacity(merged.count + incoming.count)
         var result = SourceMergeResult()
         var seen = Set<String>()
         var indices: [String: Int] = [:]
-        for (index, source) in sources.enumerated() { indices[sourceIdentityKey(source)] = index }
+        for (index, source) in merged.enumerated() { indices[sourceIdentityKey(source)] = index }
         for source in incoming {
             let k = sourceIdentityKey(source)
             guard seen.insert(k).inserted else { result.duplicates += 1; continue }
             if let index = indices[k] {
                 var updated = source
-                updated.id = sources[index].id
-                sources[index] = updated
+                updated.id = merged[index].id
+                merged[index] = updated
                 result.updated += 1
             } else {
-                indices[k] = sources.count
-                sources.append(source)
+                indices[k] = merged.count
+                merged.append(source)
                 result.added += 1
             }
         }
-        save()
+        sources = merged
+        if persist { save() }
         return result
     }
 

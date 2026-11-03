@@ -153,6 +153,33 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parsed.path
+        if path == '/packs/import-slow':
+            # A stalled download must leave the elapsed timer and cancel
+            # button usable; its late response must never mutate the store.
+            time.sleep(8)
+            data = b'[{"bookSourceName":"cancelled-import","bookSourceUrl":"https://cancelled.invalid"}]'
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            try: self.wfile.write(data)
+            except (BrokenPipeError, ConnectionResetError): pass
+            return
+        if path == '/login/web':
+            data = '<html><meta name="viewport" content="width=device-width"><body><h1>网页登录测试</h1><a href="/login/complete">确认登录测试账号</a></body></html>'.encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        if path == '/login/complete':
+            data = '<html><body><h1>网页登录完成</h1></body></html>'.encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Set-Cookie', 'readerpro_login=ok; Path=/; HttpOnly; SameSite=Lax')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        if path == '/login/protected':
+            if 'readerpro_login=ok' not in self.headers.get('Cookie', ''):
+                self.send_error(401, 'missing web login cookie'); return
+            data = '<ul class="books"><li><a class="name" href="/book/1/">已登录可搜索小说</a><em>测试作者</em></li></ul>'.encode()
+            self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
         if path.startswith('/video/hls/'):
             if self.headers.get('X-Video') != 'ReaderPro' or self.headers.get('Referer') != 'http://127.0.0.1:8765/video/book':
                 self.send_error(403, 'missing HLS source headers')

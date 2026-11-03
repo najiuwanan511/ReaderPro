@@ -4,6 +4,22 @@ import SwiftUI
 // Compiled out of the Release IPA. Tests run the production views/engine with
 // an isolated simulator sandbox and a local deterministic HTTP server.
 enum SourceTestFixtures {
+    static func login() -> LegadoSource {
+        var source = html(); source.id = "fixture-login"
+        source.bookSourceName = "登录接口测试源"
+        source.loginUrl = #"""
+        function applyRoute(){source.setVariable(result.get('接口'));java.upLoginData({'当前接口':'当前接口：'+result.get('接口')});java.reLoginView();java.refreshExplore();java.toast('接口已切换')}
+        function login(){var info=source.getLoginInfoMap();if(!info.get('账号')||!info.get('密码'))throw Error('请输入账号和密码');source.putLoginHeader(JSON.stringify({'X-Login-Fixture':info.get('账号')}));java.toast('登录成功')}
+        """#
+        source.loginUi = #"""
+        [{"name":"账号","type":"text","style":{"layout_flexBasisPercent":1}},
+         {"name":"密码","type":"password","style":{"layout_flexBasisPercent":1}},
+         {"name":"接口","type":"select","chars":["接口一","接口二"],"default":"接口一","action":"applyRoute()","style":{"layout_flexBasisPercent":1}},
+         {"name":"当前接口","type":"button","viewName":"'当前接口：'+(source.getVariable()||'接口一')","style":{"layout_flexBasisPercent":1}}]
+        """#
+        source.exploreUrl = "@js:(source.getVariable()||'接口一')+'分类::/library/categories/fiction'"
+        return source
+    }
     static let base = "http://127.0.0.1:8765"
     static func html() -> LegadoSource {
         var source = LegadoSource()
@@ -190,6 +206,17 @@ struct SourceFixtureRoot: View {
         }.task {
             guard !loaded else { return }; loaded = true
             var source = SourceTestFixtures.html(); source.id = "fixture-html"
+            if ProcessInfo.processInfo.arguments.contains("--source-login-fixture") { source = SourceTestFixtures.login() }
+            if ProcessInfo.processInfo.arguments.contains("--source-web-login-fixture") {
+                source.loginUrl = "/login/web"; source.bookSourceName = "网页登录测试源"
+                source.searchUrl = "/login/protected?key={{key}}"
+            }
+            if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") &&
+                (ProcessInfo.processInfo.arguments.contains("--source-login-fixture") || ProcessInfo.processInfo.arguments.contains("--source-web-login-fixture")) {
+                try? SourceLoginInfo.remove(source.bookSourceUrl); try? SourceLoginHeaders.remove(source.bookSourceUrl)
+                UserDefaults.standard.removeObject(forKey: "ReaderPro.sourceVariable." + source.bookSourceUrl)
+                for cookie in HTTPCookieStorage.shared.cookies ?? [] { HTTPCookieStorage.shared.deleteCookie(cookie) }
+            }
             if ProcessInfo.processInfo.arguments.contains("--discovery-pages-fixture") {
                 source.exploreUrl = "分页分类::/discovery/pages?page={{page}}"
             }

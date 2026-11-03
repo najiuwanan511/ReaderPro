@@ -21,6 +21,8 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var header: String = ""
     var jsLib: String = ""
     var loginUrl: String = ""
+    var loginUi: String = ""
+    var loginCheckJs: String = ""
     var bookSourceComment: String = ""
     var variableComment: String? = nil
     var enabledExplore: Bool = true
@@ -134,7 +136,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, customOrder, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, enabledExplore, bookSourceComment, variableComment
+        case id, customOrder, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, loginUi, loginCheckJs, enabledExplore, bookSourceComment, variableComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -151,6 +153,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
            let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
         jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
         loginUrl = c.tolerantString(.loginUrl)
+        loginUi = c.tolerantString(.loginUi); loginCheckJs = c.tolerantString(.loginCheckJs)
         bookSourceComment = c.tolerantString(.bookSourceComment)
         variableComment = try? c.decodeIfPresent(String.self, forKey: .variableComment)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
@@ -169,6 +172,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(discoverUrl, forKey: .discoverUrl); try c.encode(exploreUrl, forKey: .exploreUrl)
         try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
         try c.encode(loginUrl, forKey: .loginUrl)
+        try c.encode(loginUi, forKey: .loginUi); try c.encode(loginCheckJs, forKey: .loginCheckJs)
         try c.encode(bookSourceComment, forKey: .bookSourceComment)
         try c.encodeIfPresent(variableComment, forKey: .variableComment)
         func encodeRule(_ rule: RuleSet, _ key: CodingKeys) throws {
@@ -186,7 +190,8 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         lhs.id == rhs.id && lhs.bookSourceName == rhs.bookSourceName && lhs.bookSourceUrl == rhs.bookSourceUrl &&
         lhs.bookSourceGroup == rhs.bookSourceGroup && lhs.enabled == rhs.enabled && lhs.searchUrl == rhs.searchUrl &&
         lhs.discoverUrl == rhs.discoverUrl && lhs.exploreUrl == rhs.exploreUrl && lhs.header == rhs.header &&
-        lhs.jsLib == rhs.jsLib && lhs.loginUrl == rhs.loginUrl && lhs.bookSourceComment == rhs.bookSourceComment &&
+        lhs.jsLib == rhs.jsLib && lhs.loginUrl == rhs.loginUrl && lhs.loginUi == rhs.loginUi &&
+        lhs.loginCheckJs == rhs.loginCheckJs && lhs.bookSourceComment == rhs.bookSourceComment &&
         lhs.variableComment == rhs.variableComment && lhs.enabledExplore == rhs.enabledExplore &&
         lhs.ruleSearch == rhs.ruleSearch && lhs.ruleBookInfo == rhs.ruleBookInfo && lhs.ruleToc == rhs.ruleToc &&
         lhs.ruleContent == rhs.ruleContent && lhs.ruleDiscover == rhs.ruleDiscover && lhs.ruleExplore == rhs.ruleExplore &&
@@ -345,7 +350,10 @@ func extractJSONSubstring(_ text: String) -> String {
 }
 
 func decodeOneSource(from dict: [String: Any]) -> LegadoSource? {
-    guard let d = try? JSONSerialization.data(withJSONObject: dict),
+    var fields = dict
+    if let ui = fields["loginUi"], !(ui is String), JSONSerialization.isValidJSONObject(ui),
+       let data = try? JSONSerialization.data(withJSONObject: ui) { fields["loginUi"] = String(decoding: data, as: UTF8.self) }
+    guard let d = try? JSONSerialization.data(withJSONObject: fields),
           let s = try? JSONDecoder().decode(LegadoSource.self, from: d),
           !s.bookSourceName.isEmpty || !s.bookSourceUrl.isEmpty else { return nil }
     return s
@@ -411,14 +419,10 @@ func scanEmbeddedSources(_ rawText: String) -> [LegadoSource] {
     return out
 }
 
-func importSourcesDetailed(_ rawText: String) -> ImportResult {
-    // Decode valid JSON first: unescaping &quot; inside rule strings corrupts JSON.
-    let direct = extractJSONSubstring(rawText)
-    let directIsJSON = direct.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } != nil
-    let text = directIsJSON ? direct : extractJSONSubstring(unescapeHTMLJSON(rawText))
+private func decodeBookSources(_ rawText: String, text: String, root: Any?) -> ImportResult {
     var sources: [LegadoSource] = []
     var skipped = 0
-    if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+    if let root {
         collectSourceDictionaries(root, sources: &sources, skipped: &skipped)
     } else {
         // Last resort: scan concatenated JSON objects with string-aware brace
@@ -447,7 +451,7 @@ func importSourcesDetailed(_ rawText: String) -> ImportResult {
             }
         }
     }
-    if sources.isEmpty {
+    if sources.isEmpty && root == nil {
         // HTML detail page: the JSON is embedded in the page, not the whole page.
         let embedded = scanEmbeddedSources(rawText)
         if !embedded.isEmpty { return ImportResult(sources: uniqueSources(embedded).map { var x = $0; x.enabled = true; return x }, skipped: skipped) }
@@ -457,6 +461,11 @@ func importSourcesDetailed(_ rawText: String) -> ImportResult {
     // Dedupe by name+url: a pack that repeats the same source must not
     // inflate the count, and the count shown after import is the real count.
     return ImportResult(sources: uniqueSources(sources).map { var x = $0; x.enabled = true; return x }, skipped: skipped)
+}
+
+func importSourcesDetailed(_ rawText: String) -> ImportResult {
+    let document = importSourceDocument(rawText)
+    return ImportResult(sources: document.sources, skipped: document.skipped)
 }
 
 func importSourcesFromText(_ text: String) -> [LegadoSource] {
@@ -562,11 +571,32 @@ struct SourcePackImportResult {
     }
 }
 
+// Parse the large envelope once. Never execute rules or contact individual
+// source websites while importing a collection.
+private func sourceDocumentRoot(_ raw: String) -> (text: String, root: Any?) {
+    let direct = extractJSONSubstring(raw)
+    if let data = direct.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
+        return (direct, root)
+    }
+    let decoded = extractJSONSubstring(unescapeHTMLJSON(raw))
+    return (decoded, decoded.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) })
+}
+
+private func decodeSourceDocument(_ raw: String, baseURL: String = "") -> (document: SourcePackImportResult, links: [String]) {
+    let parsed = sourceDocumentRoot(raw)
+    let books = decodeBookSources(raw, text: parsed.text, root: parsed.root)
+    var rss: [RssSource] = []; var skipped = 0; var links: [String] = []
+    if let root = parsed.root {
+        collectRssDictionaries(root, sources: &rss, skipped: &skipped)
+        if !baseURL.isEmpty { collectSourcePackLinks(root, baseURL: baseURL, links: &links) }
+    }
+    var seen = Set<String>()
+    rss = rss.filter { seen.insert(rssSourceIdentityKey($0)).inserted }
+    return (SourcePackImportResult(sources: books.sources, rssSources: rss, skipped: books.skipped + skipped), links)
+}
+
 func importSourceDocument(_ text: String) -> SourcePackImportResult {
-    let books = importSourcesDetailed(text)
-    let rss = importRssSourcesDetailed(text)
-    return SourcePackImportResult(sources: books.sources, rssSources: rss.sources,
-                                  skipped: books.skipped + rss.skipped)
+    autoreleasepool { decodeSourceDocument(text).document }
 }
 
 private struct SourcePackPage {
@@ -578,16 +608,14 @@ private struct SourcePackPage {
     var error: String?
 }
 
-private func fetchSourcePack(_ address: String) async throws -> SourcePackPage {
+private func fetchSourcePack(_ address: String, progress: (@Sendable (String) -> Void)? = nil) async throws -> SourcePackPage {
+    progress?("正在下载书源文件…")
     let page = try await SourceHTTP.load(SourceHTTP.request(normalizeSourceURL(address), base: address), stage: "书源导入")
-    let result = importSourceDocument(page.text)
-    var links: [String] = []
-    for text in [extractJSONSubstring(page.text), extractJSONSubstring(unescapeHTMLJSON(page.text))] {
-        if let data = text.data(using: .utf8), let root = try? JSONSerialization.jsonObject(with: data) {
-            collectSourcePackLinks(root, baseURL: page.url, links: &links)
-            break
-        }
-    }
+    progress?("正在解析书源文件…")
+    try Task.checkCancellation()
+    let parsed = autoreleasepool { decodeSourceDocument(page.text, baseURL: page.url) }
+    let result = parsed.document
+    var links = parsed.links
     if result.isEmpty && links.isEmpty, let redirect = extractRedirectJSONURL(from: page.text) { links.append(redirect) }
     if result.isEmpty && links.isEmpty {
         throw SourceFailure(stage: "书源导入", message: "没有找到有效书源、订阅源或子合集链接", url: page.url)
@@ -595,11 +623,11 @@ private func fetchSourcePack(_ address: String) async throws -> SourcePackPage {
     return SourcePackPage(url: page.url, sources: result.sources, rssSources: result.rssSources, links: links, skipped: result.skipped)
 }
 
-func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImportResult {
+func importSourcePacksFromURL(_ urlString: String, progress: (@Sendable (String) -> Void)? = nil) async throws -> SourcePackImportResult {
     var first: SourcePackPage?
     var lastError: Error?
     for candidate in yckceoJSONCandidates(urlString) + yckceoRssJSONCandidates(urlString) + [normalizeSourceURL(urlString)] {
-        do { first = try await fetchSourcePack(candidate); break }
+        do { first = try await fetchSourcePack(candidate, progress: progress); break }
         catch { if Task.isCancelled { throw CancellationError() }; lastError = error }
     }
     guard let first else { throw lastError ?? SourceFailure(stage: "书源导入", message: "链接无效", url: urlString) }
@@ -647,6 +675,7 @@ func importSourcePacksFromURL(_ urlString: String) async throws -> SourcePackImp
             return output.sorted { $0.0 < $1.0 }.map { $0.1 }
         }
         for page in pages { absorb(page) }
+        progress?("已读取 \(result.fetchedPacks) 个文件 · 已解析 \(result.sources.count) 个书源、\(result.rssSources.count) 个订阅源 · 待处理 \(queue.count - index) 个文件")
     }
     try Task.checkCancellation()
     guard !result.isEmpty else { throw SourceFailure(stage: "书源导入", message: result.diagnostics, url: urlString) }
@@ -768,24 +797,12 @@ private func collectRssDictionaries(_ value: Any, depth: Int = 0,
 }
 
 func importRssSourcesDetailed(_ rawText: String) -> RssImportResult {
-    // Decode valid JSON first: unescaping &quot; inside rule strings corrupts JSON.
-    let direct = extractJSONSubstring(rawText)
-    let directIsJSON = direct.data(using: .utf8).flatMap { try? JSONSerialization.jsonObject(with: $0) } != nil
-    let text = directIsJSON ? direct : extractJSONSubstring(unescapeHTMLJSON(rawText))
-    guard let data = text.data(using: .utf8),
-          let root = try? JSONSerialization.jsonObject(with: data) else {
-        return RssImportResult(sources: [], skipped: 0)
-    }
-    var out: [RssSource] = []
-    var skipped = 0
+    let parsed = sourceDocumentRoot(rawText)
+    guard let root = parsed.root else { return RssImportResult(sources: [], skipped: 0) }
+    var out: [RssSource] = []; var skipped = 0
     collectRssDictionaries(root, sources: &out, skipped: &skipped)
-    var seen = Set<String>(); var deduped: [RssSource] = []
-    for s in out {
-        let k = rssSourceIdentityKey(s)
-        if seen.contains(k) { continue }
-        seen.insert(k); deduped.append(s)
-    }
-    return RssImportResult(sources: deduped, skipped: skipped)
+    var seen = Set<String>()
+    return RssImportResult(sources: out.filter { seen.insert(rssSourceIdentityKey($0)).inserted }, skipped: skipped)
 }
 
 func importRssSourcesFromText(_ text: String) -> [RssSource] {
