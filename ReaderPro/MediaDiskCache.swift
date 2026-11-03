@@ -10,7 +10,7 @@ struct CachedChapterMedia {
 // appears as an offline chapter, and changing source invalidates the key.
 actor MediaDiskCache {
     static let shared = MediaDiskCache()
-    let root: URL
+    nonisolated let root: URL
     private struct Record: Codable { let entry: String; let auxiliary: String }
     private struct Transfer { let bookID: String; let token: UUID; let task: Task<Record, Error> }
     private var transfers: [String: Transfer] = [:]

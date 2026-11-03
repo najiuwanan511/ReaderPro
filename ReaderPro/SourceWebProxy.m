@@ -12,6 +12,8 @@ BOOL RPSetWebProxy(WKWebsiteDataStore *store, NSString *host, uint16_t port,
     nw_proxy_config_t proxy = socks5 ? nw_proxy_config_create_socksv5(endpoint)
                                     : nw_proxy_config_create_http_connect(endpoint, NULL);
     if (!proxy) return NO;
+    nw_proxy_config_clear_excluded_domains(proxy);
+    nw_proxy_config_add_match_domain(proxy, "");
     nw_proxy_config_set_failover_allowed(proxy, false);
     if (username) {
         nw_proxy_config_set_username_and_password(proxy, username.UTF8String,

@@ -3,6 +3,29 @@ import AVFoundation
 @testable import ReaderPro
 
 final class MediaCacheTests: XCTestCase {
+    @MainActor func testNativeHLSPlayerUsesProxyForManifestAndEverySegment() async throws {
+        let target = "http://readerproxy.invalid/video/hls/index.m3u8"
+        let request = try SourceHTTP.request(target, base: target, headers: [
+            "proxy": "http://127.0.0.1:8765", "X-Video": "ReaderPro", "Referer": "http://127.0.0.1:8765/video/book"])
+        let resource = try await SourceVideoResource.native(request).resolvedForPlayback()
+        XCTAssertEqual(resource.request.url?.host, "127.0.0.1")
+        let player = AVPlayer(url: try XCTUnwrap(resource.request.url))
+        defer { player.pause(); player.replaceCurrentItem(with: nil) }
+        player.play()
+        let end = Date().addingTimeInterval(20)
+        while player.currentTime().seconds < 0.4 && Date() < end && player.currentItem?.status != .failed { try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertNil(player.currentItem?.error)
+        XCTAssertGreaterThan(player.currentTime().seconds, 0.3, player.currentItem?.error?.localizedDescription ?? "Proxied HLS never advanced")
+    }
+
+    func testNativeMediaRelayDoesNotFallBackWhenProxyIsBroken() async throws {
+        let target = "http://127.0.0.1:8765/video/episode1.mp4"
+        let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:1"])
+        let resource = try await SourceVideoResource.native(request).resolvedForPlayback()
+        let response = try await URLSession.shared.data(for: resource.request)
+        XCTAssertEqual((response.1 as? HTTPURLResponse)?.statusCode, 502)
+        XCTAssertTrue(response.0.isEmpty)
+    }
     private func fixture() -> (MediaDiskCache, LocalBook, BookChapter, URLRequest) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MediaCacheTest-" + UUID().uuidString)
         var book = LocalBook(title: "媒体离线测试", sourceUrl: "https://fixture.test", fileName: "offline.web", kind: "video")

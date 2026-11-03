@@ -87,6 +87,10 @@ private final class DashServerStartup: @unchecked Sendable {
 
 extension SourceVideoResource {
     func resolvedForPlayback() async throws -> SourceVideoResource {
+        if case .native(let request) = self, request.url?.isFileURL != true,
+           try SourceProxy.configuration(for: request) != nil || SourceTLS.allowsInvalidCertificates || request.httpMethod != "GET" || request.httpBody != nil {
+            return .native(URLRequest(url: try await MediaRelayServer.shared.register(request)))
+        }
         guard case .dash(let html, let request) = self else { return self }
         let data: Data, url: URL
         if let html { data = Data(html.utf8); url = request.url! }
@@ -98,6 +102,9 @@ extension SourceVideoResource {
             data = response.0; url = address
         }
         let manifest = try DashManifest(data: data, url: url)
+        if try SourceProxy.configuration(for: request) != nil || SourceTLS.allowsInvalidCertificates {
+            return .native(URLRequest(url: try await MediaRelayServer.shared.register(request, manifest: manifest)))
+        }
         let local = try await DashPlaylistServer.shared.register(manifest)
         var result = URLRequest(url: local); result.allHTTPHeaderFields = request.allHTTPHeaderFields
         return .native(result)
