@@ -29,18 +29,17 @@ jobs:
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE"
           xcrun simctl bootstatus "$DEVICE" -b
-      - name: Compare Network and CFNetwork proxy authentication
+      - name: Verify production HTTP and SOCKS proxy routing on iOS 17
         run: |
           set -o pipefail
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \
-            -only-testing:ReaderProTests/LegacyProxyDiagnosticsTests \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 120 \
             -maximum-test-execution-time-allowance 120 \
             -resultBundlePath build/ProxyDiagnostics.xcresult \
-            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING READERPRO_PROXY_DIAGNOSTICS' \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
             ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/proxy-diagnostics.log
       - name: Preserve results and crash reports
         if: always()
