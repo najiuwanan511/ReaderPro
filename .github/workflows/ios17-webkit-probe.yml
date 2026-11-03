@@ -36,7 +36,14 @@ jobs:
       - name: Compare data stores and warmup with identical proxy requests
         run: |
           set -o pipefail
-          xcodebuild test -project scripts/ios17-webkit-probe/ProxyProbe.xcodeproj -scheme ProxyProbe -configuration Debug \
+          xcodebuild build-for-testing -project scripts/ios17-webkit-probe/ProxyProbe.xcodeproj -scheme ProxyProbe -configuration Debug \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -enableCodeCoverage NO ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/webkit-probe-build.log
+          xcrun simctl shutdown "$READER_SIMULATOR_ID"
+          xcrun simctl boot "$READER_SIMULATOR_ID"
+          xcrun simctl bootstatus "$READER_SIMULATOR_ID" -b
+          xcodebuild test-without-building -project scripts/ios17-webkit-probe/ProxyProbe.xcodeproj -scheme ProxyProbe -configuration Debug \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -resultBundlePath build/WebKitProbe.xcresult ONLY_ACTIVE_ARCH=YES \
@@ -47,6 +54,7 @@ jobs:
           name: ios17-webkit-probe
           path: |
             build/webkit-probe.log
+            build/webkit-probe-build.log
             build/runtime-download.log
             build/fixture-server.log
             build/WebKitProbe.xcresult
