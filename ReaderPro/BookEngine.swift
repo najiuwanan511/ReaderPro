@@ -503,6 +503,7 @@ struct SourceMergeResult {
 
 class BookStore: ObservableObject {
     @MainActor lazy var chapterCache = ReaderChapterCache(store: self)
+    @MainActor lazy var mediaCache = ReaderMediaCache(store: self)
     @Published var books: [LocalBook] = []
     @Published var bookmarks: [Bookmark] = []
     @Published var sources: [LegadoSource] = []
@@ -631,6 +632,7 @@ class BookStore: ObservableObject {
         }
     }
     func deleteBook(_ book: LocalBook) {
+        Task { @MainActor in await mediaCache.clear(bookID: book.id) }
         let source = sourceForBook(book)
         books.removeAll { $0.id == book.id }
         bookmarks.removeAll { $0.bookId == book.id }

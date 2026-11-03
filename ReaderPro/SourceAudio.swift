@@ -18,7 +18,7 @@ extension LegadoSource {
         try await withChapterRules(chapter) {
             let initial = chapter.url ?? videoURLFromChapter(chapter.text)
             let ext = URL(string: SourceHTTP.options(initial).url)?.pathExtension.lowercased() ?? ""
-            let direct = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "m3u8"].contains(ext)
+            let direct = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "opus", "m3u8", "mpd"].contains(ext)
             let response: SourcePage
             if direct || ruleContent.content.isEmpty { response = SourcePage(text: "", url: initial) }
             else {
@@ -31,7 +31,7 @@ extension LegadoSource {
             if value.contains("<audio") {
                 value = (cssExtractAll(value, "audio@src") + cssExtractAll(value, "audio source@src")).first ?? ""
             }
-            let resource = try SourceVideoResource.make(value, base: response.url, headers: requestHeaders)
+            let resource = try await SourceVideoResource.make(value, base: response.url, headers: requestHeaders).resolvedForPlayback()
             guard case .native(let request) = resource else {
                 throw SourceFailure(stage: "音频解析", message: "音频规则需要返回音频地址，当前返回了网页", url: response.url)
             }

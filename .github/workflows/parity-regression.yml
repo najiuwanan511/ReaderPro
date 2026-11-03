@@ -29,6 +29,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
             -only-testing:ReaderProTests/ParityFoundationTests \
             -only-testing:ReaderProTests/MediaAndRssParityTests \
+            -only-testing:ReaderProTests/MediaCacheTests \
             -only-testing:ReaderProTests/JavaCryptoTests \
             -only-testing:ReaderProTests/RuleManagementParityTests \
             -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \

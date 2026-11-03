@@ -183,7 +183,7 @@ struct SourceBookDetailView: View {
                         Button("复制目录地址") { copyAddress(displayBook.tocUrl ?? displayBook.url, event: "clickCopyTocUrl") }
                         if let existingBook {
                             Button("清除本书缓存", role: .destructive) {
-                                bookEvent("clickClearCache") { store.clearChapterCache(bookID: existingBook.id); actionMessage = "本书缓存已清除" }
+                                bookEvent("clickClearCache") { Task { await store.clearChapterCache(bookID: existingBook.id); actionMessage = "本书缓存已清除" } }
                             }
                         }
                         if let source {

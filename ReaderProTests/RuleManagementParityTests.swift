@@ -25,7 +25,7 @@ final class RuleManagementParityTests: XCTestCase {
         XCTAssertEqual(refreshed.chapterIndex, 1); XCTAssertEqual(refreshed.charOffset, 25); XCTAssertTrue(refreshed.chapters[2].isPay)
     }
 
-    @MainActor func testMangaCacheClearRemovesBookIDDirectoryAndParsedImageList() throws {
+    @MainActor func testMangaCacheClearRemovesBookIDDirectoryAndParsedImageList() async throws {
         let store = BookStore(), original = store.books
         var book = LocalBook(title: "漫画缓存样例", fileName: "comic.web", kind: "comic")
         book.chapters = [BookChapter(title: "第一话", text: "", imageUrls: ["https://cache.test/old.jpg"], url: "https://cache.test/chapter/1")]
@@ -33,7 +33,7 @@ final class RuleManagementParityTests: XCTestCase {
         defer { store.books = original; store.saveBooks(); try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try Data([1,2,3]).write(to: directory.appendingPathComponent("cached.img"))
-        store.updateBook(book); store.clearChapterCache(bookID: book.id)
+        store.updateBook(book); await store.clearChapterCache(bookID: book.id)
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
         XCTAssertTrue(store.books.first { $0.id == book.id }?.chapters.first?.imageUrls.isEmpty == true)
     }

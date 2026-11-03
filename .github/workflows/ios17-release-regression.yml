@@ -81,6 +81,7 @@ jobs:
             -only-testing:ReaderProUITests/SourceVideoUITests \
             -only-testing:ReaderProTests/ParityFoundationTests \
             -only-testing:ReaderProTests/MediaAndRssParityTests \
+            -only-testing:ReaderProTests/MediaCacheTests \
             -only-testing:ReaderProTests/RuleManagementParityTests \
             -only-testing:ReaderProTests/SourceEngineTests \
             -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \

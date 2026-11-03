@@ -353,7 +353,10 @@ struct VideoPlayerView: View {
             let resolved: SourceVideoResource
             let selectedChapter = chapter
             let activeSource = store.flatMap { store in store.books.first(where: { $0.id == book.id }).flatMap { store.sourceForBook($0) } } ?? source
-            if let activeSource {
+            let current = store?.books.first(where: { $0.id == book.id }) ?? book
+            if let cached = try await MediaDiskCache.shared.cached(book: current, chapter: selectedChapter) {
+                resolved = .native(cached.request); danmaku = parseDanmaku(cached.auxiliary)
+            } else if let activeSource {
                 let details = try await withTimeout(60) { try await activeSource.fetchChapterVideoDetails(selectedChapter) }
                 guard !Task.isCancelled, episodeIndex == index else { return }
                 resolved = details.resource; danmaku = parseDanmaku(details.subContent)
@@ -362,6 +365,7 @@ struct VideoPlayerView: View {
             guard !Task.isCancelled, episodeIndex == index else { return }
             resource = resolved; loading = false
             if case .native(let request) = resolved { model.play(request, title: book.title + " · " + chapters[index].title, author: book.author); model.player.rate = Float(playbackRate) }
+            if activeSource != nil { store?.mediaCache.preload(bookID: book.id, from: index) }
         } catch {
             guard !Task.isCancelled, episodeIndex == index else { return }
             loading = false; resolveError = sourceErrorMessage(error)

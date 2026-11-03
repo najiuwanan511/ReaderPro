@@ -335,7 +335,9 @@ struct AudioPlayerView: View {
         do {
             let request: URLRequest
             var rawLyrics = current.lyrics
-            if let activeSource, chapters.indices.contains(index) {
+            if chapters.indices.contains(index), let cached = try await MediaDiskCache.shared.cached(book: current, chapter: chapters[index]) {
+                request = cached.request; rawLyrics = cached.auxiliary
+            } else if let activeSource, chapters.indices.contains(index) {
                 let chapter = chapters[index]
                 let media = try await withTimeout(60) { try await activeSource.fetchChapterAudio(chapter) }
                 request = media.request; rawLyrics = media.lyrics
@@ -352,6 +354,7 @@ struct AudioPlayerView: View {
             let position = current.chapterIndex == index ? Double(current.charOffset) : 0
             let title = chapters.indices.contains(index) ? current.title + " · " + chapters[index].title : current.title
             model.load(request, position: position, title: title, author: current.author); loading = false
+            if activeSource != nil { store?.mediaCache.preload(bookID: current.id, from: index) }
         } catch {
             guard !Task.isCancelled, chapterIndex == index else { return }
             loading = false; loadError = sourceErrorMessage(error)

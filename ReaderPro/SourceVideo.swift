@@ -78,7 +78,11 @@ extension LegadoSource {
             let capture = LegadoJSCtx.mediaCapture ?? SourceMediaCapture()
             return try await LegadoJSCtx.$mediaCapture.withValue(capture) {
                 let initial = chapter.url ?? videoURLFromChapter(chapter.text)
-                let headers = try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders).allHTTPHeaderFields ?? requestHeaders
+                // Proxy is request metadata, so it is intentionally absent
+                // from allHTTPHeaderFields. Preserve the original source
+                // option while carrying normalized headers into the player.
+                var headers = requestHeaders
+                for (key, value) in try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders).allHTTPHeaderFields ?? [:] { headers[key] = value }
                 if !chapter.text.hasPrefix("__URL__"), !chapter.text.isEmpty {
                     return try SourceVideoResource.make(chapter.text, base: initial, headers: headers)
                 }
