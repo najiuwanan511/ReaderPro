@@ -39,7 +39,8 @@ struct SourceManagementView: View {
     @StateObject private var validation = SourceValidationStore()
     @State private var checkingIDs: Set<String> = []
     @State private var statusFilter: SourceStatusFilter = .all
-    @State private var checkKeyword = "斗罗大陆"
+    @AppStorage("source.checkKeyword") private var checkKeyword = "我的"
+    @State private var checkOptions = SourceValidationOptions.load()
     @State private var showCheckRules = false
     @State private var selectedReport: SourceValidationReport?
     @State private var checkTask: Task<Void, Never>?
@@ -169,15 +170,31 @@ struct SourceManagementView: View {
                         TextField("书名或作者", text: $checkKeyword)
                         Text("书源自带 checkKeyWord 时优先使用；没有结果记为未完整验证，不直接判死源。").font(.caption)
                     }
+                    Section("校验项目") {
+                        Stepper("每源超时：\(Int(checkOptions.timeout)) 秒", value: $checkOptions.timeout, in: 5...600, step: 5)
+                        Toggle("搜索", isOn: $checkOptions.search)
+                        Toggle("发现", isOn: $checkOptions.discovery)
+                        Toggle("也校验关闭发现的书源", isOn: $checkOptions.disabledDiscovery).disabled(!checkOptions.discovery)
+                        Toggle("详情", isOn: $checkOptions.info)
+                        Toggle("目录", isOn: $checkOptions.catalog).disabled(!checkOptions.info)
+                        Toggle("正文", isOn: $checkOptions.content).disabled(!checkOptions.info || !checkOptions.catalog)
+                        Toggle("确认音视频可播放", isOn: $checkOptions.mediaPlayback).disabled(!checkOptions.info || !checkOptions.catalog || !checkOptions.content)
+                        Button("使用安卓阅读的规则校验项目") {
+                            checkOptions = SourceValidationOptions(); checkOptions.mediaPlayback = false; checkOptions.disabledDiscovery = true
+                        }
+                        Text("关闭媒体播放确认时，只检查规则能否返回播放地址；该模式的成功不等于已验证播放器。关闭详情后不检查目录和正文；关闭目录后不检查正文。文件书源检查下载地址，不要求在线章节目录。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }.disabled(checking)
                     Section("成功标准") {
-                        Text("依次检查已配置的搜索、已启用发现的首个分类、一本样本书的详情、完整目录分页和首章正文。全部通过才记成功；部分功能可用、没有搜索结果、取消或脚本不兼容，记为未完整验证；全部入口请求失败才记失败。书源已关闭发现时跳过该项，与发现页保持一致。")
+                        Text("按所选项目检查搜索、发现首个有效分类，以及各自样本书的详情、目录分页和首章正文。搜索和发现是不同书时分别验证阅读链路；全部所选项目通过才记成功。部分功能可用、没有结果、取消或脚本不兼容，记为未完整验证；全部入口请求失败才记失败。")
                         Text("漫画检查首章图片地址和首张图片响应。音频和原生视频检查首章媒体能否由播放器读取；网页视频仅解析成功仍记为未完整验证。支持 HTTP 与 WebView 规则；登录、验证码或脚本错误会显示具体阶段与原因。失败代表本次检查失败，不能据此认定书源永久失效，也不会自动停用书源。")
                     }
                     Section("结果范围") {
                         Text("封面或简介脚本失败会记录为附加信息警告，不会丢弃可阅读的书籍；成功仍以搜索、详情、目录和正文的抽样阅读链路为准。")
-                        Text("成功仅代表校验时间的这些样本通过，不代表每个分类、每本书和所有章节均可用。结果保存在本机；规则或请求头变更后需重新校验。每批最多 4 个并发，支持取消。")
+                        Text("成功仅代表校验时所选项目和这些样本通过，不代表每个分类、每本书和所有章节均可用。报告保存当次项目配置；规则或请求头变更后需重新校验。每批最多 4 个并发，支持取消。")
                     }
                 }.navigationTitle("校验规则").toolbar { Button("完成") { showCheckRules = false } }
+                    .onChange(of: checkOptions) { _, value in value.save() }
             }
         }
         .sheet(item: $selectedReport) { report in
@@ -185,6 +202,7 @@ struct SourceManagementView: View {
                 List {
                     Section("\(report.status.title) · \(report.keyword)") {
                         Text(report.checkedAt.formatted(date: .abbreviated, time: .standard))
+                        if let configuration = report.configuration { Text(configuration).font(.caption).foregroundStyle(.secondary) }
                         ForEach(Array(report.steps.enumerated()), id: \.offset) { _, step in
                             VStack(alignment: .leading, spacing: 5) {
                                 Label(step.stage, systemImage: step.passed ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
@@ -316,16 +334,17 @@ struct SourceManagementView: View {
         guard !checking, !targets.isEmpty else { return }
         checking = true
         let keyword = checkKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        let key = keyword.isEmpty ? "斗罗大陆" : keyword
+        let key = keyword.isEmpty ? "我的" : keyword
+        let options = checkOptions
         checkingIDs = Set(targets.map { $0.id })
-        checkProgress = "开始校验 \(targets.count) 个书源，包含目录与正文…"
+        checkProgress = "开始校验 \(targets.count) 个书源 · \(options.summary)"
         checkTask = Task {
             var done = 0
             var index = 0
             while index < targets.count && !Task.isCancelled {
                 let slice = Array(targets[index..<min(index + 4, targets.count)])
                 await withTaskGroup(of: SourceValidationReport.self) { group in
-                    for source in slice { group.addTask { await SourceValidation.run(source, keyword: key) } }
+                    for source in slice { group.addTask { await SourceValidation.run(source, keyword: key, options: options) } }
                     for await report in group {
                         if !Task.isCancelled { validation.set(report) }
                         checkingIDs.remove(report.id)

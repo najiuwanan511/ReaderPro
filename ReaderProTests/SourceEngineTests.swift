@@ -909,6 +909,34 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertTrue(withBrokenDiscovery.steps.contains { $0.stage == "发现" && !$0.passed })
     }
 
+    func testValidationChecksDiscoveryReadingSeparatelyAndHonorsSelectedStages() async throws {
+        var source = SourceTestFixtures.json()
+        source.exploreUrl = "不同发现样本::/json/discovery-broken-reading"; source.ruleExplore = source.ruleSearch
+        let report = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(report.status, .partial)
+        XCTAssertTrue(report.steps.contains { $0.stage == "正文" && $0.passed })
+        XCTAssertTrue(report.steps.contains { $0.stage == "发现详情" && !$0.passed && $0.detail.contains("403") })
+        var options = SourceValidationOptions(); options.discovery = false; options.info = false
+        let searchOnly = await SourceValidation.run(source, keyword: "测试", options: options)
+        XCTAssertEqual(searchOnly.status, .passed)
+        XCTAssertEqual(searchOnly.steps.map(\.stage), ["搜索"])
+        XCTAssertEqual(searchOnly.configuration, options.summary)
+        options.info = true; options.catalog = false
+        let withoutCatalog = await SourceValidation.run(source, keyword: "测试", options: options)
+        XCTAssertEqual(withoutCatalog.status, .passed)
+        XCTAssertEqual(withoutCatalog.steps.map(\.stage), ["搜索", "详情"])
+        source.bookSourceType = 3
+        source.ruleToc.chapterList = "@js:throw Error('文件源不能请求章节目录')"
+        options.catalog = true
+        let file = await SourceValidation.run(source, keyword: "测试", options: options)
+        XCTAssertEqual(file.status, .passed, file.summary)
+        XCTAssertEqual(file.steps.map(\.stage), ["搜索", "详情", "文件地址"])
+        let suite = "ValidationOptions." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        options.timeout = 15; options.mediaPlayback = false; options.save(defaults: defaults)
+        XCTAssertEqual(SourceValidationOptions.load(defaults: defaults), options)
+    }
+
     @MainActor func testReportPersistenceAndRuleChangesInvalidateResult() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".json")
         defer { try? FileManager.default.removeItem(at: url) }

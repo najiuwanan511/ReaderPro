@@ -570,6 +570,9 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/json/search':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'data': [{'name': 'JSON测试', 'url': '/json/book'}]}, ensure_ascii=False)
+        elif path == '/json/discovery-broken-reading':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'data': [{'name': '发现样本详情不可读', 'url': '/denied'}]}, ensure_ascii=False)
         elif path == '/json/many-books':
             mime = 'application/json; charset=utf-8'
             # Include a duplicate title to verify both deduplication and
