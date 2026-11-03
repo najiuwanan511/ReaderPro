@@ -16,7 +16,7 @@ extension LegadoJSCtx {
 enum SourceVideoResource {
     case native(URLRequest)
     case web(URLRequest)
-    case html(String, URL)
+    case html(String, URLRequest)
 
     static func isMediaURL(_ raw: String) -> Bool {
         let path = URLComponents(string: SourceHTTP.options(raw).url)?.path.lowercased() ?? ""
@@ -35,8 +35,8 @@ enum SourceVideoResource {
             if let address = addresses.first(where: { !$0.isEmpty }) {
                 return try make(address, base: base, headers: headers)
             }
-            guard let url = URL(string: SourceHTTP.options(base).url) else { throw URLError(.badURL) }
-            return .html(text, url)
+            let request = try SourceHTTP.request(base, base: base, headers: headers)
+            return .html(text, request)
         }
         let transport = SourceHTTP.options(text).url
         guard transport.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,

@@ -114,15 +114,17 @@ struct EpisodeWebPlayer: UIViewRepresentable {
         web.navigationDelegate = context.coordinator
         web.uiDelegate = context.coordinator
         web.isOpaque = false; web.backgroundColor = .black
-        switch resource {
-        case .native(let request), .web(let request):
-            web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
-            Task { @MainActor in
-                for cookie in HTTPCookieStorage.shared.cookies ?? [] { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
-                guard !context.coordinator.cancelled else { return }
+        Task { @MainActor in
+            for cookie in HTTPCookieStorage.shared.cookies ?? [] { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
+            guard !context.coordinator.cancelled else { return }
+            switch resource {
+            case .native(let request), .web(let request):
+                web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
                 web.load(request)
+            case .html(let html, let request):
+                web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
+                web.loadHTMLString(html, baseURL: request.url)
             }
-        case .html(let html, let base): web.loadHTMLString(html, baseURL: base)
         }
         return web
     }
@@ -158,7 +160,7 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             var request = URLRequest(url: URL(string: raw)!)
             switch parent.resource {
             case .native(let original), .web(let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
-            case .html(_, let base): request.setValue(base.absoluteString, forHTTPHeaderField: "Referer")
+            case .html(_, let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
             }
             handedOff = true
             Task { @MainActor in
@@ -249,7 +251,7 @@ struct VideoPlayerView: View {
         .onDisappear { model.stop() }
     }
     private func loadEpisode() async {
-        model.stop(); resource = nil; loading = true; resolveError = ""
+        model.stop(); resource = nil; loading = true; resolveError = ""; webStatus = "正在加载网页播放器…"
         guard chapters.indices.contains(episodeIndex) else { loading = false; resolveError = "没有可播放的章节"; return }
         let index = episodeIndex
         var chapter = chapters[index]
@@ -263,7 +265,8 @@ struct VideoPlayerView: View {
         }
         do {
             let resolved: SourceVideoResource
-            if let source { resolved = try await withTimeout(60) { try await source.fetchChapterVideo(chapter) } }
+            let selectedChapter = chapter
+            if let source { resolved = try await withTimeout(60) { try await source.fetchChapterVideo(selectedChapter) } }
             else { resolved = try SourceVideoResource.make(videoURLFromChapter(chapter.text), base: chapter.url ?? videoURLFromChapter(chapter.text), headers: [:]) }
             guard !Task.isCancelled, episodeIndex == index else { return }
             resource = resolved; loading = false

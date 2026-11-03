@@ -385,7 +385,7 @@ final class LegadoJS {
         ctx.setObject(bookObj, forKeyedSubscript: "book" as NSString)
         if LegadoJSCtx.mediaCapture != nil {
             bookObj.setObject(LegadoJSCtx.chapter?.ruleIndex ?? 0, forKeyedSubscript: "durChapterIndex" as NSString)
-            let browser: @convention(block) (String, String) -> Void = { url, _ in LegadoJSCtx.mediaCapture?.set(url) }
+            let browser: @convention(block) (String) -> Void = { url in LegadoJSCtx.mediaCapture?.set(url) }
             java.setObject(browser, forKeyedSubscript: "startBrowser" as NSString)
             java.setObject(browser, forKeyedSubscript: "openUrl" as NSString)
             ctx.setObject(LegadoJSCtx.chapter?.title ?? "", forKeyedSubscript: "title" as NSString)
