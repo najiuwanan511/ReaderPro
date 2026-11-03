@@ -19,3 +19,7 @@ Payload/
 
 # 本地下载/校验临时目录
 build-ipa/
+
+# Python fixture tooling
+__pycache__/
+*.pyc

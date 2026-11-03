@@ -377,6 +377,10 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         let hostResponse = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:8765/fixture-routable-host")!)
         let host = String(decoding: hostResponse.0, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         XCTAssertFalse(host.isEmpty); XCTAssertFalse(host.hasPrefix("127."))
+        XCTAssertTrue(SourceWebDataStore.isDeviceHost(host), "The fixture binds to this machine's routable interface address")
+        XCTAssertTrue(SourceWebDataStore.isDeviceHost("[0:0:0:0:0:0:0:1]"))
+        XCTAssertFalse(SourceWebDataStore.isDeviceHost("readerproxy.invalid"))
+        XCTAssertFalse(SourceWebDataStore.isDeviceHost("192.0.2.1"), "Other IP destinations must retain proxy support")
         let target = "http://\(host):8765/web-script"
         let targetURL = try XCTUnwrap(URL(string: target))
         let direct = try await SourceWebLoader.load(URLRequest(url: targetURL), timeout: 15, delay: 0.6)
@@ -390,10 +394,19 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
             XCTFail("WebView bypassed the failed proxy and contacted the destination directly")
         } catch {
             XCTAssertFalse(error is CancellationError)
+            XCTAssertTrue(sourceErrorMessage(error).contains("本机地址"), sourceErrorMessage(error))
         }
         let loopback = try SourceHTTP.request("http://127.0.0.1:8765/web-script", base: target, headers: ["proxy": "http://127.0.0.1:8765"])
         XCTAssertThrowsError(try SourceWebDataStore.make(request: loopback)) { error in
             XCTAssertTrue(sourceErrorMessage(error).contains("本机地址"))
         }
+        let publicTarget = "http://readerproxy.invalid/source-proxy-test"
+        let html = "<html><script>window.probe='pending';fetch('\(target)',{mode:'no-cors'}).then(function(){window.probe='direct';},function(){window.probe='blocked';});</script></html>"
+        let script = "window.probe==='pending'?null:window.probe"
+        let directSubresource = try await SourceWebLoader.load(URLRequest(url: URL(string: publicTarget)!), html: html, script: script, timeout: 15)
+        XCTAssertEqual(directSubresource.text, "direct", "The control page must actually reach the local subresource")
+        let proxiedPage = try SourceHTTP.request(publicTarget, base: publicTarget, headers: ["proxy": "http://127.0.0.1:8765"])
+        let blockedSubresource = try await SourceWebLoader.load(proxiedPage, html: html, script: script, timeout: 15)
+        XCTAssertEqual(blockedSubresource.text, "blocked", "A proxied page must not bypass the proxy through a local subresource")
     }
 }

@@ -237,7 +237,7 @@ final class SourceFlowUITests: XCTestCase {
         // the chosen reader theme. Avoid the sensor, status text and home bar.
         let body = color(0.025, 0.5)
         for safe in [color(0.1, 0.05), color(0.1, 0.98)] {
-            XCTAssertTrue(zip(body, safe).allSatisfy { abs($0 - $1) < 8 }, "阅读背景应铺满状态栏和底部安全区：\(body) / \(safe)", file: file, line: line)
+            XCTAssertTrue(zip(body, safe).allSatisfy { pair in abs(pair.0 - pair.1) < 8 }, "阅读背景应铺满状态栏和底部安全区：\(body) / \(safe)", file: file, line: line)
         }
     }
 

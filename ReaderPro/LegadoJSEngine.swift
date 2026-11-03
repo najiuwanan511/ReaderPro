@@ -257,8 +257,9 @@ final class LegadoJS {
                 }
                 let host = parts.host ?? ""
                 let origin = scheme + "://" + host + (parts.port.map { ":\($0)" } ?? "")
-                let result: [String: Any] = ["host": host, "origin": origin, "pathname": parts.percentEncodedPath,
-                                           "searchParams": parts.percentEncodedQuery == nil ? NSNull() : params]
+                var result: [String: Any] = ["host": host, "origin": origin, "pathname": parts.percentEncodedPath]
+                if parts.percentEncodedQuery == nil { result["searchParams"] = NSNull() }
+                else { result["searchParams"] = params }
                 return String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
             } catch {
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
