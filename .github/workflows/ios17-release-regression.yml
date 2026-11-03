@@ -26,7 +26,10 @@ jobs:
           done
           curl --fail --silent http://127.0.0.1:8765/health
           if ! xcrun simctl list runtimes available | grep -q 'iOS 17.0'; then
-            xcodebuild -downloadPlatform iOS -buildVersion 17.0
+            if ! xcodebuild -downloadPlatform iOS -buildVersion 17.0 > build/runtime-download.log 2>&1; then
+              tail -n 40 build/runtime-download.log
+              exit 1
+            fi
           fi
           xcrun simctl list runtimes available
           DEVICE=$(xcrun simctl create ReaderPro-iOS17 com.apple.CoreSimulator.SimDeviceType.iPhone-14-Pro-Max com.apple.CoreSimulator.SimRuntime.iOS-17-0)
