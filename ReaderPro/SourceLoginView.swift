@@ -60,71 +60,9 @@ struct SourceLoginView: View {
     init(source: LegadoSource) { self.source = source; _model = StateObject(wrappedValue: SourceLoginModel(source: source)) }
     var body: some View {
         NavigationStack {
-            Group {
-                if let url = source.webLoginURL {
-                    VStack(spacing: 0) {
-                        if !model.message.isEmpty { Text(model.message).font(.caption).padding(8) }
-                        SourceLoginWebPage(source: source, page: SourceLoginBrowser(url: url), revision: webRevision, status: $model.message)
-                    }
-                } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 16) {
-                            if model.running { HStack { ProgressView(); Text("正在执行书源登录规则…"); Spacer(); Button("停止") { model.cancel() } }.font(.footnote) }
-                            if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("sourceLoginError") }
-                            if !model.message.isEmpty { Text(model.message).font(.footnote).accessibilityIdentifier("sourceLoginMessage") }
-                            CategoryFlow {
-                                ForEach(Array(model.rows.enumerated()), id: \.offset) { entry in
-                                    rowControl(entry.element).layoutValue(key: ExploreStyleKey.self, value: entry.element.style)
-                                }
-                            }.disabled(model.running)
-                            if model.rows.isEmpty && !model.running {
-                                Text(model.error.isEmpty ? "书源没有提供登录表单。" : "请检查书源登录规则后重试。")
-                                    .foregroundStyle(.secondary).font(.footnote)
-                            }
-                        }.padding(16)
-                    }.accessibilityIdentifier("sourceLoginForm")
-                }
-            }
+            loginContent
             .navigationTitle("登录 " + source.bookSourceName).readerNavigationStyle()
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") { Task {
-                        if source.webLoginURL != nil { dismiss() }
-                        else if await model.save() { dismiss() }
-                    } }.disabled(model.running)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if source.webLoginURL == nil {
-                        Button("保存并登录") { Task { await model.perform(action: "if(typeof login==='function'){login.apply(this)}else{throw Error('书源未实现 login 函数，请使用表单中的操作按钮')}") } }
-                            .disabled(model.running).accessibilityIdentifier("sourceLoginSubmit")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        Button("刷新登录界面") { if source.webLoginURL != nil { webRevision += 1 } else { Task { await model.load() } } }
-                        Button("查看登录头") { Task {
-                            headerText = await Task.detached { SourceLoginHeaders.get(source.bookSourceUrl) ?? "暂无登录头" }.value
-                            showHeader = true
-                        } }
-                        Button("删除登录头", role: .destructive) { Task {
-                            do {
-                                try await Task.detached {
-                                    try SourceLoginHeaders.remove(source.bookSourceUrl)
-                                    if let url = URL(string: source.bookSourceUrl) {
-                                        for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] { HTTPCookieStorage.shared.deleteCookie(cookie) }
-                                    }
-                                }.value
-                                for cookie in await WKWebsiteDataStore.default().httpCookieStore.allCookies() {
-                                    if cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: ".")) == URL(string: source.bookSourceUrl)?.host {
-                                        await WKWebsiteDataStore.default().httpCookieStore.deleteCookie(cookie)
-                                    }
-                                }
-                                model.message = "已删除登录头"; ExploreInfo.refresh(source.bookSourceUrl)
-                            } catch { model.error = sourceErrorMessage(error) }
-                        } }
-                    } label: { Image(systemName: "ellipsis.circle") }.disabled(model.running).accessibilityLabel("登录选项")
-                }
-            }
+            .toolbar { loginToolbar }
             .task { if source.webLoginURL == nil { await model.load() } }
             .onDisappear {
                 model.cancel()
@@ -135,7 +73,7 @@ struct SourceLoginView: View {
                 NavigationStack {
                     SourceLoginWebPage(source: source, page: page, revision: 0, status: $model.message)
                         .navigationTitle("书源网页登录").readerNavigationStyle()
-                        .toolbar { Button("完成") { model.browser = nil } }
+                        .toolbar { Button("完成") { Task { await syncCookies(); model.browser = nil } } }
                 }
             }
             .sheet(isPresented: $showHeader) {
@@ -145,6 +83,76 @@ struct SourceLoginView: View {
                 }
             }
         }
+    }
+    @ViewBuilder private var loginContent: some View {
+        if let url = source.webLoginURL {
+            VStack(spacing: 0) {
+                if !model.message.isEmpty { Text(model.message).font(.caption).padding(8) }
+                SourceLoginWebPage(source: source, page: SourceLoginBrowser(url: url), revision: webRevision, status: $model.message)
+            }
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if model.running { HStack { ProgressView(); Text("正在执行书源登录规则…"); Spacer(); Button("停止") { model.cancel() } }.font(.footnote) }
+                    if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("sourceLoginError") }
+                    if !model.message.isEmpty { Text(model.message).font(.footnote).accessibilityIdentifier("sourceLoginMessage") }
+                    CategoryFlow {
+                        ForEach(Array(model.rows.enumerated()), id: \.offset) { entry in
+                            rowControl(entry.element).layoutValue(key: ExploreStyleKey.self, value: entry.element.style)
+                        }
+                    }.disabled(model.running)
+                    if model.rows.isEmpty && !model.running {
+                        Text(model.error.isEmpty ? "书源没有提供登录表单。" : "请检查书源登录规则后重试。")
+                            .foregroundStyle(.secondary).font(.footnote)
+                    }
+                }.padding(16)
+            }.accessibilityIdentifier("sourceLoginForm")
+        }
+    }
+    @ToolbarContentBuilder private var loginToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            Button("关闭") { Task {
+                if source.webLoginURL != nil { await syncCookies(); dismiss() }
+                else if await model.save() { dismiss() }
+            } }.disabled(model.running)
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            if source.webLoginURL == nil {
+                Button("保存并登录") { Task { await model.perform(action: "if(typeof login==='function'){login.apply(this)}else{throw Error('书源未实现 login 函数，请使用表单中的操作按钮')}") } }
+                    .disabled(model.running).accessibilityIdentifier("sourceLoginSubmit")
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Button("刷新登录界面") { if source.webLoginURL != nil { webRevision += 1 } else { Task { await model.load() } } }
+                Button("查看登录头") { Task {
+                    headerText = await Task.detached { SourceLoginHeaders.get(source.bookSourceUrl) ?? "暂无登录头" }.value
+                    showHeader = true
+                } }
+                Button("删除登录头", role: .destructive) { Task {
+                    do {
+                        try await Task.detached {
+                            try SourceLoginHeaders.remove(source.bookSourceUrl)
+                            if let url = URL(string: source.bookSourceUrl) {
+                                for cookie in HTTPCookieStorage.shared.cookies(for: url) ?? [] { HTTPCookieStorage.shared.deleteCookie(cookie) }
+                            }
+                        }.value
+                        for cookie in await WKWebsiteDataStore.default().httpCookieStore.allCookies() {
+                            let domain = cookie.domain.trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                            let host = URL(string: source.bookSourceUrl)?.host ?? ""
+                            if host == domain || host.hasSuffix("." + domain) {
+                                await WKWebsiteDataStore.default().httpCookieStore.deleteCookie(cookie)
+                            }
+                        }
+                        model.message = "已删除登录头"; ExploreInfo.refresh(source.bookSourceUrl)
+                    } catch { model.error = sourceErrorMessage(error) }
+                } }
+            } label: { Image(systemName: "ellipsis.circle") }.disabled(model.running).accessibilityLabel("登录选项")
+        }
+    }
+    @MainActor private func syncCookies() async {
+        for cookie in await WKWebsiteDataStore.default().httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+        ExploreInfo.refresh(source.bookSourceUrl)
     }
     @ViewBuilder private func rowControl(_ row: SourceLoginRow) -> some View {
         let value = model.values[row.name] ?? ""
@@ -232,6 +240,12 @@ struct SourceLoginWebPage: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { parent.status = sourceErrorMessage(error) }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { parent.status = sourceErrorMessage(error) }
+        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            if SourceTLS.isAllowed(parent.source.bookSourceUrl), challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+               let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
+            else { completionHandler(.performDefaultHandling, nil) }
+        }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? { webView.load(navigationAction.request); return nil }
     }
 }

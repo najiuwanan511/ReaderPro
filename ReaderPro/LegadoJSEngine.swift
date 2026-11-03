@@ -105,6 +105,10 @@ final class LegadoJS {
         ctx.exceptionHandler = { _, error in exception = error?.toString() ?? "未知 JavaScript 错误" }
 
         let storeKey = sourceUrl.isEmpty ? "global" : sourceUrl
+        let persistentStoreKey = "ReaderPro.sourceValues." + SHA256.hash(data: Data(storeKey.utf8)).map { String(format: "%02x", $0) }.joined()
+        storeLock.lock()
+        if store[storeKey] == nil { store[storeKey] = UserDefaults.standard.dictionary(forKey: persistentStoreKey) as? [String: String] ?? [:] }
+        storeLock.unlock()
 
         // ---- 全局变量 ----
         ctx.setObject(structuredResult ?? input, forKeyedSubscript: "result" as NSString)
@@ -127,6 +131,7 @@ final class LegadoJS {
             storeLock.lock(); defer { storeLock.unlock() }
             if store[storeKey] == nil { store[storeKey] = [:] }
             store[storeKey]?[k] = v.toString() ?? ""
+            UserDefaults.standard.set(store[storeKey], forKey: persistentStoreKey)
             return v.toString() ?? ""
         }
         java.setObject(jget, forKeyedSubscript: "get" as NSString)
@@ -463,6 +468,7 @@ final class LegadoJS {
             }
             java.setObject(update, forKeyedSubscript: "upLoginData" as NSString)
             java.setObject(rebuild, forKeyedSubscript: "reLoginView" as NSString)
+            java.setObject(rebuild, forKeyedSubscript: "reUiView" as NSString)
             java.setObject(rebuild, forKeyedSubscript: "refreshExplore" as NSString)
             java.setObject(toast, forKeyedSubscript: "toast" as NSString)
             java.setObject(toast, forKeyedSubscript: "longToast" as NSString)

@@ -295,7 +295,7 @@ private func uniqueSources(_ sources: [LegadoSource]) -> [LegadoSource] {
 // otherwise valid sources.
 private func collectSourceDictionaries(_ value: Any, depth: Int = 0,
                                        sources: inout [LegadoSource], skipped: inout Int) {
-    guard depth < 10 else { return }
+    guard depth < 10, !Task.isCancelled else { return }
     if let dict = value as? [String: Any] {
         let looksLikeSource = dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil
         if looksLikeSource {
@@ -331,7 +331,8 @@ func extractJSONSubstring(_ text: String) -> String {
     var t = text.trimmingCharacters(in: .whitespacesAndNewlines)
     if t.hasPrefix("\u{FEFF}") { t = String(t.dropFirst()) }
     // If the page is HTML, pull the JSON out of a <pre> block or the first [/{ ... ]/}
-    if t.lowercased().contains("<html") || t.lowercased().contains("<pre") {
+    if !t.hasPrefix("[") && !t.hasPrefix("{"),
+       t.range(of: "<html", options: .caseInsensitive) != nil || t.range(of: "<pre", options: .caseInsensitive) != nil {
         if let preStart = t.range(of: "<pre", options: .caseInsensitive),
            let gt = t[preStart.upperBound...].firstIndex(of: ">"),
            let preEnd = t[gt...].range(of: "</pre>", options: .caseInsensitive) {
@@ -378,6 +379,7 @@ func scanEmbeddedSources(_ rawText: String) -> [LegadoSource] {
     var out: [LegadoSource] = []
     var searchFrom = text.startIndex
     while let keyRange = text[searchFrom...].range(of: "\"bookSourceName\"") {
+        if Task.isCancelled { return out }
         let keyPos = keyRange.lowerBound
         // Walk backwards to the opening brace that starts this object: track depth.
         var depth = 0; var start: String.Index? = nil
@@ -773,7 +775,7 @@ func rssSourceIdentityKey(_ source: RssSource) -> String {
 
 private func collectRssDictionaries(_ value: Any, depth: Int = 0,
                                     sources: inout [RssSource], skipped: inout Int) {
-    guard depth < 10 else { return }
+    guard depth < 10, !Task.isCancelled else { return }
     if let dict = value as? [String: Any] {
         if dict["bookSourceName"] != nil || dict["bookSourceUrl"] != nil { return }
         if isRssSourceDictionary(dict) {

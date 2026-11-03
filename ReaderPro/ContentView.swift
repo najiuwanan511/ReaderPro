@@ -455,6 +455,7 @@ struct SourceView: View {
             }
         }
         .navigationTitle("搜索")
+        .onChange(of: importModel.message) { _, message in if !message.isEmpty { importText = "" } }
         .readerNavigationStyle()
         .background(AppTheme.background.ignoresSafeArea())
         .scrollContentBackground(.hidden)

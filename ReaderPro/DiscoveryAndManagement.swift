@@ -131,6 +131,9 @@ struct SourceManagementView: View {
             } header: { Text("书源列表（全部 \(store.sources.count) 个，启用 \(store.enabledSources.count) 个）") }
         }
         .navigationTitle("书源管理")
+        .onChange(of: importModel.message) { _, message in
+            if !message.isEmpty { networkURL = ""; pasteText = "" }
+        }
         .readerNavigationStyle()
         .listStyle(.plain)
         .scrollDismissesKeyboard(.interactively)

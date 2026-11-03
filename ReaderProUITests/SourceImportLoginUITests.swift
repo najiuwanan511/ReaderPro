@@ -27,6 +27,13 @@ final class SourceImportLoginUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["登录成功"].waitForExistence(timeout: 20))
         app.navigationBars.buttons["关闭"].tap()
         XCTAssertTrue(app.buttons["接口二分类"].waitForExistence(timeout: 20))
+        app.terminate(); app.launchArguments = ["--source-ui-fixture", "--source-login-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        XCTAssertTrue(source.waitForExistence(timeout: 15)); source.tap()
+        XCTAssertTrue(app.buttons["接口二分类"].waitForExistence(timeout: 20))
+        source.press(forDuration: 1); app.buttons["登录"].tap()
+        XCTAssertTrue(app.buttons["当前接口：接口二"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.textFields["login-field-账号"].value as? String, "reader")
     }
 
     func testWebLoginSharesCookieWithSearchEngine() {

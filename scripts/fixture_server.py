@@ -281,6 +281,9 @@ class Handler(BaseHTTPRequestHandler):
             mime = 'application/json; charset=utf-8'
             body = json.dumps({key: int(os.environ.get('SOURCE_AUDIT_' + key.upper(), default))
                                for key, default in [('start', '0'), ('count', '0'), ('concurrency', '24')]})
+        elif path == '/packs/login-xsbook':
+            mime = 'application/json; charset=utf-8'
+            body = Path('scripts/fixtures/login-xsbook-1330.json').read_text(encoding='utf-8')
         elif path == '/packs/user':
             mime = 'application/json; charset=utf-8'
             body = Path('build/source-pack-1325.json').read_text(encoding='utf-8')

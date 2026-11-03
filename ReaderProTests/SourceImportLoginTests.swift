@@ -3,6 +3,26 @@ import Combine
 @testable import ReaderPro
 
 final class SourceImportLoginTests: XCTestCase {
+    func testHTMLTagsInsideSourceScriptsCannotBeMistakenForImportWebpage() throws {
+        let raw = #"[{"bookSourceName":"HTML规则","bookSourceUrl":"https://html-rule.invalid","loginUrl":"function login(){return '<html><pre>不是外层页面</pre></html>'}","ruleContent":{"content":"<js>result.replace(/<pre>/g,'')</js>"}}]"#
+        let result = importSourceDocument(raw)
+        XCTAssertEqual(result.sources.count, 1)
+        XCTAssertEqual(result.sources.first?.loginUrl, "function login(){return '<html><pre>不是外层页面</pre></html>'}")
+    }
+    func testUnmodified1330LoginRulesRenderAndExecuteRouteSelection() async throws {
+        let document = try await importSourcePacksFromURL("http://127.0.0.1:8765/packs/login-xsbook")
+        var source = try XCTUnwrap(document.sources.first)
+        source.bookSourceUrl = "https://original-login-\(UUID().uuidString).invalid"
+        defer { try? SourceLoginInfo.remove(source.bookSourceUrl) }
+        let first = try await Task.detached { try await source.loginSnapshot() }.value
+        XCTAssertEqual(first.rows.count, 12)
+        XCTAssertTrue(first.rows.contains { $0.name == "①从发布页获取线路" })
+        let output = try await Task.detached {
+            try await source.loginSnapshot(values: first.values, action: "source.put('xsb_line1','https://route-a.invalid');XSB_useLine(java,1)")
+        }.value
+        XCTAssertTrue(output.rows.contains { $0.displayName.contains("route-a.invalid") })
+        XCTAssertTrue(output.message.contains("已记录线路"))
+    }
     func testImportRetainsAndroidLoginUIAndCheckScript() throws {
         let raw = #"[{"bookSourceName":"登录源","bookSourceUrl":"https://login.invalid","loginUi":[{"name":"接口","type":"select","chars":["接口一","接口二"]}],"loginCheckJs":"result"}]"#
         // Real packs use a JSON string for loginUi; tolerate an actual JSON
