@@ -20,6 +20,7 @@ from pathlib import Path
 # Count the list-script's synchronous detail requests per test invocation.
 bridge_stress_lock = threading.Lock()
 bridge_stress_counts = {}
+remote_library_files = {'/remote-library/Book.txt': '第一章 开始\n远程书库正文'.encode('utf-8')}
 
 class SocksFixture(socketserver.BaseRequestHandler):
     """Minimal SOCKS5 endpoint proving that URLSession uses the proxy."""
@@ -82,6 +83,48 @@ class SocksFixtureServer(socketserver.ThreadingTCPServer):
     daemon_threads = True
 
 class Handler(BaseHTTPRequestHandler):
+    def remote_library(self):
+        path = urlsplit(self.path).path
+        if not path.startswith('/remote-library/'):
+            return False
+        if self.headers.get('Authorization') != 'Basic ' + base64.b64encode(b'reader:secret').decode():
+            self.send_error(401)
+            return True
+        status, data, content_type = 200, b'', 'application/octet-stream'
+        if self.command == 'PROPFIND':
+            if self.headers.get('Depth') != '1':
+                self.send_error(400)
+                return True
+            data = b'''<?xml version="1.0"?><d:multistatus xmlns:d="DAV:">
+<d:response><d:href>/remote-library/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+<d:response><d:href>/remote-library/Book.txt</d:href><d:propstat><d:prop><d:displayname>Book.txt</d:displayname><d:getcontentlength>40</d:getcontentlength><d:resourcetype/></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+<d:response><d:href>/remote-library/sub/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>
+</d:multistatus>'''
+            status, content_type = 207, 'application/xml'
+        elif self.command == 'PUT':
+            remote_library_files[path] = self.rfile.read(int(self.headers.get('Content-Length', '0')))
+            status = 201
+        elif self.command == 'DELETE':
+            remote_library_files.pop(path, None)
+            status = 204
+        elif self.command == 'GET' and path in remote_library_files:
+            data = remote_library_files[path]
+        else:
+            self.send_error(404)
+            return True
+        self.send_response(status); self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+        return True
+
+    def do_PROPFIND(self):
+        if not self.remote_library(): self.send_error(404)
+
+    def do_PUT(self):
+        if not self.remote_library(): self.send_error(404)
+
+    def do_DELETE(self):
+        if not self.remote_library(): self.send_error(404)
+
     def log_message(self, fmt, *args):
         print(f'{time.time():.3f} {self.command} {self.path} {fmt % args}', flush=True)
 
@@ -144,6 +187,7 @@ class Handler(BaseHTTPRequestHandler):
             if 'upstream' in locals(): upstream.close()
 
     def do_GET(self):
+        if self.remote_library(): return
         parsed = urlsplit(self.path)
         expected = getattr(self.server, 'expected_proxy_auth', None)
         if parsed.scheme and expected and self.headers.get('Proxy-Authorization') != expected:

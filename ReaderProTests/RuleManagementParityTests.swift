@@ -8,6 +8,38 @@ private actor SpeechPrefetchTestState {
 }
 
 final class RuleManagementParityTests: XCTestCase {
+    func testRemoteLibraryBrowsesDownloadsUploadsAndDeletesWithAuthentication() async throws {
+        let client = try RemoteLibraryClient(address: "http://127.0.0.1:8765/remote-library/", username: "reader", password: "secret")
+        let entries = try await client.list(client.root)
+        XCTAssertEqual(entries.map(\.name), ["sub", "Book.txt"])
+        let bookEntry = try XCTUnwrap(entries.first { !$0.directory })
+        guard case .book(let book) = try await client.download(bookEntry, txtRules: []) else { return XCTFail("Must parse downloaded TXT") }
+        defer { try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(book.fileName)) }
+        XCTAssertTrue(book.chapters.map(\.text).joined().contains("远程书库正文"))
+        let name = UUID().uuidString + ".txt", bytes = Data("上传正文".utf8)
+        try await client.upload(bytes, name: name, folder: client.root)
+        let entry = RemoteLibraryEntry(url: client.root.appendingPathComponent(name), name: name, directory: false, bytes: Int64(bytes.count))
+        let (downloaded, response) = try await URLSession.shared.data(for: client.request(entry.url, method: "GET"))
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200); XCTAssertEqual(downloaded, bytes)
+        try await client.delete(entry)
+        let (_, deleted) = try await URLSession.shared.data(for: client.request(entry.url, method: "GET"))
+        XCTAssertEqual((deleted as? HTTPURLResponse)?.statusCode, 404)
+        let anonymous = try RemoteLibraryClient(address: client.root.absoluteString)
+        do { _ = try await anonymous.list(anonymous.root); XCTFail("Anonymous requests must be denied") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("401")) }
+    }
+
+    func testRemoteLibraryRejectsOutsideRootAndFailedDAVProperties() throws {
+        let client = try RemoteLibraryClient(address: "https://dav.test/books/")
+        XCTAssertFalse(client.contains(URL(string: "https://dav.test.evil/books/a.txt")!))
+        XCTAssertFalse(client.contains(URL(string: "https://dav.test/books2/a.txt")!))
+        XCTAssertFalse(client.contains(URL(string: "https://dav.test/books/../secret/a.txt")!))
+        XCTAssertFalse(client.contains(URL(string: "http://dav.test/books/a.txt")!))
+        let xml = #"<d:multistatus xmlns:d="DAV:"><d:response><d:href>https://evil.test/book.txt</d:href></d:response><d:response><d:href>/books/one.txt</d:href><d:propstat><d:prop><d:displayname>正确.txt</d:displayname></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat><d:propstat><d:prop><d:displayname>错误.txt</d:displayname></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat></d:response></d:multistatus>"#
+        XCTAssertEqual(try client.parse(Data(xml.utf8), folder: client.root).map(\.name), ["正确.txt"])
+        XCTAssertThrowsError(try client.request(URL(string: "https://evil.test/book.txt")!, method: "GET"))
+    }
+
     func testShelfListsAcceptAndroidNullsAndExportPortableNamesAndOnlineAddresses() throws {
         let decoded = try ShelfTransfer.decode(Data(#"[{"name":"书名","author":null,"intro":null},{"name":""}]"#.utf8))
         XCTAssertEqual(decoded.count, 1); XCTAssertEqual(decoded[0].author, "")
