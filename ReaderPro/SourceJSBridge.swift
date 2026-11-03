@@ -138,12 +138,12 @@ enum SourceJSBridge {
         let http = response as? HTTPURLResponse
         let fields = (http?.allHeaderFields ?? [:]).reduce(into: [String: String]()) { $0[String(describing: $1.key).lowercased()] = String(describing: $1.value) }
         let text = !binary && (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()
-        var result: [String: Any] = ["text": text, "url": response.url?.absoluteString ?? address,
+        var payload: [String: Any] = ["text": text, "url": response.url?.absoluteString ?? address,
                                      "status": http?.statusCode ?? 0, "headers": fields]
         if binary || (http?.mimeType ?? "").hasPrefix("audio/") || http?.mimeType == "application/octet-stream" {
-            result["bytesBase64"] = data.base64EncodedString()
+            payload["bytesBase64"] = data.base64EncodedString()
         }
-        return result
+        return payload
     }
 
     private final class Batch: @unchecked Sendable {
