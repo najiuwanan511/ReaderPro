@@ -202,6 +202,8 @@ struct VideoPlayerView: View {
     @State private var showVideoSettings = false
     @State private var showLogin = false
     @State private var showEditor = false
+    @State private var showSourceAction = false
+    @State private var paymentAction = false
     @AppStorage("video.showDanmaku") private var showDanmaku = true
     @AppStorage("video.playbackRate") private var playbackRate = 1.0
     @AppStorage("video.danmakuFontSize") private var danmakuFontSize = 16.0
@@ -276,6 +278,8 @@ struct VideoPlayerView: View {
                     Toggle("显示弹幕", isOn: $showDanmaku)
                     if source?.hasLogin == true { Button("登录 / 接口设置") { showLogin = true } }
                     if source != nil, store != nil { Button("编辑书源") { showEditor = true } }
+                    if source?.customButton == true { Button("书源自定义按钮") { paymentAction = false; showSourceAction = true } }
+                    if !(source?.ruleContent.androidValue("payAction") ?? "").isEmpty { Button("购买 / 解锁本集") { paymentAction = true; showSourceAction = true } }
                     if let url = resource?.request.url {
                         Button("复制播放地址") { UIPasteboard.general.string = url.absoluteString }
                         ShareLink("其他应用打开 / 分享", item: url)
@@ -286,6 +290,18 @@ struct VideoPlayerView: View {
         .sheet(isPresented: $showLogin, onDismiss: { retry += 1 }) { if let source { SourceLoginView(source: source) } }
         .sheet(isPresented: $showEditor, onDismiss: { retry += 1 }) {
             if let source, let store { NavigationStack { SourceDetailView(store: store, source: source) } }
+        }
+        .sheet(isPresented: $showSourceAction, onDismiss: { if paymentAction { retry += 1 } }) {
+            if let source {
+                NavigationStack {
+                    SourceCustomActionView(source: source, book: (store?.books.first(where: { $0.id == book.id }) ?? book).sourceBook,
+                        chapter: chapters.indices.contains(episodeIndex) ? chapters[episodeIndex] : nil, payment: paymentAction,
+                        onPaymentSuccess: {
+                            if let store { try await store.refreshPurchasedChapter(bookID: book.id, chapterURL: chapters.indices.contains(episodeIndex) ? chapters[episodeIndex].url : nil) }
+                            retry += 1
+                        })
+                }
+            }
         }
         .sheet(isPresented: $showVideoSettings) {
             NavigationStack {

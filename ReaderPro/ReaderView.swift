@@ -205,7 +205,16 @@ private final class ReaderScrollProgress {
         .sheet(item: $selectedReplacement) { rule in NavigationStack { ReplaceRuleEditorView(store: store, rule: rule) } }
         .sheet(isPresented: $sourceAction) {
             if let book, let source = store.sourceForBook(book) {
-                NavigationStack { SourceCustomActionView(source: source, book: book.sourceBook, chapter: chapter, payment: paymentAction) }
+                NavigationStack {
+                    SourceCustomActionView(source: source, book: book.sourceBook, chapter: chapter, payment: paymentAction, onPaymentSuccess: {
+                        let address = chapter?.url
+                        try await store.refreshPurchasedChapter(bookID: bookId, chapterURL: address)
+                        cancelChapterLoad()
+                        if let updated = self.book { chapterIndex = updated.chapterIndex }
+                        chapterLanding = .offset(currentCharOffset()); pages = []; attributed = NSAttributedString(string: "")
+                        loadChapterIfNeeded(); jumpToken += 1
+                    })
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .readerSelectionAction)) { notification in

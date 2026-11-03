@@ -7,8 +7,17 @@ import CryptoKit
 final class MangaImageStore {
     static let shared = MangaImageStore()
     private let mem = NSCache<NSString, UIImage>()
+    private let generationLock = NSLock()
+    private var generation: UInt64 = 0
+    private func cacheGeneration() -> UInt64 { generationLock.lock(); defer { generationLock.unlock() }; return generation }
+    func clear(bookID: String) {
+        generationLock.lock(); generation &+= 1; generationLock.unlock()
+        mem.removeAllObjects()
+        try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(bookID).appendingPathComponent("mangaCache"))
+    }
 
     func image(for urlString: String, bookId: String, source: LegadoSource? = nil) async -> UIImage? {
+        let token = cacheGeneration()
         let cacheKey = bookId + "|" + urlString + "|" + (source.map(SourceValidation.fingerprint) ?? "")
         if let m = mem.object(forKey: cacheKey as NSString) { return m }
         if let cached = readDisk(cacheKey, bookId: bookId) {
@@ -17,6 +26,7 @@ final class MangaImageStore {
         }
         do {
             let data = try await SourceImagePipeline.load(urlString, source: source, cover: false)
+            guard !Task.isCancelled, cacheGeneration() == token else { return nil }
             if let img = UIImage(data: data) {
                 writeDisk(data, cacheKey, bookId: bookId)
                 mem.setObject(img, forKey: cacheKey as NSString)
@@ -105,6 +115,9 @@ struct MangaView: View {
     @AppStorage("manga.saturation") private var imageSaturation = 1.0
     @AppStorage("manga.showFooter") private var showFooter = true
     @State private var showImageSettings = false
+    @State private var showSourceAction = false
+    @State private var paymentAction = false
+    @State private var landAtEnd = false
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
     var isOnline: Bool { book?.kind == "comic" }
@@ -156,7 +169,29 @@ struct MangaView: View {
             }
         }
         .onDisappear { saveProgress(); chapterTask?.cancel(); prefetchTask?.cancel(); loadToken = UUID() }
-        .toolbar { Button { showImageSettings = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("漫画设置") }
+        .toolbar {
+            Button { showImageSettings = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("漫画设置")
+            if let book, let source = store.sourceForBook(book) {
+                Menu {
+                    if source.customButton { Button("书源自定义按钮") { paymentAction = false; showSourceAction = true } }
+                    if !(source.ruleContent.androidValue("payAction") ?? "").isEmpty { Button("购买 / 解锁本章") { paymentAction = true; showSourceAction = true } }
+                } label: { Image(systemName: "ellipsis") }
+            }
+        }
+        .sheet(isPresented: $showSourceAction) {
+            if let book, let source = store.sourceForBook(book) {
+                NavigationStack {
+                    SourceCustomActionView(source: source, book: book.sourceBook,
+                        chapter: book.chapters.indices.contains(chapter) ? book.chapters[chapter] : nil, payment: paymentAction,
+                        onPaymentSuccess: {
+                            chapterTask?.cancel(); prefetchTask?.cancel(); loadToken = UUID()
+                            try await store.refreshPurchasedChapter(bookID: bookId, chapterURL: book.chapters.indices.contains(chapter) ? book.chapters[chapter].url : nil)
+                            MangaImageStore.shared.clear(bookID: bookId)
+                            if let current = self.book { chapter = current.chapterIndex; loadChapterImages(current) }
+                        })
+                }
+            }
+        }
         .sheet(isPresented: $showImageSettings) {
             NavigationStack {
                 Form {
@@ -257,7 +292,7 @@ struct MangaView: View {
         guard isOnline, b.chapters.indices.contains(chapter) else { return }
         let ch = b.chapters[chapter]
         if !ch.imageUrls.isEmpty {
-            page = min(page, max(0, ch.imageUrls.count - 1))
+            page = landAtEnd ? max(0, ch.imageUrls.count - 1) : min(page, max(0, ch.imageUrls.count - 1)); landAtEnd = false
             prefetch(after: chapter)
             return
         }
@@ -275,7 +310,7 @@ struct MangaView: View {
                         store.updateBook(nb)
                     }
                     loadingChapter = false
-                    if chIndex == chapter { page = 0 }
+                    if chIndex == chapter { page = landAtEnd ? max(0, imgs.count - 1) : 0; landAtEnd = false }
                     if imgs.isEmpty { loadError = "这一章没拉到图片（规则不匹配或该站拒绝）" }
                     else { prefetch(after: chIndex) }
                 }
@@ -293,7 +328,7 @@ struct MangaView: View {
         guard let b = book, isOnline else { return }
         guard let nc = b.chapters.readableIndex(from: chapter + delta, direction: delta) else { return }
         saveProgress()
-        chapter = nc; page = 0; zoom = 1.0
+        chapter = nc; page = 0; zoom = 1.0; landAtEnd = delta < 0 && !stripMode
         loadChapterImages(b)
     }
 

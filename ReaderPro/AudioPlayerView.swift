@@ -136,6 +136,8 @@ struct AudioPlayerView: View {
     @State private var loading = false
     @State private var showLogin = false
     @State private var showSourceChange = false
+    @State private var showSourceAction = false
+    @State private var paymentAction = false
     private var chapters: [BookChapter] { (store?.books.first(where: { $0.id == book.id }) ?? book).chapters }
 
     init(book: LocalBook, store: BookStore? = nil, source: LegadoSource? = nil) {
@@ -226,6 +228,8 @@ struct AudioPlayerView: View {
                         Button("重新加载") { retry += 1 }
                         if source?.hasLogin == true { Button("登录 / 接口设置") { showLogin = true } }
                         if source != nil, store != nil { Button("换源") { showSourceChange = true } }
+                        if source?.customButton == true { Button("书源自定义按钮") { paymentAction = false; showSourceAction = true } }
+                        if !(source?.ruleContent.androidValue("payAction") ?? "").isEmpty { Button("购买 / 解锁本章") { paymentAction = true; showSourceAction = true } }
                     } label: { Image(systemName: "ellipsis").font(.title2).foregroundStyle(.white) }
                 }
                 .padding(.bottom, 30)
@@ -239,6 +243,18 @@ struct AudioPlayerView: View {
         .task(id: "\(chapterIndex)-\(retry)") { await load() }
         .onDisappear { savePosition(); model.stop() }
         .sheet(isPresented: $showLogin) { if let source { SourceLoginView(source: source) } }
+        .sheet(isPresented: $showSourceAction, onDismiss: { if paymentAction { retry += 1 } }) {
+            if let source {
+                NavigationStack {
+                    SourceCustomActionView(source: source, book: (store?.books.first(where: { $0.id == book.id }) ?? book).sourceBook,
+                        chapter: chapters.indices.contains(chapterIndex) ? chapters[chapterIndex] : nil, payment: paymentAction,
+                        onPaymentSuccess: {
+                            if let store { try await store.refreshPurchasedChapter(bookID: book.id, chapterURL: chapters.indices.contains(chapterIndex) ? chapters[chapterIndex].url : nil) }
+                            retry += 1
+                        })
+                }
+            }
+        }
         .sheet(isPresented: $showSourceChange, onDismiss: { retry += 1 }) {
             if let store, let current = store.books.first(where: { $0.id == book.id }) {
                 ReaderSourceChangeView(store: store, current: current) { candidate, index in

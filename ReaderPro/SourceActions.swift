@@ -66,6 +66,7 @@ struct SourceCustomActionView: View {
     let book: SourceBook
     var chapter: BookChapter? = nil
     var payment = false
+    var onPaymentSuccess: (() async throws -> Void)? = nil
     @State private var running = false
     @State private var message = ""
     @State private var browser: SourceLoginBrowser?
@@ -96,9 +97,31 @@ struct SourceCustomActionView: View {
                 if let copy = result.copyText { UIPasteboard.general.string = copy; message = "已复制" }
                 browser = result.browser
                 if browser == nil && isSourceURL(result.value) { browser = SourceLoginBrowser(url: result.value) }
-                if payment && sourceRuleBoolean(result.value) { message = "书源返回购买成功，请刷新目录和本章" }
+                if payment && sourceRuleBoolean(result.value) {
+                    message = "购买成功，正在刷新目录和本章…"
+                    if let onPaymentSuccess { try await onPaymentSuccess(); message = "购买成功，目录和本章已刷新" }
+                    else { message = "书源返回购买成功" }
+                }
             } catch { message = sourceErrorMessage(error); SourceExecutionLog.shared.add(message, source: source.bookSourceUrl) }
             running = false
         }
+    }
+}
+
+extension BookStore {
+    @MainActor func refreshPurchasedChapter(bookID: String, chapterURL: String?) async throws {
+        guard let original = books.first(where: { $0.id == bookID }), let source = sourceForBook(original) else { throw CancellationError() }
+        let worker = Task.detached { try await withTimeout(60) { try await source.fetchChapters(book: original.sourceBook) } }
+        let chapters = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+        try Task.checkCancellation()
+        guard !chapters.isEmpty else { throw SourceFailure(stage: "购买后刷新", message: "书源未返回目录，请重新加载") }
+        guard let current = books.first(where: { $0.id == bookID }), current.sourceUrl == original.sourceUrl else { throw CancellationError() }
+        chapterCache.cancel(bookID: bookID)
+        var updated = current.refreshingDirectory(chapters)
+        if let chapterURL, let index = updated.chapters.firstIndex(where: { $0.url == chapterURL }) {
+            updated.chapters[index].text = "__URL__" + chapterURL
+            updated.chapters[index].imageUrls = []
+        }
+        updateBook(updated)
     }
 }

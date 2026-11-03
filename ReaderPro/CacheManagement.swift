@@ -11,8 +11,10 @@ extension BookStore {
                 book.chapters[chapter].text = "__URL__" + (book.chapters[chapter].url ?? "")
             }
         }
-        let directory = Self.filesDir.appendingPathComponent(book.fileName).appendingPathComponent("mangaCache")
-        try? FileManager.default.removeItem(at: directory)
+        MangaImageStore.shared.clear(bookID: book.id)
+        if book.kind == "comic" {
+            for chapter in book.chapters.indices { book.chapters[chapter].imageUrls = [] }
+        }
         books[index] = book; saveBooks()
     }
     @MainActor func clearDownloadedCaches() async {
