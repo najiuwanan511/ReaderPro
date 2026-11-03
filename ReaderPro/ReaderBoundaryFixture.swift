@@ -15,6 +15,7 @@ struct ReaderBoundaryFixtureRoot: View {
         }
         store.showHeader = true
         store.showFooter = true
+        UserDefaults.standard.set(args.contains("--reader-double-page"), forKey: "reader.landscapeDoublePage")
         if let arg = args.first(where: { $0.hasPrefix("--reader-mode=") }),
            let mode = Int(arg.dropFirst("--reader-mode=".count)) { store.pageTurn = mode }
         if args.contains("--reset-reader-boundary") {

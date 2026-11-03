@@ -582,6 +582,7 @@ struct CurlPageController: UIViewControllerRepresentable {
     var onChapterBoundary: (Bool) -> Void
     var onEdgeTap: (Bool) -> Void
     var onCenterTap: () -> Void = {}
+    var onTapPoint: ((CGPoint, CGSize) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -636,6 +637,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         @objc func readerTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
             if let text = view.subviews.compactMap({ $0 as? UITextView }).first, text.selectedRange.length > 0 { return }
+            if let handler = parent.onTapPoint { handler(tap.location(in: view), view.bounds.size); return }
             let fraction = tap.location(in: view).x / view.bounds.width
             if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
             else if fraction > 2.0 / 3.0 { parent.onEdgeTap(true) }
@@ -645,6 +647,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldReceive touch: UITouch) -> Bool {
             if let text = touch.view as? UITextView, text.selectedRange.length > 0 { return false }
+            if parent.onTapPoint != nil { return true }
             guard parent.animatedCurl, let view = gestureRecognizer.view, view.bounds.width > 0 else { return true }
             let fraction = touch.location(in: view).x / view.bounds.width
             return fraction >= 1.0 / 3.0 && fraction <= 2.0 / 3.0

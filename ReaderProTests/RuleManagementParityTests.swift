@@ -3,6 +3,17 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testReaderTapRegionsUseIndependentRowsAndColumnsWithPersistedActions() {
+        let suite = "TapRegions." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let size = CGSize(width: 300, height: 600)
+        XCTAssertEqual(ReaderInteraction.action(at: CGPoint(x: 10,y: 10), size: size, defaults: defaults), .previous)
+        XCTAssertEqual(ReaderInteraction.action(at: CGPoint(x: 150,y: 300), size: size, defaults: defaults), .menu)
+        defaults.set(ReaderTapAction.bookmark.rawValue, forKey: ReaderInteraction.key(2,2))
+        XCTAssertEqual(ReaderInteraction.action(at: CGPoint(x: 290,y: 590), size: size, defaults: defaults), .bookmark)
+        XCTAssertEqual(ReaderInteraction.action(at: CGPoint(x: 290,y: 10), size: size, defaults: defaults), .next)
+    }
+
     @MainActor func testPendingRuleUpdatesSurviveRelaunchAndUnchangedRulesAreNotOfferedAgain() async throws {
         let name = "RuleUpdate." + UUID().uuidString, defaults = UserDefaults(suiteName: name)!
         let store = BookStore(), original = store.sources

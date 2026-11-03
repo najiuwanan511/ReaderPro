@@ -8,11 +8,32 @@ final class ReaderChapterPagingUITests: XCTestCase {
     }
 
     private func launch(mode: Int, startSecond: Bool = false) -> XCUIApplication {
+        XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
         app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=\(mode)"]
         if startSecond { app.launchArguments.append("--reader-start-second") }
         app.launch()
         return app
+    }
+
+    func testLandscapeDoublePageKeepsBothColumnsAndCrossesChapterBoundary() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=3", "--reader-double-page"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "第一章分页内容").waitForExistence(timeout: 30))
+        let columns = app.textViews.matching(identifier: "readerPage")
+        XCTAssertGreaterThanOrEqual(columns.count, 2)
+        let first = columns.element(boundBy: 0).frame, second = columns.element(boundBy: 1).frame
+        XCTAssertGreaterThan(abs(first.midX - second.midX), 100)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let slider = app.sliders["readerProgressSlider"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 10)); slider.adjust(toNormalizedSliderPosition: 1)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 10))
+        app.swipeLeft()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
     }
 
     private func page(_ app: XCUIApplication, containing text: String) -> XCUIElement {

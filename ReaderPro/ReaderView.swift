@@ -45,6 +45,9 @@ private final class ReaderScrollProgress {
     @State private var pageIndex = 0
     @State private var attributed: NSAttributedString = NSAttributedString(string: "")
     @State private var speechAfterLoad = false
+    @AppStorage("reader.landscapeDoublePage") private var landscapeDoublePage = false
+    var usesDoublePage: Bool { landscapeDoublePage && lastSize.width > lastSize.height && store.pageTurn != 2 }
+    var pageStep: Int { usesDoublePage ? 2 : 1 }
     @State private var pageSize: CGSize = .zero
     @State private var lastSize: CGSize = .zero
 
@@ -124,7 +127,7 @@ private final class ReaderScrollProgress {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)|\(landscapeDoublePage)"
     }
 
     var body: some View {
@@ -242,6 +245,9 @@ private final class ReaderScrollProgress {
 
     @ViewBuilder
     func readerContent(size: CGSize) -> some View {
+        if usesDoublePage {
+            doublePageReader(size: size)
+        } else {
         switch store.pageTurn {
         case 2: scrollReader(size: size)
         case 0: coverReader(size: size)
@@ -249,6 +255,16 @@ private final class ReaderScrollProgress {
         case 4: curlReader(size: size)
         default: pagedReader(size: size)
         }
+        }
+    }
+
+    func doublePageReader(size: CGSize) -> some View {
+        HStack(spacing: 0) {
+            pageView(i: pageIndex, size: CGSize(width: size.width / 2, height: size.height), interactive: false)
+            if pages.indices.contains(pageIndex + 1) { pageView(i: pageIndex + 1, size: CGSize(width: size.width / 2, height: size.height), interactive: false) }
+            else { Color.clear.frame(width: size.width / 2, height: size.height) }
+        }.simultaneousGesture(SpatialTapGesture().onEnded { handleTap($0.location, size: size) })
+            .simultaneousGesture(boundarySwipe(width: size.width, allPages: true))
     }
 
     // 平移（TabView .page）
@@ -300,7 +316,8 @@ private final class ReaderScrollProgress {
                 },
                 onCenterTap: {
                     withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() }
-                }
+                },
+                onTapPoint: { point, dimensions in handleTap(point, size: dimensions); jumpToken += 1 }
             )
         }
         .frame(width: size.width, height: size.height)
@@ -476,15 +493,22 @@ private final class ReaderScrollProgress {
                     .allowsHitTesting(false)
                 }
             }
-            .overlay {
-                if interactive {
-                    HStack(spacing: 0) {
-                        Color.clear.contentShape(Rectangle()).onTapGesture { goPrev() }
-                        Color.clear.contentShape(Rectangle()).onTapGesture { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
-                        Color.clear.contentShape(Rectangle()).onTapGesture { goNext() }
-                    }
-                }
-            }
+            .simultaneousGesture(SpatialTapGesture().onEnded { event in
+                if interactive { handleTap(event.location, size: size) }
+            })
+    }
+
+    func handleTap(_ point: CGPoint, size: CGSize) {
+        switch ReaderInteraction.action(at: point, size: size) {
+        case .previous: goPrev()
+        case .next: goNext()
+        case .menu: withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() }
+        case .bookmark: addBookmark()
+        case .speech: toggleSpeech()
+        case .previousChapter: openChapter(chapterIndex - 1)
+        case .nextChapter: openChapter(chapterIndex + 1)
+        case .none: break
+        }
     }
 
     // MARK: 翻页
@@ -513,8 +537,8 @@ private final class ReaderScrollProgress {
     }
 
     func goNext() {
-        if pageIndex < pages.count - 1 {
-            withAnimation(.easeOut(duration: store.pageTurnSpeed)) { pageIndex += 1 }
+        if pageIndex + pageStep < pages.count {
+            withAnimation(.easeOut(duration: store.pageTurnSpeed)) { pageIndex += pageStep }
             saveProgress(page: pageIndex)
         } else if chapterIndex < (book?.chapters.count ?? 0) - 1 {
             openChapter(chapterIndex + 1, atStart: true)
@@ -523,7 +547,7 @@ private final class ReaderScrollProgress {
 
     func goPrev() {
         if pageIndex > 0 {
-            withAnimation(.easeOut(duration: store.pageTurnSpeed)) { pageIndex -= 1 }
+            withAnimation(.easeOut(duration: store.pageTurnSpeed)) { pageIndex = max(0, pageIndex - pageStep) }
             saveProgress(page: pageIndex)
         } else if chapterIndex > 0 {
             openChapter(chapterIndex - 1, atEnd: true)
@@ -548,7 +572,7 @@ private final class ReaderScrollProgress {
         } else {
             cancelChapterLoad()
             rebuild(size: lastSize, keepOffset: nil)
-            pageIndex = atEnd ? max(pages.count - 1, 0) : 0
+            pageIndex = atEnd ? max(0, (pages.count - 1) / pageStep * pageStep) : 0
             if atEnd { scrollProgress.offset = pages.last?.location ?? 0 }
             saveProgress(page: pageIndex)
             store.chapterCache.preload(bookID: bookId, after: chapterIndex)
@@ -594,7 +618,7 @@ private final class ReaderScrollProgress {
             ? CGFloat(max(store.fontSize - 6, 10) + max(store.pagePaddingV * 0.35, 6) + 4)
             : 0
         let newPageSize = CGSize(
-            width: max(size.width - CGFloat(store.pagePaddingH * 2), 100),
+            width: max(size.width / (usesDoublePage ? 2 : 1) - CGFloat(store.pagePaddingH * 2), 100),
             height: max(size.height - CGFloat(store.pagePaddingV * 2) - headerSpace - footerSpace, 100)
         )
         pageSize = newPageSize
@@ -602,7 +626,7 @@ private final class ReaderScrollProgress {
         if let off = keepOffset {
             pageIndex = pageIndex(for: off)
         } else {
-            pageIndex = max(min(pageIndex, pages.count - 1), 0)
+            pageIndex = max(min(pageIndex, pages.count - 1), 0) / pageStep * pageStep
         }
     }
 
@@ -615,7 +639,7 @@ private final class ReaderScrollProgress {
     func pageIndex(for offset: Int) -> Int {
         var idx = 0
         for (i, r) in pages.enumerated() where r.location <= offset { idx = i }
-        return idx
+        return idx / pageStep * pageStep
     }
 
     func onAppear(size: CGSize) {
@@ -709,7 +733,7 @@ private final class ReaderScrollProgress {
                 case .start: rebuild(size: lastSize, keepOffset: 0)
                 case .end:
                     rebuild(size: lastSize, keepOffset: nil)
-                    pageIndex = max(pages.count - 1, 0)
+                    pageIndex = max(0, (pages.count - 1) / pageStep * pageStep)
                     scrollProgress.offset = pages.indices.contains(pageIndex) ? pages[pageIndex].location : 0
                 case .offset(let offset):
                     rebuild(size: lastSize, keepOffset: offset)
@@ -1008,7 +1032,7 @@ private final class ReaderScrollProgress {
                 Button("上一章") { openChapter(chapterIndex - 1) }.disabled(chapterIndex == 0)
                 Slider(value: Binding(
                     get: { Double(pageIndex) },
-                    set: { pageIndex = Int($0); saveProgress(page: pageIndex) }
+                    set: { pageIndex = Int($0) / pageStep * pageStep; saveProgress(page: pageIndex) }
                 ), in: 0...Double(max(pages.count - 1, 1)), step: 1, onEditingChanged: { editing in
                     if !editing && (store.pageTurn == 1 || store.pageTurn == 4) { jumpToken += 1 }
                 }).disabled(store.pageTurn == 2 || pages.count < 2)

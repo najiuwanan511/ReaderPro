@@ -206,6 +206,8 @@ struct ReadSettingsView: View {
                 SettingRow(icon: "rectangle.bottomthird.inset", iconTint: .blue, title: "显示页脚", isOn: Binding(get: { store.showFooter }, set: { store.showFooter = $0; store.save() }))
             } header: { SettingSectionHeader(title: "翻页") }
 
+            Section { NavigationLink("点击区域 / 横屏双页") { ReaderInteractionSettingsView() } }
+
             Section {
                 NavigationLink("朗读引擎 / 在线 TTS") { SpeechEngineSettingsView() }
                 VStack(spacing: 2) {
