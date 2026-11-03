@@ -16,7 +16,7 @@
 
 ## 2026-11-03 实施记录
 
-开发分支：`fix/legado-parity`。尚未合入 main，尚未生成本轮最终 IPA。
+开发分支：`fix/legado-parity`；已实施的修复随本轮交付更新 main。安装包以其内置提交号、同提交回归和核验记录为准，中间构建不作为最终完整交付。
 
 已通过的固定样例回归：
 
@@ -71,6 +71,7 @@
 ## 交付前仍必须完成
 
 - `185d4b7` 规则回归 [41644501394](https://github.com/najiuwanan511/ReaderPro/actions/runs/41644501394)：180 项，0 失败。
+- `185d4b7` 完整 Debug 回归与 IPA 构建 [41644766820](https://github.com/najiuwanan511/ReaderPro/actions/runs/41644766820)：236 单测、43 UI 全过，正文像素检查通过；已核验 arm64 真机包、中文、iOS 17 最低版本、提交号与排除调试入口/不兼容 Swift WebKit overlay。该包不包含后续代理、分类间距和脚本提示修正，不能作为这些修正的验收证据。
 - `6863a63` iOS 17 Release [41641774329](https://github.com/najiuwanan511/ReaderPro/actions/runs/41641774329)：42 项 UI 全过；233 项单测中 1 项失败，为网页 HTTP/SOCKS 组合测试的域名解析失败（-1003）。整体失败，不能记为完整通过。现恢复显式全域代理匹配，拆开域名、数字地址与源隔离用例，等待 iOS 17 和当前系统双回归。
 - 对照安卓 `item_find_book.xml`、`shape_space_divider.xml` 与其 Flexbox 3.0 源码，修正发现分类遗漏的 8 dp 行/列分隔、3 dp 容器内边距、源内 8 dp 缩进及百分比宽度基准；长标题按容器先测量，再按安卓 shrink 因子收缩。新增边界换行样例，等待回归；这不代表所有平台字体和控件外观已逐像素相同。
 - 普通书源的 `java.toast/longToast` 原为无操作，现接入带书源名称的短/长时中文提示与日志，保留登录页原有状态反馈；提示不拦截触摸，新增发现按钮提示后继续导航的实际 UI 用例，等待回归。
