@@ -69,7 +69,7 @@ final class RuleManagementParityTests: XCTestCase {
         source.searchUrl = "/parity/search?page={{page}}"
         source.ruleSearch.bookList = "$.books[*]"; source.ruleSearch.name = "$.title"; source.ruleSearch.author = "$.author"; source.ruleSearch.bookUrl = "$.url"
         source.ruleBookInfo.name = "$.title"; source.ruleBookInfo.author = "$.author"; source.ruleBookInfo.tocUrl = "$.toc"
-        source.ruleToc.chapterList = "$.chapters[*]"; source.ruleToc.chapterName = "$.title"; source.ruleToc.chapterUrl = "$.url"
+        source.ruleToc = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"chapterList":"$.chapters[*]","chapterName":"$.title","chapterUrl":"$.url","isVolume":"$.volume"}"#.utf8))
         let result = try await ShelfTransfer.resolveURL(source.bookSourceUrl + "/parity/book/1", sources: [source])
         let book = try await ShelfTransfer.makeBook(source: result.0, info: result.1)
         XCTAssertEqual(book.title, "分页小说1"); XCTAssertEqual(book.author, "作者"); XCTAssertEqual(book.chapters.count, 3)
