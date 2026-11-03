@@ -17,7 +17,7 @@ enum SourceScriptVideo {
             throw SourceFailure(stage: "脚本视频", message: "请在应用前台打开播放器")
         }
         while let next = presenter.presentedViewController { presenter = next }
-        let controller = UIHostingController(rootView: VideoPlayerView(book: book, source: source))
+        let controller = UIHostingController(rootView: NavigationStack { VideoPlayerView(book: book, source: source) })
         // Keep the requesting reader/search task alive while displaying media.
         controller.modalPresentationStyle = .overFullScreen
         presenter.present(controller, animated: true)
