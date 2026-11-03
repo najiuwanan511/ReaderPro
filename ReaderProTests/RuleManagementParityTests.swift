@@ -3,6 +3,35 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testDirectoryRefreshPreservesRawCacheAndPositionWhenChaptersAreInserted() {
+        var book = LocalBook(title: "测试书", fileName: "refresh.web", kind: "web")
+        book.bookUrl = "https://refresh.test/book"; book.tocUrl = "https://refresh.test/toc"
+        book.chapters = [BookChapter(title: "第一章", text: "已缓存正文", url: "/1"), BookChapter(title: "第二章", text: "__URL__/2", url: "/2")]
+        book.chapterIndex = 1; book.charOffset = 42
+        var heading = BookChapter(title: "第一卷", text: ""); heading.isVolume = true
+        let refreshed = book.refreshingDirectory([heading, BookChapter(title: "首章", text: "__URL__/1", url: "/1"), BookChapter(title: "第二章", text: "__URL__/2", url: "/2"), BookChapter(title: "第三章", text: "__URL__/3", url: "/3")])
+        XCTAssertEqual(refreshed.chapterIndex, 2); XCTAssertEqual(refreshed.charOffset, 42)
+        XCTAssertEqual(refreshed.chapters[1].text, "已缓存正文"); XCTAssertEqual(refreshed.unreadCount, 1)
+        XCTAssertEqual(refreshed.sourceBook.url, "https://refresh.test/book")
+    }
+
+    func testRuleSubscriptionUsesHourIntervalsAndExplicitAutomaticOptIn() throws {
+        var subscription = try JSONDecoder().decode(RuleSubscription.self, from: Data(#"{"id":1,"name":"订阅","url":"https://rules.test/list","autoUpdate":true,"update":1000000,"updateInterval":2}"#.utf8))
+        XCTAssertFalse(subscription.isDue(at: Date(timeIntervalSince1970: 8199)))
+        XCTAssertTrue(subscription.isDue(at: Date(timeIntervalSince1970: 8200)))
+        subscription.autoUpdate = false
+        XCTAssertFalse(subscription.isDue(at: .distantFuture))
+        try subscription.validate()
+    }
+
+    func testCustomSourceActionReceivesEventBookChapterAndReturnsResult() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "https://actions.test"
+        let book = SourceBook(title: "小说", author: "作者", url: "https://actions.test/book")
+        let chapter = BookChapter(title: "第一章", text: "正文", url: "https://actions.test/chapter/1")
+        let result = try await source.performBookAction(script: "[event,book.name,book.author,chapter.title,title,baseUrl].join('|')", book: book, chapter: chapter, event: "clickCustomButton")
+        XCTAssertEqual(result.value, "clickCustomButton|小说|作者|第一章|第一章|https://actions.test/chapter/1")
+    }
+
     func testCustomTxtTocRegexSplitsUnicodeAndAppliesCaptureReplacement() throws {
         let rule = try JSONDecoder().decode(TxtTocRule.self, from: Data(#"{"name":"标题规则","rule":"^【(.*?)】$","replacement":"$1"}"#.utf8))
         let chapters = splitTxtChapters("前言内容\n【开篇😀】\n甲内容\n【结尾】\n乙内容", bookTitle: "测试", rules: [rule])

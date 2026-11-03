@@ -244,6 +244,8 @@ struct ShelfGridCell: View {
     let selecting: Bool
     let selected: Bool
     var titleBelow = false
+    var source: LegadoSource? = nil
+    @State private var image: UIImage?
 
     var body: some View {
         VStack(spacing: 6) {
@@ -261,17 +263,15 @@ struct ShelfGridCell: View {
             Color.clear
                 .aspectRatio(0.72, contentMode: .fit)
                 .overlay {
-                    if !coverUrl.isEmpty, let url = URL(string: coverUrl) {
-                        AsyncImage(url: url) { img in
-                            img.resizable().scaledToFill()
-                        } placeholder: {
-                            ShelfCoverView(title: title)
-                        }
-                    } else {
-                        ShelfCoverView(title: title)
-                    }
+                    if let image { Image(uiImage: image).resizable().scaledToFill() }
+                    else { ShelfCoverView(title: title) }
                 }
                 .clipped()
+                .task(id: coverUrl + (source.map { SourceValidation.fingerprint($0) } ?? "")) {
+                    image = nil
+                    guard !coverUrl.isEmpty else { return }
+                    if let data = try? await SourceImagePipeline.load(coverUrl, source: source, cover: true), !Task.isCancelled { image = UIImage(data: data) }
+                }
             if !titleBelow {
                 LinearGradient(colors: [.clear, .clear, Color.black.opacity(0.82)], startPoint: .center, endPoint: .bottom)
                 Text(title)

@@ -86,6 +86,7 @@ struct SourceBookDetailView: View {
     @State private var reversed = false
     @State private var chapterQuery = ""
     @State private var readingBook: LocalBook?
+    @State private var editingBook: LocalBook?
 
     private var choices: [SourceBook] { [result] + alternatives.filter { $0.id != result.id } }
     private var selected: SourceBook { choices[min(sourceIndex, choices.count - 1)] }
@@ -155,12 +156,25 @@ struct SourceBookDetailView: View {
             .background(AppTheme.surface)
             .navigationTitle(source?.isVideo == true ? "视频详情" : "书籍详情")
             .readerNavigationStyle()
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("编辑书籍信息 / 变量") { editingBook = makeBook() }.disabled(loading)
+                        if let source {
+                            if source.hasLogin { NavigationLink("登录 / 接口设置") { SourceLoginView(source: source) } }
+                            if source.customButton { NavigationLink("书源自定义按钮") { SourceCustomActionView(source: source, book: displayBook) } }
+                            NavigationLink("书源日志") { SourceLogView(source: source.bookSourceUrl) }
+                        }
+                    } label: { Image(systemName: "ellipsis") }
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } }
+            }
             .safeAreaInset(edge: .bottom, spacing: 0) { actions }
             .onChange(of: sourceIndex) { _, _ in
                 chapters = []; info = nil; loading = true; chapterQuery = ""
             }
             .task(id: selected.id) { await load() }
+            .sheet(item: $editingBook) { book in NavigationStack { BookInfoEditorView(store: store, book: book) } }
         }
         // Present above the detail container. A pushed reader inside a sheet
         // inherits its top gap and the detail screen's bottom action inset.
@@ -229,6 +243,7 @@ struct SourceBookDetailView: View {
             sourceName: selected.sourceName, sourceUrl: selected.sourceUrl,
             fileName: selected.title + ".web", kind: source?.localBookKind ?? "web")
         if let source { book.kind = source.localBookKind }
+        book.bookUrl = displayBook.url; book.tocUrl = displayBook.tocUrl ?? ""
         // Refresh the directory without discarding already downloaded content.
         let oldChapters = book.chapters
         book.chapters = chapters.map { chapter in

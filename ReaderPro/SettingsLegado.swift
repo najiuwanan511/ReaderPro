@@ -22,6 +22,9 @@ struct SettingsView: View {
                     NavigationLink { SourceManagementView(store: store) } label: {
                         SettingRow(icon: "books.vertical", iconTint: .blue, title: "书源管理", summary: "管理书源、网络导入、扫码导入")
                     }
+                    NavigationLink { RuleSubscriptionsView(store: store) } label: {
+                        SettingRow(icon: "arrow.triangle.2.circlepath", iconTint: .teal, title: "规则订阅", summary: "按地址更新书源、订阅源和替换规则")
+                    }
                     NavigationLink { SourceView(store: store) } label: {
                         SettingRow(icon: "magnifyingglass", iconTint: .indigo, title: "多源搜索", summary: "搜索书名、作者并查看目录")
                     }

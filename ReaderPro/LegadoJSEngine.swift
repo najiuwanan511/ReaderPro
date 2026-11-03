@@ -221,6 +221,8 @@ final class LegadoJS {
             }
         }
         java.setObject(requests, forKeyedSubscript: "_requests" as NSString)
+        let log: @convention(block) (String) -> Void = { SourceExecutionLog.shared.add($0, source: sourceUrl) }
+        java.setObject(log, forKeyedSubscript: "_log" as NSString)
         let importScript: @convention(block) (String) -> String = { path in
             do {
                 let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
@@ -786,7 +788,7 @@ final class LegadoJS {
         if (isNaN(date.getTime())) return '';
         return date.getFullYear()+'/'+pad(date.getMonth()+1)+'/'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes());
     };
-    java.log = function(value) { return value; };
+    java.log = function(value) { java._log(String(value)); return value; };
     java.toast = java.longToast = function() {};
     java.ruleUrl = baseUrl;
     java.getSource = function() { return source; };

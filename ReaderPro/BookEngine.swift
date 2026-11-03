@@ -66,6 +66,8 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var coverUrl: String = ""
     var sourceName: String = ""
     var sourceUrl: String = ""
+    var bookUrl: String = ""
+    var tocUrl: String = ""
     var fileName: String
     var kind: String // txt, epub, cbz, web, comic, audio, video
     var chapterIndex: Int = 0
@@ -92,11 +94,11 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
     var unreadCount: Int {
         guard chapters.count > 1 else { return 0 }
         let current = min(max(chapterIndex, 0), chapters.count - 1)
-        return chapters.count - current - 1
+        return chapters.dropFirst(current + 1).filter { !$0.isVolume }.count
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, title, author, coverUrl, sourceName, sourceUrl, fileName, kind, chapterIndex, paragraphIndex, charOffset, progress, lastRead, totalMinutes, favorite, group, useReplaceRule, chapters, imageNames, lyrics, audioUrl, videoUrls
+        case bookUrl, tocUrl, id, title, author, coverUrl, sourceName, sourceUrl, fileName, kind, chapterIndex, paragraphIndex, charOffset, progress, lastRead, totalMinutes, favorite, group, useReplaceRule, chapters, imageNames, lyrics, audioUrl, videoUrls
     }
 
     init(title: String, author: String = "", coverUrl: String = "", sourceName: String = "", sourceUrl: String = "", fileName: String, kind: String = "txt") {
@@ -114,6 +116,8 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
         coverUrl = (try? c.decode(String.self, forKey: .coverUrl)) ?? ""
         sourceName = (try? c.decode(String.self, forKey: .sourceName)) ?? ""
         sourceUrl = (try? c.decode(String.self, forKey: .sourceUrl)) ?? ""
+        bookUrl = (try? c.decode(String.self, forKey: .bookUrl)) ?? ""
+        tocUrl = (try? c.decode(String.self, forKey: .tocUrl)) ?? ""
         fileName = (try? c.decode(String.self, forKey: .fileName)) ?? ""
         kind = (try? c.decode(String.self, forKey: .kind)) ?? "txt"
         chapterIndex = (try? c.decode(Int.self, forKey: .chapterIndex)) ?? 0
@@ -137,6 +141,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title)
         try c.encode(author, forKey: .author); try c.encode(coverUrl, forKey: .coverUrl)
         try c.encode(sourceName, forKey: .sourceName); try c.encode(sourceUrl, forKey: .sourceUrl)
+        try c.encode(bookUrl, forKey: .bookUrl); try c.encode(tocUrl, forKey: .tocUrl)
         try c.encode(fileName, forKey: .fileName); try c.encode(kind, forKey: .kind)
         try c.encode(chapterIndex, forKey: .chapterIndex); try c.encode(paragraphIndex, forKey: .paragraphIndex)
         try c.encode(charOffset, forKey: .charOffset); try c.encode(progress, forKey: .progress)
@@ -610,13 +615,20 @@ class BookStore: ObservableObject {
         }
     }
     func updateBook(_ book: LocalBook) {
+        let added = !books.contains { $0.id == book.id }
         if let i = books.firstIndex(where: { $0.id == book.id }) { books[i] = book } else { books.insert(book, at: 0) }
-        save()
+        saveBooks()
+        if added, let source = sourceForBook(book), source.eventListener {
+            Task.detached { await source.callBookEvent("addBookShelf", book: book) }
+        }
     }
     func deleteBook(_ book: LocalBook) {
+        let source = sourceForBook(book)
         books.removeAll { $0.id == book.id }
+        bookmarks.removeAll { $0.bookId == book.id }
         try? FileManager.default.removeItem(at: Self.filesDir.appendingPathComponent(book.fileName))
         save()
+        if let source, source.eventListener { Task.detached { await source.callBookEvent("delBookShelf", book: book) } }
     }
     func addBookmark(_ bm: Bookmark) { bookmarks.insert(bm, at: 0); save() }
     func purify(_ text: String, book: LocalBook? = nil, title: Bool = false) -> String {
@@ -759,6 +771,7 @@ class BookStore: ObservableObject {
             if var nb = books.first(where: { $0.id == bookId }) {
                 nb.sourceName = source.bookSourceName
                 nb.sourceUrl = source.bookSourceUrl
+                nb.bookUrl = info.url; nb.tocUrl = info.tocUrl ?? ""
                 nb.chapters = chapters
                 nb.chapterIndex = 0
                 nb.charOffset = 0

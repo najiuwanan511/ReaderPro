@@ -5,6 +5,7 @@ import AVFoundation
 struct ContentView: View {
     @StateObject private var store = BookStore()
     @EnvironmentObject private var network: NetworkBootstrap
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ui.showDiscovery") private var showDiscovery = true
     @AppStorage("ui.showRss") private var showRss = true
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "ui.homeTab")
@@ -30,6 +31,7 @@ struct ContentView: View {
         .toolbarBackground(AppTheme.surface, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
+        .task(id: scenePhase) { if scenePhase == .active { await RuleSubscriptionStore.shared.updateDue(store: store) } }
     }
     private func validateSelectedTab() {
         if (selectedTab == 1 && !showDiscovery) || (selectedTab == 2 && !showRss) || !(0...3).contains(selectedTab) { selectedTab = 0 }
@@ -78,6 +80,9 @@ struct BookshelfView: View {
     @State private var shelfResult: SourceBook?
     @State private var selecting = false
     @State private var selectedIds: Set<String> = []
+    @State private var editingBook: LocalBook?
+    @ObservedObject private var shelfGroups = ShelfGroups.shared
+    @StateObject private var refresh = ShelfRefreshModel()
 
     var filteredBooks: [LocalBook] {
         var list = store.books
@@ -97,12 +102,21 @@ struct BookshelfView: View {
     }
 
     private var groups: [String] {
-        ["全部", "收藏"] + Set(store.books.map(\.group).filter { !$0.isEmpty }).sorted()
+        ["全部", "收藏"] + Set(shelfGroups.names + store.books.map(\.group).filter { !$0.isEmpty }).sorted()
     }
 
     var body: some View {
         NavigationStack {
             ScrollView {
+                if !refresh.message.isEmpty {
+                    HStack {
+                        if refresh.running { ProgressView().controlSize(.small) }
+                        Text(refresh.message).font(.caption)
+                        Spacer()
+                        if refresh.running { Button("停止") { refresh.cancel() } }
+                    }.padding(.horizontal).padding(.top, 8)
+                    if !refresh.failures.isEmpty { DisclosureGroup("刷新失败详情") { Text(refresh.failures).font(.caption) }.padding(.horizontal) }
+                }
                 if store.books.isEmpty {
                     emptyShelf
                 }
@@ -110,6 +124,10 @@ struct BookshelfView: View {
                     HStack {
                         Text("已选 \(selectedIds.count) 本").font(.subheadline).bold()
                         Spacer()
+                        Menu("分组") {
+                            Button("未分组") { assignGroup("") }
+                            ForEach(groups.dropFirst(2), id: \.self) { group in Button(group) { assignGroup(group) } }
+                        }
                         Button("删除所选", role: .destructive) {
                             for id in selectedIds { if let b = store.books.first(where: { $0.id == id }) { store.deleteBook(b) } }
                             selectedIds.removeAll(); selecting = false
@@ -126,10 +144,11 @@ struct BookshelfView: View {
                                 if selectedIds.contains(book.id) { selectedIds.remove(book.id) } else { selectedIds.insert(book.id) }
                             } else { openBook(book) }
                         } label: {
-                            ShelfGridCell(title: book.title, coverUrl: book.coverUrl, unreadCount: book.unreadCount, selecting: selecting, selected: selectedIds.contains(book.id), titleBelow: viewMode == 2)
+                            ShelfGridCell(title: book.title, coverUrl: book.coverUrl, unreadCount: book.unreadCount, selecting: selecting, selected: selectedIds.contains(book.id), titleBelow: viewMode == 2, source: store.sourceForBook(book))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
+                            Button("编辑书籍信息") { editingBook = book }
                             Button(book.favorite ? "取消收藏" : "收藏") {
                                 if let i = store.books.firstIndex(where: { $0.id == book.id }) { store.books[i].favorite.toggle(); store.save() }
                             }
@@ -183,11 +202,14 @@ struct BookshelfView: View {
                             if shelfSearch.results.isEmpty && !shelfSearch.searching {
                                 Text("这个关键词在启用源里没搜到书：换个书名/作者，或者去设置 → 书源管理确认源已启用。").font(.footnote).foregroundStyle(.secondary)
                             }
+                            if shelfSearch.hasMore { Button(shelfSearch.searching ? "正在搜索下一页…" : "加载下一页") { shelfSearch.loadMore() }.disabled(shelfSearch.searching) }
                         }
                     }.padding(.horizontal)
                 }
             }
             .onDisappear { if shelfSearch.searching { shelfSearch.cancel() } }
+            .refreshable { refresh.start(store: store) }
+            .sheet(item: $editingBook) { book in NavigationStack { BookInfoEditorView(store: store, book: book) } }
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
             .readerNavigationStyle()
@@ -205,6 +227,9 @@ struct BookshelfView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("导入本地书籍", systemImage: "square.and.arrow.down") { importing = true }
+                        Button("刷新书架目录", systemImage: "arrow.clockwise") { refresh.start(store: store) }.disabled(refresh.running)
+                        NavigationLink("分组管理") { ShelfGroupsView(store: store) }
+                        NavigationLink("缓存管理") { CacheManagementView(store: store) }
                         Button(selecting ? "结束多选" : "多选管理", systemImage: "checkmark.circle") { selecting.toggle(); selectedIds.removeAll() }
                         Picker("书架布局", selection: $viewMode) { Text("封面下方书名").tag(2); Text("封面叠字").tag(0); Text("列表").tag(1) }
                         Picker("排序", selection: $sortMode) { Text("最近阅读").tag(0); Text("书名").tag(1); Text("阅读进度").tag(2) }
@@ -226,6 +251,10 @@ struct BookshelfView: View {
                 VideoPlayerView(book: book, source: store.sources.first { $0.bookSourceUrl == book.sourceUrl }, store: store)
             }
         }
+    }
+    private func assignGroup(_ group: String) {
+        for index in store.books.indices where selectedIds.contains(store.books[index].id) { store.books[index].group = group }
+        store.saveBooks()
     }
 
     private var emptyShelf: some View {
@@ -265,12 +294,7 @@ struct BookshelfView: View {
                     } else { openBook(book) }
                 } label: {
                     HStack(alignment: .top, spacing: 12) {
-                        if !book.coverUrl.isEmpty, let url = URL(string: book.coverUrl) {
-                            AsyncImage(url: url) { img in img.resizable().scaledToFill() } placeholder: { BookCover(title: book.title, width: 62) }
-                                .frame(width: 62, height: 88).clipped().cornerRadius(6)
-                        } else {
-                            BookCover(title: book.title, width: 62)
-                        }
+                        RemoteBookCover(title: book.title, url: book.coverUrl, width: 62, source: store.sourceForBook(book))
                         VStack(alignment: .leading, spacing: 5) {
                             Text(book.title).font(.headline).lineLimit(1)
                             if !book.author.isEmpty {
@@ -302,6 +326,7 @@ struct BookshelfView: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
+                    Button("编辑书籍信息") { editingBook = book }
                     Button(book.favorite ? "取消收藏" : "收藏") {
                         if let i = store.books.firstIndex(where: { $0.id == book.id }) { store.books[i].favorite.toggle(); store.save() }
                     }

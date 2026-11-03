@@ -2,7 +2,7 @@ import SwiftUI
 import WebKit
 
 extension BookStore {
-    func clearChapterCache(bookID: String) {
+    @MainActor func clearChapterCache(bookID: String) {
         chapterCache.cancel(bookID: bookID)
         guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
         var book = books[index]

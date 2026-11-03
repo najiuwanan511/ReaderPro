@@ -58,6 +58,8 @@ private final class ReaderScrollProgress {
     @State private var selectedDictionary: ReaderSelectedText?
     @State private var selectedShare: ReaderSelectedText?
     @State private var selectedReplacement: ReplaceRule?
+    @State private var sourceAction = false
+    @State private var paymentAction = false
     @State private var showSourceChange = false
     @State private var showDownloadAll = false
     @State private var searchText = ""
@@ -149,6 +151,7 @@ private final class ReaderScrollProgress {
                 lastSize = size
                 readingStart = Date()
                 onAppear(size: size)
+                if let book, let source = store.sourceForBook(book) { Task.detached { await source.callBookEvent("startRead", book: book) } }
             }
             .onChange(of: layoutSignature(size)) { _, _ in
                 rebuild(size: size, keepOffset: currentCharOffset())
@@ -167,6 +170,7 @@ private final class ReaderScrollProgress {
             UIApplication.shared.isIdleTimerDisabled = enabled || initialIdleTimerDisabled
         }
         .onDisappear {
+            if let book, let source = store.sourceForBook(book) { Task.detached { await source.callBookEvent("endRead", book: book) } }
             store.chapterCache.cancel(bookID: bookId)
             if !loading && chapter?.text.hasPrefix("__URL__") != true { saveProgress() }
             cancelChapterLoad()
@@ -188,6 +192,11 @@ private final class ReaderScrollProgress {
         .sheet(item: $selectedDictionary) { selection in NavigationStack { DictionaryLookupView(word: selection.text) } }
         .sheet(item: $selectedShare) { ReaderShareSheet(text: $0.text) }
         .sheet(item: $selectedReplacement) { rule in NavigationStack { ReplaceRuleEditorView(store: store, rule: rule) } }
+        .sheet(isPresented: $sourceAction) {
+            if let book, let source = store.sourceForBook(book) {
+                NavigationStack { SourceCustomActionView(source: source, book: book.sourceBook, chapter: chapter, payment: paymentAction) }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .readerSelectionAction)) { notification in
             guard let info = notification.userInfo, let action = info["action"] as? String,
                   let text = info["text"] as? String, !text.isEmpty else { return }
@@ -644,6 +653,10 @@ private final class ReaderScrollProgress {
         }
         b.lastRead = Date()
         store.updateBook(b)
+        if let source = store.sourceForBook(b), source.eventListener {
+            let current = chapter
+            Task.detached { await source.callBookEvent("saveRead", book: b, chapter: current) }
+        }
     }
 
     // MARK: 章节懒加载（web 源）
@@ -810,6 +823,7 @@ private final class ReaderScrollProgress {
         cancelChapterLoad()
         store.chapterCache.cancel(bookID: bookId)
         updated.sourceName = src.bookSourceName; updated.sourceUrl = src.bookSourceUrl
+        updated.bookUrl = r.url; updated.tocUrl = r.tocUrl ?? ""
         updated.chapters = chapters
         func normalized(_ title: String) -> String {
             title.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
@@ -916,6 +930,12 @@ private final class ReaderScrollProgress {
             moreAction("替换净化", icon: "wand.and.stars") { showReplaceRules = true }
             moreAction("切换书源", icon: "arrow.triangle.2.circlepath") { openSourceChange() }
             moreAction("缓存全书", icon: "arrow.down.circle") { startDownloadAll() }
+            if let book, let source = store.sourceForBook(book) {
+                if source.customButton { moreAction("书源自定义按钮", icon: "command") { paymentAction = false; sourceAction = true } }
+                if !(source.ruleContent.androidValue("payAction") ?? "").isEmpty {
+                    moreAction("购买 / 解锁本章", icon: "lock.open") { paymentAction = true; sourceAction = true }
+                }
+            }
             moreAction(autoPageEnabled ? "关闭自动翻页" : "自动翻页", icon: "play.circle") { toggleAutoPage(!autoPageEnabled) }
         }
         .frame(width: 250)
