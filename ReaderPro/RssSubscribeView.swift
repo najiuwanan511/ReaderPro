@@ -515,13 +515,14 @@ struct FeedHTMLView: UIViewRepresentable {
     var source: RssSource? = nil
     var onAction: ((RssWebAction) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIView(context: Context) -> SourceWebContainer { SourceWebContainer() }
+    private func configuration(_ coordinator: Coordinator, request: URLRequest) throws -> WKWebViewConfiguration {
         let config = WKWebViewConfiguration(); config.allowsInlineMediaPlayback = true
         config.defaultWebpagePreferences.allowsContentJavaScript = source?.enableJs ?? true
-        config.websiteDataStore = .nonPersistent()
-        if let source, source.enableJs, !source.preloadJs.isEmpty {
+        config.websiteDataStore = try SourceWebDataStore.make(request: request, ephemeral: true)
+        if let source, source.enableJs {
             let bridge = RssWebBridge(source: source, onAction: onAction ?? { _ in })
-            bridge.install(config); context.coordinator.bridge = bridge
+            bridge.install(config); coordinator.bridge = bridge
         }
         if let source, source.enableJs {
             for (script, time) in [(source.preloadJs, WKUserScriptInjectionTime.atDocumentStart),
@@ -535,28 +536,34 @@ struct FeedHTMLView: UIViewRepresentable {
             let script = "var s=document.createElement('style');s.textContent=" + sourceJSONString(css) + ";(document.head||document.documentElement).appendChild(s);"
             config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
         }
-        let view = WKWebView(frame: .zero, configuration: config)
-        view.navigationDelegate = context.coordinator
-        context.coordinator.source = source
-        view.customUserAgent = sourceUA
-        return view
+        return config
     }
-    func updateUIView(_ view: WKWebView, context: Context) {
-        let identity = html + "\n" + baseURL + "\n" + String(type)
+    func updateUIView(_ container: SourceWebContainer, context: Context) {
+        let identity = LoadIdentity(html: html, baseURL: baseURL, type: type, source: source)
         guard context.coordinator.identity != identity else { return }
         context.coordinator.identity = identity
         context.coordinator.task?.cancel()
-        context.coordinator.task = Task { @MainActor [weak view] in
-            guard let view else { return }
+        context.coordinator.bridge?.cancel()
+        container.web?.configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+        container.clear()
+        context.coordinator.task = Task { @MainActor [weak container] in
+            guard let container else { return }
             do {
+                let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
+                let directURL = type == 0 && isSourceURL(trimmed) ? trimmed : baseURL
                 let request: URLRequest
                 if let source {
                     request = try await source.ruleSource.withRules {
-                        try SourceHTTP.request(baseURL, base: source.sourceUrl, headers: LegadoJSCtx.headers)
+                        try SourceHTTP.request(directURL, base: source.sourceUrl, headers: LegadoJSCtx.headers)
                     }
-                } else { request = URLRequest(url: URL(string: baseURL) ?? URL(string: "about:blank")!) }
+                } else { request = URLRequest(url: URL(string: directURL) ?? URL(string: "about:blank")!) }
                 try Task.checkCancellation()
-                try SourceWebDataStore.configure(view.configuration.websiteDataStore, request: request)
+                let config = try configuration(context.coordinator, request: request)
+                let view = WKWebView(frame: container.bounds, configuration: config)
+                view.navigationDelegate = context.coordinator
+                context.coordinator.source = source
+                view.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
+                container.install(view)
                 try await SourceWebDataStore.prepareProxy(view.configuration, request: request)
                 if source?.enabledCookieJar != false {
                     for cookie in SourceWebDataStore.cookies(for: request, sourceURL: source?.sourceUrl) { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
@@ -566,25 +573,20 @@ struct FeedHTMLView: UIViewRepresentable {
                     if let list { view.configuration.userContentController.add(list) }
                 }
                 guard !Task.isCancelled else { return }
-                load(view)
+                load(view, request: request)
             } catch {
                 guard !Task.isCancelled else { return }
-                view.loadHTMLString("<p>订阅网页配置失败：</p><pre>" + sourceErrorMessage(error).replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;") + "</pre>", baseURL: nil)
+                context.coordinator.bridge?.cancel()
+                container.web?.configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+                container.showError("订阅网页配置失败：" + sourceErrorMessage(error))
             }
         }
     }
-    private func load(_ view: WKWebView) {
+    private func load(_ view: WKWebView, request: URLRequest) {
         let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
         var rendered = html
         if type == 0, let url = URL(string: trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
-            Task { @MainActor [weak view] in
-                do {
-                    let request: URLRequest
-                    if let source { request = try await source.ruleSource.withRules { try SourceHTTP.request(trimmed, base: baseURL, headers: LegadoJSCtx.headers) } }
-                    else { request = URLRequest(url: url) }
-                    guard !Task.isCancelled else { return }; view?.load(request)
-                } catch { view?.loadHTMLString("<p>网页请求配置失败</p>", baseURL: nil) }
-            }
+            view.load(request)
             return
         }
         if (type == 1 || type == 2), let url = URL(string: trimmed),
@@ -601,15 +603,27 @@ struct FeedHTMLView: UIViewRepresentable {
         }
         view.loadHTMLString(rendered, baseURL: source?.loadWithBaseUrl == false ? nil : URL(string: baseURL))
     }
-    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
-        coordinator.task?.cancel(); coordinator.bridge?.cancel(); view.stopLoading(); view.navigationDelegate = nil
-        view.configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+    static func dismantleUIView(_ container: SourceWebContainer, coordinator: Coordinator) {
+        coordinator.task?.cancel(); coordinator.bridge?.cancel()
+        container.web?.configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+        container.clear()
+    }
+    struct LoadIdentity: Equatable {
+        let html: String
+        let baseURL: String
+        let type: Int
+        let source: RssSource?
     }
     final class Coordinator: NSObject, WKNavigationDelegate {
         var source: RssSource?
-        var identity = ""
+        var identity: LoadIdentity?
         var task: Task<Void, Never>?
         var bridge: RssWebBridge?
+        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            if let credential = RPWebProxyCredential(webView.configuration.websiteDataStore, challenge) { completionHandler(.useCredential, credential) }
+            else { completionHandler(.performDefaultHandling, nil) }
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard source?.enabledCookieJar != false else { return }
             Task { @MainActor in

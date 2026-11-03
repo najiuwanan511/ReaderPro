@@ -1,5 +1,7 @@
 import XCTest
 import CryptoKit
+import SwiftUI
+import WebKit
 @testable import ReaderPro
 
 private final class HeaderResponseProtocol: URLProtocol {
@@ -15,7 +17,91 @@ private final class HeaderResponseProtocol: URLProtocol {
     override func stopLoading() { }
 }
 
+private final class ProxyChallengeSender: NSObject, URLAuthenticationChallengeSender {
+    func use(_ credential: URLCredential, for challenge: URLAuthenticationChallenge) { }
+    func continueWithoutCredential(for challenge: URLAuthenticationChallenge) { }
+    func cancel(_ challenge: URLAuthenticationChallenge) { }
+}
+
 final class SourceHeaderCompatibilityTests: XCTestCase {
+    @MainActor func testWebProxyCredentialsOnlyAnswerTheConfiguredProxy() throws {
+        let request = try SourceHTTP.request("http://readerproxy.invalid/source-proxy-test", base: "http://readerproxy.invalid",
+            headers: ["proxy": "http://127.0.0.1:8768@fixture-user@fixture-pass"])
+        let store = try SourceWebDataStore.make(request: request)
+        func challenge(proxy: Bool = true, host: String = "127.0.0.1", port: Int = 8768, failures: Int = 0) -> URLAuthenticationChallenge {
+            let space = proxy
+                ? URLProtectionSpace(proxyHost: host, port: port, type: NSURLProtectionSpaceHTTPProxy, realm: "fixture", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+                : URLProtectionSpace(host: host, port: port, protocol: "http", realm: "fixture", authenticationMethod: NSURLAuthenticationMethodHTTPBasic)
+            return URLAuthenticationChallenge(protectionSpace: space, proposedCredential: nil, previousFailureCount: failures,
+                failureResponse: nil, error: nil, sender: ProxyChallengeSender())
+        }
+        let credential = try XCTUnwrap(RPWebProxyCredential(store, challenge()))
+        XCTAssertEqual(credential.user, "fixture-user"); XCTAssertEqual(credential.password, "fixture-pass")
+        XCTAssertNil(RPWebProxyCredential(store, challenge(proxy: false)))
+        XCTAssertNil(RPWebProxyCredential(store, challenge(host: "origin.test")))
+        XCTAssertNil(RPWebProxyCredential(store, challenge(port: 8765)))
+        XCTAssertNil(RPWebProxyCredential(store, challenge(failures: 1)))
+        XCTAssertNil(RPWebProxyCredential(.nonPersistent(), challenge()))
+    }
+
+    @MainActor func testWebViewHTTPSProxyRetainsCertificatePolicy() async throws {
+        let target = "https://readerproxy.invalid/source-proxy-https-test"
+        let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:8765"])
+        do {
+            _ = try await SourceWebLoader.load(request, script: "document.body.innerText", timeout: 15)
+            XCTFail("The proxy must not bypass certificate validation")
+        } catch { XCTAssertFalse(error is CancellationError) }
+        let page = try await SourceTLS.$allowsInvalidCertificates.withValue(true) {
+            try await SourceWebLoader.load(request, script: "document.body.innerText", timeout: 15)
+        }
+        XCTAssertEqual(page.text.trimmingCharacters(in: .whitespacesAndNewlines), "https-proxy-routed")
+    }
+
+    @MainActor private func assertHostedProxyPage<V: View>(_ content: V, expected: String) async throws {
+        let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow))
+        let host = UIHostingController(rootView: content)
+        let parent = try XCTUnwrap(window.rootViewController)
+        parent.addChild(host); host.view.frame = window.bounds; parent.view.addSubview(host.view); host.didMove(toParent: parent)
+        defer { host.willMove(toParent: nil); host.view.removeFromSuperview(); host.removeFromParent() }
+        func web(in view: UIView) -> WKWebView? {
+            if let found = view as? WKWebView { return found }
+            return view.subviews.lazy.compactMap { web(in: $0) }.first
+        }
+        let deadline = Date().addingTimeInterval(20)
+        var text = ""
+        while Date() < deadline {
+            if let page = web(in: host.view) { text = (try? await page.evaluateJavaScript("document.body.innerText")) as? String ?? "" }
+            if text.trimmingCharacters(in: .whitespacesAndNewlines) == expected { return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTFail("Hosted production page did not render the proxy response: \(text)")
+    }
+
+    @MainActor func testLoginPageCreatesProxySessionBeforeLoading() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://readerproxy.invalid"
+        source.header = #"{"proxy":"http://127.0.0.1:8765"}"#
+        try await assertHostedProxyPage(SourceLoginWebPage(source: source,
+            page: SourceLoginBrowser(url: source.bookSourceUrl + "/source-proxy-test"), revision: 0, status: .constant("")), expected: "proxy-routed:readerproxy.invalid")
+    }
+
+    @MainActor func testRSSPageCreatesProxySessionBeforeLoading() async throws {
+        var source = RssSource(); source.sourceUrl = "http://readerproxy.invalid"
+        source.header = #"{"proxy":"http://127.0.0.1:8765"}"#
+        try await assertHostedProxyPage(FeedHTMLView(html: source.sourceUrl + "/source-proxy-test", baseURL: source.sourceUrl, type: 0, source: source), expected: "proxy-routed:readerproxy.invalid")
+    }
+
+    @MainActor func testVideoPageCreatesProxySessionBeforeLoading() async throws {
+        let target = "http://readerproxy.invalid/source-proxy-test"
+        let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:8765"])
+        try await assertHostedProxyPage(EpisodeWebPlayer(resource: .web(request), sourceRegex: "", onStatus: { _ in }, onMedia: { _ in }), expected: "proxy-routed:readerproxy.invalid")
+    }
+
+    @MainActor func testRSSInjectScriptCanUseBridgeWithoutPreloadScript() async throws {
+        var source = RssSource(); source.sourceUrl = "http://127.0.0.1:8765/inject-only-" + UUID().uuidString
+        source.injectJs = "(async function(){document.body.innerText=await run(\"'inject-only-bridge'\");})();"
+        XCTAssertTrue(source.preloadJs.isEmpty)
+        try await assertHostedProxyPage(FeedHTMLView(html: "<html><body>waiting</body></html>", baseURL: source.sourceUrl, type: 0, source: source), expected: "inject-only-bridge")
+    }
     @MainActor func testWebCookiesIncludeSourceDomainsAndAllPathsWithoutCopyingOtherSourceAccounts() throws {
         func cookie(_ domain: String, _ path: String = "/") throws -> HTTPCookie {
             try XCTUnwrap(HTTPCookie(properties: [.domain: domain, .path: path, .name: "session", .value: domain + path]))

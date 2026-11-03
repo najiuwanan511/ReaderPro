@@ -141,7 +141,8 @@ private struct VerificationWebPage: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { session.status = sourceErrorMessage(error) }
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            if let source = session.source, SourceTLS.isAllowed(source.bookSourceUrl), challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
+            if let credential = RPWebProxyCredential(webView.configuration.websiteDataStore, challenge) { completionHandler(.useCredential, credential) }
+            else if let source = session.source, SourceTLS.isAllowed(source.bookSourceUrl), challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust, let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
             else { completionHandler(.performDefaultHandling, nil) }
         }
     }

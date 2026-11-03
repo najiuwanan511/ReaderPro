@@ -41,7 +41,9 @@ enum SourceScriptConfiguration {
         config["name"] = theme.name
         config["bgStr"] = "#" + theme.background.rgbHex
         config["bgType"] = 0
-        config["bgAlpha"] = 255
+        // Android exposes a percentage (0...100), not an 8-bit alpha.
+        // This snapshot describes the solid reading color (bgType = 0).
+        config["bgAlpha"] = 100
         config["textColor"] = "#" + theme.text.rgbHex
         config["letterSpacing"] = defaults.double(forKey: "reader.letterSpacing")
         let indent = max(0, min(4, defaults.double(forKey: "reader.paragraphIndent")))

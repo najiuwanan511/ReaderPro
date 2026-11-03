@@ -48,7 +48,18 @@ import Network
         let proxy = try SourceProxy.configuration(for: request)
         // Never change proxy settings on a shared default store: an unrelated
         // source or an in-flight login must keep its own transport.
-        let store: WKWebsiteDataStore = ephemeral || proxy != nil ? .nonPersistent() : .default()
+        let store: WKWebsiteDataStore
+        if let proxy {
+            if let host = request.url?.host, isDeviceHost(host) { throw localProxyFailure() }
+            if #available(iOS 18, *) { store = .nonPersistent() }
+            else {
+                guard let retained = RPCreateLegacyWebProxyStore(proxy.host, UInt16(proxy.port), proxy.kind == .socks5,
+                                                                 proxy.username, proxy.password) else {
+                    throw SourceFailure(stage: "书源代理", message: "当前系统不支持隔离的网页代理配置，已停止加载")
+                }
+                store = retained
+            }
+        } else { store = ephemeral ? .nonPersistent() : .default() }
         if proxy != nil { try configure(store, request: request) }
         return store
     }
@@ -60,26 +71,27 @@ import Network
             // including its routable interface IPs, even with failover
             // disabled. Refuse that unsupported destination instead of letting
             // an explicitly proxied request connect directly.
-            throw SourceFailure(stage: "书源代理", message: "系统网页引擎不能通过书源代理访问本机地址")
+            throw localProxyFailure()
         }
         guard RPSetWebProxy(store, proxy?.host, UInt16(proxy?.port ?? 0), proxy?.kind == .socks5,
                             proxy?.username, proxy?.password) else {
-            throw SourceFailure(stage: "书源代理", message: "无法配置网页代理")
+            throw SourceFailure(stage: "书源代理", message: "无法配置网页代理，请重新创建网页会话")
         }
     }
     static func prepareProxy(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {
         guard try SourceProxy.configuration(for: request) != nil else { return }
-        // iOS 17 WebKit only sends proxy configuration to its current network
-        // process; it does not retain it in session creation parameters as
-        // newer WebKit does. Creating the WebView can replace that process.
-        // Complete a cookie-store IPC first, then reapply to the live session
-        // and complete another IPC before any page/subresource is loaded.
+        // The legacy store verifies the immutable creation configuration here;
+        // newer systems reapply the public live configuration before loading.
         _ = await configuration.websiteDataStore.httpCookieStore.allCookies()
         try Task.checkCancellation()
         try configure(configuration.websiteDataStore, request: request)
         _ = await configuration.websiteDataStore.httpCookieStore.allCookies()
         try Task.checkCancellation()
         try await preventLocalBypass(configuration, request: request)
+    }
+
+    private static func localProxyFailure() -> SourceFailure {
+        SourceFailure(stage: "书源代理", message: "系统网页引擎不能通过书源代理访问本机地址")
     }
 
     static func preventLocalBypass(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {

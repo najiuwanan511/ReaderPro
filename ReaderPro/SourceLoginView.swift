@@ -195,28 +195,28 @@ struct SourceLoginWebPage: UIViewRepresentable {
     let revision: Int
     @Binding var status: String
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
-        if let script = page.script { config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false)) }
-        let web = WKWebView(frame: .zero, configuration: config)
-        web.accessibilityIdentifier = "sourceLoginWebView"; web.navigationDelegate = context.coordinator; web.uiDelegate = context.coordinator
-        config.websiteDataStore.httpCookieStore.add(context.coordinator)
-        context.coordinator.load(web); return web
+    func makeUIView(context: Context) -> SourceWebContainer {
+        let container = SourceWebContainer()
+        context.coordinator.load(container); return container
     }
-    func updateUIView(_ web: WKWebView, context: Context) {
+    func updateUIView(_ container: SourceWebContainer, context: Context) {
         context.coordinator.parent = self
-        if context.coordinator.revision != revision { context.coordinator.load(web) }
+        if context.coordinator.revision != revision { context.coordinator.load(container) }
     }
-    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
-        web.configuration.websiteDataStore.httpCookieStore.remove(coordinator); web.stopLoading(); coordinator.task?.cancel()
+    static func dismantleUIView(_ container: SourceWebContainer, coordinator: Coordinator) {
+        coordinator.task?.cancel()
+        container.web?.configuration.websiteDataStore.httpCookieStore.remove(coordinator)
+        container.clear()
     }
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKHTTPCookieStoreObserver {
         var parent: SourceLoginWebPage
         var revision = -1
         var task: Task<Void, Never>?
         init(_ parent: SourceLoginWebPage) { self.parent = parent }
-        func load(_ web: WKWebView) {
+        func load(_ container: SourceWebContainer) {
             revision = parent.revision; task?.cancel()
+            container.web?.configuration.websiteDataStore.httpCookieStore.remove(self)
+            container.clear()
             let source = parent.source; let page = parent.page
             task = Task {
                 do {
@@ -224,13 +224,25 @@ struct SourceLoginWebPage: UIViewRepresentable {
                         try await source.withRules { try SourceHTTP.request(page.url, base: source.bookSourceUrl, headers: source.requestHeaders) }
                     }.value
                     try Task.checkCancellation()
-                    try SourceWebDataStore.configure(web.configuration.websiteDataStore, request: request)
-                    try await SourceWebDataStore.prepareProxy(web.configuration, request: request)
+                    let config = WKWebViewConfiguration()
+                    config.websiteDataStore = try SourceWebDataStore.make(request: request, ephemeral: true)
+                    if let script = page.script { config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false)) }
+                    let web = WKWebView(frame: container.bounds, configuration: config)
+                    web.accessibilityIdentifier = "sourceLoginWebView"; web.navigationDelegate = self; web.uiDelegate = self
+                    config.websiteDataStore.httpCookieStore.add(self)
+                    container.install(web)
+                    try await SourceWebDataStore.prepareProxy(config, request: request)
                     for cookie in source.enabledCookieJar ? SourceWebDataStore.cookies(for: request, sourceURL: source.bookSourceUrl) : [] { await web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                     try Task.checkCancellation()
                     web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
                     if let html = page.html { web.loadHTMLString(html, baseURL: request.url) } else { web.load(request) }
-                } catch { parent.status = sourceErrorMessage(error) }
+                } catch {
+                    if !Task.isCancelled {
+                        container.web?.configuration.websiteDataStore.httpCookieStore.remove(self)
+                        container.showError(sourceErrorMessage(error))
+                        parent.status = sourceErrorMessage(error)
+                    }
+                }
             }
         }
         func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
@@ -245,7 +257,8 @@ struct SourceLoginWebPage: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { parent.status = sourceErrorMessage(error) }
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
                      completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-            if SourceTLS.isAllowed(parent.source.bookSourceUrl), challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+            if let credential = RPWebProxyCredential(webView.configuration.websiteDataStore, challenge) { completionHandler(.useCredential, credential) }
+            else if SourceTLS.isAllowed(parent.source.bookSourceUrl), challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
                let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
             else { completionHandler(.performDefaultHandling, nil) }
         }

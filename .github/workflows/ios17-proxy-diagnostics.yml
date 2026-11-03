@@ -32,7 +32,15 @@ jobs:
       - name: Verify production HTTP and SOCKS proxy routing on iOS 17
         run: |
           set -o pipefail
-          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+          xcodebuild build-for-testing -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
+            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
+            -parallel-testing-enabled NO -enableCodeCoverage NO \
+            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
+            ONLY_ACTIVE_ARCH=YES ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/proxy-build.log
+          xcrun simctl shutdown "$READER_SIMULATOR_ID"
+          xcrun simctl boot "$READER_SIMULATOR_ID"
+          xcrun simctl bootstatus "$READER_SIMULATOR_ID" -b
+          xcodebuild test-without-building -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \
@@ -59,6 +67,7 @@ jobs:
         with:
           name: ios17-proxy-diagnostics
           path: |
+            build/proxy-build.log
             build/proxy-diagnostics.log
             build/fixture-server.log
             build/ProxyDiagnostics.xcresult

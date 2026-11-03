@@ -107,7 +107,16 @@ struct EpisodeWebPlayer: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = .nonPersistent()
+        let request: URLRequest
+        switch resource {
+        case .native(let original), .web(let original), .html(_, let original), .dash(_, let original): request = original
+        }
+        do { config.websiteDataStore = try SourceWebDataStore.make(request: request, ephemeral: true) }
+        catch {
+            let message = sourceErrorMessage(error)
+            Task { @MainActor in if !context.coordinator.cancelled { onStatus(message) } }
+            return WKWebView(frame: .zero, configuration: config)
+        }
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(context.coordinator, name: "readerVideo")
@@ -127,12 +136,7 @@ struct EpisodeWebPlayer: UIViewRepresentable {
         web.uiDelegate = context.coordinator
         web.isOpaque = false; web.backgroundColor = .black
         Task { @MainActor in
-            let request: URLRequest
-            switch resource {
-            case .native(let original), .web(let original), .html(_, let original), .dash(_, let original): request = original
-            }
             do {
-                try SourceWebDataStore.configure(config.websiteDataStore, request: request)
                 try await SourceWebDataStore.prepareProxy(config, request: request)
             }
             catch { onStatus(sourceErrorMessage(error)); return }
@@ -163,6 +167,11 @@ struct EpisodeWebPlayer: UIViewRepresentable {
         var cancelled = false
         private var handedOff = false
         init(parent: EpisodeWebPlayer) { self.parent = parent }
+        func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
+                     completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+            if let credential = RPWebProxyCredential(webView.configuration.websiteDataStore, challenge) { completionHandler(.useCredential, credential) }
+            else { completionHandler(.performDefaultHandling, nil) }
+        }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { parent.onStatus("网页播放器已加载") }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             guard !cancelled, (error as NSError).code != NSURLErrorCancelled else { return }

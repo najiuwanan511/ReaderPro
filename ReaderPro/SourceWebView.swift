@@ -171,7 +171,8 @@ import UIKit
 
     func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
                  completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        if allowsInvalidCertificates, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+        if let credential = RPWebProxyCredential(webView.configuration.websiteDataStore, challenge) { completionHandler(.useCredential, credential) }
+        else if allowsInvalidCertificates, challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
            let trust = challenge.protectionSpace.serverTrust { completionHandler(.useCredential, URLCredential(trust: trust)) }
         else { completionHandler(.performDefaultHandling, nil) }
     }

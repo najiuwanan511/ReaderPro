@@ -26,6 +26,7 @@ final class ParityFoundationTests: XCTestCase {
             LegadoJS.run(#"""
             var c=java.getReadBookConfigMap(),t=java.getThemeConfigMap();
             if(JSON.stringify(c)!==java.getReadBookConfig())throw Error('Map methods leaked into JSON');
+            if(c.get('bgAlpha')!==100||c.get('bgType')!==0)throw Error('wrong Android background percentage');
             if(!t.get('isNightTheme')||!t.get('backgroundColor').startsWith('#'))throw Error('wrong theme');
             if(c.get('absent')!==null||c.containsKey('get')||c.keySet().size()!==c.size()||c.entrySet().size()!==c.size())throw Error('Map mismatch');
             [java.getThemeMode(),c.get('textSize'),c.get('pageAnim'),c.get('paddingRight'),c.get('letterSpacing'),c.get('paragraphIndent')].join('|');
