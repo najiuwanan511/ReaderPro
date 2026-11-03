@@ -93,6 +93,11 @@ private final class ReaderScrollProgress {
     @AppStorage("reader.customBackground") private var customBackground = "F5F1E8"
     @AppStorage("reader.backgroundImage") private var backgroundImage = ""
     @AppStorage("reader.backgroundOpacity") private var backgroundOpacity = 0.35
+    @AppStorage("reader.keyboardPage") private var keyboardPage = true
+    @AppStorage("reader.selectionEnabled") private var selectionEnabled = true
+    @AppStorage("reader.swipeDistance") private var swipeDistance = 50.0
+    @State private var editingContent = false
+    @State private var contentDraft = ""
 
     // 仿真翻页跳转令牌（目录/书签/换章时强制重建 pageCurl）
     @State private var jumpToken = 0
@@ -129,7 +134,7 @@ private final class ReaderScrollProgress {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)|\(landscapeDoublePage)"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)|\(landscapeDoublePage)|\(selectionEnabled)"
     }
 
     var body: some View {
@@ -175,6 +180,9 @@ private final class ReaderScrollProgress {
             }.ignoresSafeArea().clipped()
         }
         .toolbar(.hidden, for: .navigationBar)
+        .background(ReaderKeyboard(enabled: keyboardPage && !showMenu && !showSearch && !showCatalog && !showSettings && !showStyle && !editingContent && !showBookmarks && !sourceAction && !showSourceChange && selectedDictionary == nil && selectedShare == nil && selectedReplacement == nil,
+            previous: { if !loading { goPrev(); jumpToken += 1 } }, next: { if !loading { goNext(); jumpToken += 1 } },
+            menu: { showMenu.toggle() }).allowsHitTesting(false))
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(hideStatusBar && !showMenu)
         .onChange(of: showMenu) { _, visible in
@@ -200,6 +208,7 @@ private final class ReaderScrollProgress {
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showStyle) { styleSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
+        .sheet(isPresented: $editingContent) { contentEditor }
         .sheet(item: $selectedDictionary) { selection in NavigationStack { DictionaryLookupView(word: selection.text) } }
         .sheet(item: $selectedShare) { ReaderShareSheet(text: $0.text) }
         .sheet(item: $selectedReplacement) { rule in NavigationStack { ReplaceRuleEditorView(store: store, rule: rule) } }
@@ -380,29 +389,26 @@ private final class ReaderScrollProgress {
         .frame(width: size.width, height: size.height)
         .clipped()
         .contentShape(Rectangle())
-        // A single parent recognizer handles both taps and horizontal drags.
-        // On iOS 17 a parent drag + child tap gesture can swallow the menu.
+        // Both gestures belong to this surface. Waiting for real horizontal
+        // movement leaves the text view's long press available for selection.
         .gesture(
-            DragGesture(minimumDistance: 0)
+            DragGesture(minimumDistance: 20)
                 .onChanged { g in
                     if g.translation.width < 0 && abs(g.translation.width) > abs(g.translation.height) {
                         coverDrag = g.translation.width
                     }
                 }
                 .onEnded { g in
-                    if g.translation.width < -w * 0.25 && abs(g.translation.width) > abs(g.translation.height) {
+                    guard !ReaderSelectionDelegate.shared.hasSelection else { coverDrag = 0; return }
+                    if g.translation.width < -max(20, swipeDistance) && abs(g.translation.width) > abs(g.translation.height) {
                         goNext()
-                    } else if g.translation.width > w * 0.25 && abs(g.translation.width) > abs(g.translation.height) {
+                    } else if g.translation.width > max(20, swipeDistance) && abs(g.translation.width) > abs(g.translation.height) {
                         goPrev()
-                    } else if abs(g.translation.width) < 10 && abs(g.translation.height) < 10 {
-                        let fraction = g.location.x / max(w, 1)
-                        if fraction < 1.0 / 3.0 { goPrev() }
-                        else if fraction > 2.0 / 3.0 { goNext() }
-                        else { withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() } }
                     }
                     withAnimation(.easeOut(duration: store.pageTurnSpeed)) { coverDrag = 0 }
                 }
         )
+        .simultaneousGesture(SpatialTapGesture().onEnded { handleTap($0.location, size: size) })
     }
 
     // 滚动：整章连续滚动
@@ -511,6 +517,7 @@ private final class ReaderScrollProgress {
     }
 
     func handleTap(_ point: CGPoint, size: CGSize) {
+        guard !ReaderSelectionDelegate.shared.hasSelection else { return }
         switch ReaderInteraction.action(at: point, size: size) {
         case .previous: goPrev()
         case .next: goNext()
@@ -519,6 +526,14 @@ private final class ReaderScrollProgress {
         case .speech: toggleSpeech()
         case .previousChapter: openChapter(chapterIndex - 1)
         case .nextChapter: openChapter(chapterIndex + 1)
+        case .catalog: showCatalog = true
+        case .search: showSearch = true
+        case .editContent: openContentEditor()
+        case .toggleReplace:
+            if var current = book { current.useReplaceRule.toggle(); store.updateBook(current) }
+        case .pauseSpeech: if speech.isSpeaking { speech.togglePause() } else { toggleSpeech() }
+        case .previousParagraph: if !speech.isSpeaking { toggleSpeech() }; speech.skipParagraph(-1)
+        case .nextParagraph: if !speech.isSpeaking { toggleSpeech() }; speech.skipParagraph(1)
         case .none: break
         }
     }
@@ -541,7 +556,8 @@ private final class ReaderScrollProgress {
             .onEnded { drag in
                 defer { pageDragStartIndex = nil }
                 guard let start = pageDragStartIndex,
-                      abs(drag.translation.width) > max(50, width * 0.15),
+                      !ReaderSelectionDelegate.shared.hasSelection,
+                      abs(drag.translation.width) > max(20, swipeDistance),
                       abs(drag.translation.width) > abs(drag.translation.height) else { return }
                 if drag.translation.width < 0 && (allPages || start >= pages.count - 1) { goNext() }
                 if drag.translation.width > 0 && (allPages || start == 0) { goPrev() }
@@ -822,17 +838,11 @@ private final class ReaderScrollProgress {
             return
         }
         guard let currentChapter = chapter else { return }
-        var segments: [String] = []
-        if store.pageTurn == 2 {
-            if attributed.length > 0 {
-                let start = min(max(currentCharOffset(), 0), attributed.length)
-                segments = [attributed.attributedSubstring(from: NSRange(location: start, length: attributed.length - start)).string]
-            } else { segments = paragraphs(currentChapter) }
-        } else {
-            for i in min(max(pageIndex, 0), pages.count)..<pages.count {
-                segments.append(attributed.attributedSubstring(from: pages[i]).string)
-            }
-        }
+        let segments: [String]
+        if attributed.length > 0 {
+            let start = min(max(currentCharOffset(), 0), attributed.length)
+            segments = attributed.attributedSubstring(from: NSRange(location: start, length: attributed.length - start)).string.components(separatedBy: .newlines)
+        } else { segments = paragraphs(currentChapter) }
         let speakingChapter = chapterIndex
         speech.speak(segments: segments, rate: Float(store.ttsRate), pitch: Float(store.ttsPitch)) {
             guard chapterIndex == speakingChapter, let b = book,
@@ -844,6 +854,29 @@ private final class ReaderScrollProgress {
     func resumeSpeechIfNeeded() {
         guard speechAfterLoad else { return }
         speechAfterLoad = false; toggleSpeech()
+    }
+
+    func openContentEditor() {
+        guard !loading, let chapter, !chapter.text.hasPrefix("__URL__") else { return }
+        contentDraft = chapter.text; editingContent = true
+    }
+    var contentEditor: some View {
+        NavigationStack {
+            TextEditor(text: $contentDraft).font(.body).padding(8).accessibilityIdentifier("readerContentEditor")
+                .navigationTitle("编辑正文").navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("取消") { editingContent = false } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("保存") {
+                            guard var current = book, current.chapters.indices.contains(chapterIndex) else { return }
+                            store.chapterCache.cancel(bookID: bookId); speech.stop()
+                            let offset = currentCharOffset()
+                            current.chapters[chapterIndex].text = contentDraft; store.updateBook(current)
+                            rebuild(size: lastSize, keepOffset: offset); jumpToken += 1; editingContent = false
+                        }
+                    }
+                }
+        }
     }
 
     func paragraphs(_ c: BookChapter) -> [String] {
@@ -1000,6 +1033,7 @@ private final class ReaderScrollProgress {
         VStack(spacing: 0) {
             moreAction("搜索正文", icon: "magnifyingglass") { showSearch = true }
             moreAction("查看书签", icon: "bookmark") { showBookmarks = true }
+            moreAction("编辑正文", icon: "square.and.pencil") { openContentEditor() }
             moreAction("替换净化", icon: "wand.and.stars") { showReplaceRules = true }
             moreAction("切换书源", icon: "arrow.triangle.2.circlepath") { openSourceChange() }
             moreAction("缓存全书", icon: "arrow.down.circle") { startDownloadAll() }
@@ -1356,6 +1390,7 @@ private final class ReaderScrollProgress {
         NavigationStack {
             Form {
                 Section("阅读行为") {
+                    NavigationLink("点击区域 / 翻页操作") { ReaderInteractionSettingsView() }
                     Toggle("阅读时保持屏幕常亮", isOn: $keepScreenAwake)
                     Toggle("阅读时隐藏状态栏", isOn: $hideStatusBar)
                     Toggle("正文两端对齐", isOn: $justifyText)

@@ -19,6 +19,9 @@ struct ReaderBoundaryFixtureRoot: View {
         if let arg = args.first(where: { $0.hasPrefix("--reader-mode=") }),
            let mode = Int(arg.dropFirst("--reader-mode=".count)) { store.pageTurn = mode }
         if args.contains("--reset-reader-boundary") {
+            for row in 0..<3 { for column in 0..<3 { UserDefaults.standard.removeObject(forKey: ReaderInteraction.key(row, column)) } }
+            UserDefaults.standard.set(true, forKey: "reader.selectionEnabled")
+            UserDefaults.standard.set(50.0, forKey: "reader.swipeDistance")
             UserDefaults.standard.set(0, forKey: "ReaderPro.test.visibleScrollOffset")
             let base = SourceTestFixtures.base
             var source = SourceTestFixtures.html()
@@ -45,6 +48,9 @@ struct ReaderBoundaryFixtureRoot: View {
                 ]
             }
             store.save()
+        }
+        if args.contains("--reader-custom-cover-tap") {
+            UserDefaults.standard.set(ReaderTapAction.catalog.rawValue, forKey: ReaderInteraction.key(1, 2))
         }
         _store = StateObject(wrappedValue: store)
     }

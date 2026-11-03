@@ -14,6 +14,7 @@ enum SpeechAudioSequence {
     // Keep just the next segment in flight while the current one plays.
     // Both cancellation and playback failure cancel that pending request.
     static func run(parts: [String], fetch: @escaping @Sendable (String) async throws -> Data,
+                    onStart: @escaping @MainActor (Int) -> Void = { _ in },
                     play: @escaping @MainActor (Data) async throws -> Void) async throws {
         guard let first = parts.first else { return }
         var pending = Task.detached { try await fetch(first) }
@@ -26,6 +27,7 @@ enum SpeechAudioSequence {
                 let next = parts[index + 1]
                 pending = Task.detached { try await fetch(next) }
             }
+            await onStart(index)
             try await play(data)
             try Task.checkCancellation()
         }

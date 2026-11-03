@@ -78,6 +78,43 @@ final class ReaderChapterPagingUITests: XCTestCase {
     }
 
     func testCoverSwipeAcrossChapterBoundaries() { exercisePagedMode(0) }
+    func testCoverUsesConfiguredTapRegionsAndEditedContentSurvivesRelaunch() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=0", "--reader-start-second", "--reader-custom-cover-tap"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(app.navigationBars["目录"].waitForExistence(timeout: 10), "覆盖翻页必须使用已配置的九宫格动作")
+        app.buttons["关闭"].tap()
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let more = app.buttons["更多操作"]
+        XCTAssertTrue(more.waitForExistence(timeout: 10)); more.tap()
+        let edit = app.buttons["编辑正文"]
+        XCTAssertTrue(edit.waitForExistence(timeout: 10)); edit.tap()
+        let editor = app.textViews["readerContentEditor"]
+        XCTAssertTrue(editor.waitForExistence(timeout: 10)); editor.tap(); editor.typeText("离线编辑持久标记")
+        app.buttons["保存"].tap()
+        XCTAssertTrue(page(app, containing: "离线编辑持久标记").waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["--reader-boundary-fixture", "--reader-mode=0"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "离线编辑持久标记").waitForExistence(timeout: 20))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "覆盖翻页与编辑正文持久化"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testCoverLongPressCanCopyTextWithoutTurningPage() {
+        let app = launch(mode: 0)
+        let text = page(app, containing: "第一章分页内容")
+        XCTAssertTrue(text.waitForExistence(timeout: 30))
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.04)).press(forDuration: 1)
+        let copy = app.menuItems["复制"].firstMatch
+        let button = app.buttons["复制"].firstMatch
+        let appeared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in copy.exists || button.exists }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [appeared], timeout: 10), .completed)
+        if copy.exists { copy.tap() } else { button.tap() }
+        XCTAssertTrue(app.staticTexts["第 1 页"].exists, "选择正文不应触发翻页")
+        XCTAssertTrue(text.exists)
+    }
     func testSlideSwipeAcrossChapterBoundaries() { exercisePagedMode(1) }
     func testNoAnimationSwipeAcrossChapterBoundaries() { exercisePagedMode(3) }
     func testCurlSwipeAcrossChapterBoundaries() { exercisePagedMode(4) }

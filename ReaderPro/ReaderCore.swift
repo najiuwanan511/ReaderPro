@@ -93,7 +93,7 @@ func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextV
     manager.addTextContainer(container)
     let view = ReaderSelectableTextView(frame: CGRect(origin: .zero, size: size), textContainer: container)
     view.backgroundColor = .clear
-    view.isEditable = false; view.isSelectable = true
+    view.isEditable = false; view.isSelectable = ReaderSelectableTextView.selectionEnabled
     view.isScrollEnabled = false; view.isUserInteractionEnabled = true
     view.delegate = ReaderSelectionDelegate.shared
     view.textContainerInset = .zero
@@ -106,6 +106,7 @@ func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextV
 // Reassigning identical text invalidates TextKit layout. SwiftUI can update
 // the wrapper for unrelated settings, so leave the storage intact in that case.
 func setReaderTextIfChanged(_ view: UITextView, _ attributed: NSAttributedString) {
+    view.isSelectable = ReaderSelectableTextView.selectionEnabled
     // UITextView can normalize attributes on assignment, so its textStorage
     // is not necessarily equal to the original source even when unchanged.
     // Compare the last requested source instead of the normalized storage.
@@ -130,6 +131,7 @@ struct PageTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
+        tv.isSelectable = ReaderSelectableTextView.selectionEnabled
         tv.textContainer.size = pageSize
         (tv as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
         tv.attributedText = attributed
@@ -152,7 +154,7 @@ struct FullTextReader: UIViewRepresentable {
         tv.accessibilityLabel = attributed.string
         tv.backgroundColor = .clear
         tv.isEditable = false
-        tv.isSelectable = true
+        tv.isSelectable = ReaderSelectableTextView.selectionEnabled
         tv.isScrollEnabled = false
         tv.isUserInteractionEnabled = true
         tv.textContainerInset = .zero
@@ -367,6 +369,8 @@ final class ReaderScrollBoundaryProbe: UIView {
 
 final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     @Published var isSpeaking = false
+    @Published private(set) var isPaused = false
+    @Published private(set) var paragraphIndex = 0
     @Published var error = ""
     private let synth = AVSpeechSynthesizer()
     private var queue: [String] = []
@@ -378,15 +382,18 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private var audioPlayer: AVAudioPlayer?
     private var audioCompletion: CheckedContinuation<Void, Error>?
     private var speechGeneration = UUID()
+    private var savedSegments: [String] = []
 
     override init() {
         super.init()
         synth.delegate = self
     }
 
-    func speak(segments: [String], rate: Float, pitch: Float, onDone: @escaping () -> Void = {}) {
+    func speak(segments: [String], from startingIndex: Int = 0, rate: Float, pitch: Float, onDone: @escaping () -> Void = {}) {
         stop(); error = ""
-        queue = segments.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        savedSegments = segments.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        paragraphIndex = max(0, min(startingIndex, max(0, savedSegments.count - 1)))
+        queue = Array(savedSegments.dropFirst(paragraphIndex))
         self.rate = rate
         self.pitch = pitch
         self.onDone = onDone
@@ -398,22 +405,26 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         }
         let id = UserDefaults.standard.string(forKey: "speech.engineID") ?? "system"
         if id != "system", let engine = ReaderRuleLibrary.shared.httpTts.first(where: { $0.enabled && String($0.id) == id }) {
-            let texts = queue; queue = []; isSpeaking = true
+            let start = paragraphIndex
+            let chunks = queue.enumerated().flatMap { position, text in SpeechAudioSequence.parts([text]).map { (text: $0, paragraph: start + position) } }
+            queue = []; isSpeaking = true
             let run = speechGeneration
             httpTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
                     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
                     try AVAudioSession.sharedInstance().setActive(true)
-                    try await SpeechAudioSequence.run(parts: SpeechAudioSequence.parts(texts), fetch: { part in
+                    try await SpeechAudioSequence.run(parts: chunks.map(\.text), fetch: { part in
                         try await engine.audio(text: part, speed: max(1, Int(rate * 20)))
+                    }, onStart: { index in
+                        guard self.speechGeneration == run else { return }; self.paragraphIndex = chunks[index].paragraph
                     }, play: { data in
                             guard self.speechGeneration == run else { throw CancellationError() }
                             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                                 do {
                                     let player = try AVAudioPlayer(data: data); player.delegate = self
                                     self.audioPlayer = player; self.audioCompletion = continuation
-                                    guard player.play() else { self.audioCompletion = nil; continuation.resume(throwing: SourceFailure(stage: "在线朗读", message: "系统不能播放接口返回的音频")); return }
+                                    if !self.isPaused, !player.play() { self.audioCompletion = nil; continuation.resume(throwing: SourceFailure(stage: "在线朗读", message: "系统不能播放接口返回的音频")); return }
                                 } catch { continuation.resume(throwing: error) }
                             }
                     })
@@ -437,6 +448,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             return
         }
         let text = queue.removeFirst()
+        paragraphIndex = savedSegments.count - queue.count - 1
         let u = AVSpeechUtterance(string: text)
         u.voice = AVSpeechSynthesisVoice(language: "zh-CN")
         u.rate = rate
@@ -455,6 +467,26 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         currentUtterance = nil
         synth.stopSpeaking(at: .immediate)
         isSpeaking = false
+        isPaused = false; savedSegments = []; paragraphIndex = 0
+    }
+
+    func togglePause() {
+        guard isSpeaking else { return }
+        if isPaused {
+            isPaused = false
+            if let audioPlayer { if !audioPlayer.play() { error = "无法继续播放朗读音频" } }
+            else if currentUtterance != nil { synth.continueSpeaking() }
+        } else {
+            isPaused = true; audioPlayer?.pause()
+            if currentUtterance != nil { synth.pauseSpeaking(at: .immediate) }
+        }
+    }
+
+    func skipParagraph(_ delta: Int) {
+        guard !savedSegments.isEmpty else { return }
+        let parts = savedSegments, target = max(0, min(paragraphIndex + delta, parts.count - 1))
+        let finished = onDone ?? {}, rate = self.rate, pitch = self.pitch
+        speak(segments: parts, from: target, rate: rate, pitch: pitch, onDone: finished)
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

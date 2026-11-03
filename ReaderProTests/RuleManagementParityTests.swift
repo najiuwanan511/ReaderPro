@@ -329,11 +329,12 @@ final class RuleManagementParityTests: XCTestCase {
         let nextReady = expectation(description: "Next audio fetched during current playback")
         let state = SpeechPrefetchTestState()
         var played: [String] = []
+        var started: [Int] = []
         try await SpeechAudioSequence.run(parts: ["一", "二", "三"], fetch: { text in
             await state.record(text)
             if text == "二" { nextReady.fulfill() }
             return Data(text.utf8)
-        }, play: { data in
+        }, onStart: { started.append($0) }, play: { data in
             let text = String(decoding: data, as: UTF8.self)
             if text == "一" {
                 await self.fulfillment(of: [nextReady], timeout: 5)
@@ -343,6 +344,7 @@ final class RuleManagementParityTests: XCTestCase {
             played.append(text)
         })
         XCTAssertEqual(played, ["一", "二", "三"])
+        XCTAssertEqual(started, [0,1,2])
     }
 
     func testDirectoryRefreshPreservesRawCacheAndPositionWhenChaptersAreInserted() {
