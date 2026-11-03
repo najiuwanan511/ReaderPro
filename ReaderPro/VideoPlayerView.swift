@@ -188,6 +188,15 @@ struct VideoPlayerView: View {
     @State private var loading = true
     @State private var resolveError = ""
     @State private var webStatus = "正在加载网页播放器…"
+    @State private var danmaku: [DanmakuEntry] = []
+    @State private var showVideoSettings = false
+    @State private var showLogin = false
+    @State private var showEditor = false
+    @AppStorage("video.showDanmaku") private var showDanmaku = true
+    @AppStorage("video.playbackRate") private var playbackRate = 1.0
+    @AppStorage("video.danmakuFontSize") private var danmakuFontSize = 16.0
+    @AppStorage("video.danmakuOpacity") private var danmakuOpacity = 0.85
+    @AppStorage("video.danmakuDuration") private var danmakuDuration = 8.0
 
     init(book: LocalBook, source: LegadoSource? = nil, store: BookStore? = nil) {
         self.book = book; self.source = source; self.store = store
@@ -215,6 +224,7 @@ struct VideoPlayerView: View {
                         }).id("\(episodeIndex)-\(retry)")
                     }
                 }
+                if showDanmaku, !danmaku.isEmpty { DanmakuOverlay(entries: danmaku, currentTime: model.currentTime) }
                 if loading { ProgressView().tint(.white) }
             }.aspectRatio(16 / 9, contentMode: .fit).accessibilityIdentifier("chapterVideoPlayer")
             VStack(alignment: .leading, spacing: 8) {
@@ -246,12 +256,44 @@ struct VideoPlayerView: View {
         }
         .background(AppTheme.surface)
         .navigationTitle(book.title).navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("返回目录") { dismiss() } } }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) { Button("返回目录") { dismiss() } }
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button("播放与弹幕设置") { showVideoSettings = true }
+                    Toggle("显示弹幕", isOn: $showDanmaku)
+                    if source?.hasLogin == true { Button("登录 / 接口设置") { showLogin = true } }
+                    if source != nil, store != nil { Button("编辑书源") { showEditor = true } }
+                    if let url = resource?.request.url {
+                        Button("复制播放地址") { UIPasteboard.general.string = url.absoluteString }
+                        ShareLink("其他应用打开 / 分享", item: url)
+                    }
+                } label: { Image(systemName: "ellipsis.circle") }
+            }
+        }
+        .sheet(isPresented: $showLogin, onDismiss: { retry += 1 }) { if let source { SourceLoginView(source: source) } }
+        .sheet(isPresented: $showEditor, onDismiss: { retry += 1 }) {
+            if let source, let store { NavigationStack { SourceDetailView(store: store, source: source) } }
+        }
+        .sheet(isPresented: $showVideoSettings) {
+            NavigationStack {
+                Form {
+                    Section("播放") { Picker("倍速", selection: $playbackRate) { ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { Text("\($0, specifier: "%.2g") 倍").tag($0) } } }
+                    Section("弹幕") {
+                        Toggle("显示弹幕", isOn: $showDanmaku)
+                        LabeledContent("字号", value: "\(Int(danmakuFontSize))"); Slider(value: $danmakuFontSize, in: 12...30, step: 1)
+                        Text("不透明度"); Slider(value: $danmakuOpacity, in: 0.2...1)
+                        Text("显示时长"); Slider(value: $danmakuDuration, in: 3...15, step: 1)
+                    }
+                }.navigationTitle("播放器设置").toolbar { Button("完成") { showVideoSettings = false } }
+            }
+        }
+        .onChange(of: playbackRate) { _, rate in if model.player.rate > 0 { model.player.rate = Float(rate) } }
         .task(id: "\(episodeIndex)-\(retry)") { await loadEpisode() }
         .onDisappear { model.stop() }
     }
     private func loadEpisode() async {
-        model.stop(); resource = nil; loading = true; resolveError = ""; webStatus = "正在加载网页播放器…"
+        model.stop(); danmaku = []; resource = nil; loading = true; resolveError = ""; webStatus = "正在加载网页播放器…"
         guard chapters.indices.contains(episodeIndex) else { loading = false; resolveError = "没有可播放的章节"; return }
         let index = episodeIndex
         var chapter = chapters[index]
@@ -266,11 +308,16 @@ struct VideoPlayerView: View {
         do {
             let resolved: SourceVideoResource
             let selectedChapter = chapter
-            if let source { resolved = try await withTimeout(60) { try await source.fetchChapterVideo(selectedChapter) } }
+            let activeSource = store.flatMap { store in store.books.first(where: { $0.id == book.id }).flatMap { store.sourceForBook($0) } } ?? source
+            if let activeSource {
+                let details = try await withTimeout(60) { try await activeSource.fetchChapterVideoDetails(selectedChapter) }
+                guard !Task.isCancelled, episodeIndex == index else { return }
+                resolved = details.resource; danmaku = parseDanmaku(details.subContent)
+            }
             else { resolved = try SourceVideoResource.make(videoURLFromChapter(chapter.text), base: chapter.url ?? videoURLFromChapter(chapter.text), headers: [:]) }
             guard !Task.isCancelled, episodeIndex == index else { return }
             resource = resolved; loading = false
-            if case .native(let request) = resolved { model.play(request) }
+            if case .native(let request) = resolved { model.play(request); model.player.rate = Float(playbackRate) }
         } catch {
             guard !Task.isCancelled, episodeIndex == index else { return }
             loading = false; resolveError = sourceErrorMessage(error)

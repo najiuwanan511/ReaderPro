@@ -5,7 +5,10 @@ import Foundation
 final class SourceMediaCapture: @unchecked Sendable {
     private let lock = NSLock()
     private var address: String?
+    private var auxiliary = ""
     func set(_ value: String) { lock.lock(); address = value; lock.unlock() }
+    func setAuxiliary(_ value: String) { lock.lock(); auxiliary = value; lock.unlock() }
+    var subContent: String { lock.lock(); defer { lock.unlock() }; return auxiliary }
     var value: String? { lock.lock(); defer { lock.unlock() }; return address }
 }
 
@@ -71,7 +74,7 @@ enum SourceVideoResource {
 extension LegadoSource {
     func fetchChapterVideo(_ chapter: BookChapter) async throws -> SourceVideoResource {
         try await withChapterRules(chapter) {
-            let capture = SourceMediaCapture()
+            let capture = LegadoJSCtx.mediaCapture ?? SourceMediaCapture()
             return try await LegadoJSCtx.$mediaCapture.withValue(capture) {
                 let initial = chapter.url ?? videoURLFromChapter(chapter.text)
                 let headers = try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders).allHTTPHeaderFields ?? requestHeaders
@@ -98,6 +101,10 @@ extension LegadoSource {
                     let request = try SourceHTTP.request(initial, base: bookSourceUrl, headers: requestHeaders)
                     input = try await SourceWebLoader.load(request, html: input, script: webJS).text
                 }
+                let optionalFailures = RuleFailures()
+                if let auxiliary = try? await LegadoJSCtx.$failures.withValue(optionalFailures, operation: {
+                    try await chapterAuxiliaryContent(input, base: response.url)
+                }) { capture.setAuxiliary(auxiliary) }
                 var result = applyContentRule(input, ruleContent.content, base: response.url).joined(separator: "\n")
                 try LegadoJSCtx.failures?.check()
                 if let target = capture.value, !target.isEmpty {
@@ -107,5 +114,22 @@ extension LegadoSource {
                 return try SourceVideoResource.make(result, base: response.url, headers: headers)
             }
         }
+    }
+}
+
+struct SourceVideoDetails {
+    let resource: SourceVideoResource
+    let subContent: String
+}
+extension LegadoSource {
+    func fetchChapterVideoDetails(_ chapter: BookChapter) async throws -> SourceVideoDetails {
+        let capture = SourceMediaCapture()
+        let resource = try await LegadoJSCtx.$mediaCapture.withValue(capture) { try await fetchChapterVideo(chapter) }
+        return SourceVideoDetails(resource: resource, subContent: capture.subContent.isEmpty ? chapter.subContent : capture.subContent)
+    }
+}
+extension SourceVideoResource {
+    var request: URLRequest {
+        switch self { case .native(let request), .web(let request), .html(_, let request): return request }
     }
 }

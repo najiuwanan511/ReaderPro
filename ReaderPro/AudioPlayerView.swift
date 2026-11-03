@@ -43,12 +43,22 @@ final class AudioPlayerModel: ObservableObject {
     @Published var duration: TimeInterval = 0
     @Published var playbackRate: Float = 1.0
     var player: AVPlayer?
+    @Published var error = ""
+    var onEnded: (() -> Void)?
+    private var itemObservation: NSKeyValueObservation?
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
 
-    func load(url: URL) {
+    func load(url: URL) { load(URLRequest(url: url)) }
+
+    func load(_ request: URLRequest, position: TimeInterval = 0) {
         stop()
-        let item = AVPlayerItem(url: url)
+        guard let url = request.url else { error = "音频地址无效"; return }
+        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]))
+        itemObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+            guard item.status == .failed else { return }
+            DispatchQueue.main.async { self?.error = item.error.map(sourceErrorMessage) ?? "音频播放失败"; self?.isPlaying = false }
+        }
         let p = AVPlayer(playerItem: item)
         player = p
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
@@ -61,14 +71,16 @@ final class AudioPlayerModel: ObservableObject {
         }
         endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
             self?.isPlaying = false
+            self?.onEnded?()
         }
-        p.play()
+        if position > 0 { p.seek(to: CMTime(seconds: position, preferredTimescale: 600)) }
+        p.playImmediately(atRate: playbackRate)
         isPlaying = true
     }
 
     func toggle() {
         guard let p = player else { return }
-        if p.rate > 0 { p.pause(); isPlaying = false } else { p.play(); isPlaying = true }
+        if p.rate > 0 { p.pause(); isPlaying = false } else { p.playImmediately(atRate: playbackRate); isPlaying = true }
     }
 
     func seek(to t: TimeInterval) {
@@ -82,6 +94,7 @@ final class AudioPlayerModel: ObservableObject {
     }
 
     func stop() {
+        itemObservation = nil; error = ""
         if let o = timeObserver, let p = player { p.removeTimeObserver(o) }
         timeObserver = nil
         if let e = endObserver { NotificationCenter.default.removeObserver(e) }
@@ -96,6 +109,19 @@ final class AudioPlayerModel: ObservableObject {
 
 struct AudioPlayerView: View {
     let book: LocalBook
+    let store: BookStore?
+    let source: LegadoSource?
+    @State private var chapterIndex: Int
+    @State private var retry = 0
+    @State private var loading = false
+    @State private var showLogin = false
+    @State private var showSourceChange = false
+    private var chapters: [BookChapter] { (store?.books.first(where: { $0.id == book.id }) ?? book).chapters }
+
+    init(book: LocalBook, store: BookStore? = nil, source: LegadoSource? = nil) {
+        self.book = book; self.store = store; self.source = source
+        _chapterIndex = State(initialValue: book.chapters.readableIndex(from: max(0, min(book.chapterIndex, book.chapters.count - 1))) ?? 0)
+    }
     @StateObject private var model = AudioPlayerModel()
     @Environment(\.dismiss) private var dismiss
     @State private var lyrics: [LyricLine] = []
@@ -140,6 +166,8 @@ struct AudioPlayerView: View {
                     .padding(.bottom, 18)
 
                 // 逐行歌词
+                if chapters.indices.contains(chapterIndex) { Text(chapters[chapterIndex].title).foregroundStyle(.white).lineLimit(1) }
+                if loading { ProgressView("正在解析音频…").tint(.white).foregroundStyle(.white) }
                 LyricsScrollView(lyrics: lyrics, currentTime: model.currentTime)
                     .frame(maxHeight: 260)
 
@@ -172,19 +200,38 @@ struct AudioPlayerView: View {
                     }
                     Button { seek(15) } label: { Image(systemName: "goforward.15").font(.title).foregroundStyle(.white) }
                     Button { showTimer = true } label: { Image(systemName: "moon.zzz.fill").font(.title2).foregroundStyle(.white) }
-                    Button { showPlaylist = true } label: { Image(systemName: "line.3.horizontal").font(.title2).foregroundStyle(.white) }
+                    Menu {
+                        Button("上一章") { changeChapter(-1) }
+                        Button("下一章") { changeChapter(1) }
+                        Button("重新加载") { retry += 1 }
+                        if source?.hasLogin == true { Button("登录 / 接口设置") { showLogin = true } }
+                        if source != nil, store != nil { Button("换源") { showSourceChange = true } }
+                    } label: { Image(systemName: "ellipsis").font(.title2).foregroundStyle(.white) }
                 }
                 .padding(.bottom, 30)
             }
             .padding()
 
-            if !loadError.isEmpty {
-                VStack { Spacer(); Text(loadError).font(.footnote).foregroundStyle(.red).padding().background(.regularMaterial).cornerRadius(10); Spacer() }
+            if !loadError.isEmpty || !model.error.isEmpty {
+                VStack { Spacer(); Text(loadError.isEmpty ? model.error : loadError).font(.footnote).foregroundStyle(.red).padding().background(.regularMaterial).cornerRadius(10); Spacer() }
             }
         }
-        .onAppear { load() }
-        .onDisappear { model.stop() }
+        .task(id: "\(chapterIndex)-\(retry)") { await load() }
+        .onDisappear { savePosition(); model.stop() }
+        .sheet(isPresented: $showLogin) { if let source { SourceLoginView(source: source) } }
+        .sheet(isPresented: $showSourceChange, onDismiss: { retry += 1 }) {
+            if let store, let current = store.books.first(where: { $0.id == book.id }) {
+                ReaderSourceChangeView(store: store, current: current) { candidate, index in
+                    guard let chapters = candidate.chapters else { return }
+                    var updated = current; updated.chapters = chapters
+                    updated.sourceUrl = candidate.book.sourceUrl; updated.sourceName = candidate.book.sourceName
+                    updated.chapterIndex = index ?? 0; updated.charOffset = 0
+                    store.updateBook(updated); chapterIndex = updated.chapterIndex; showSourceChange = false
+                }
+            }
+        }
         .onReceive(sleepTick) { _ in
+            if Int(model.currentTime) % 10 == 0 { savePosition() }
             guard var s = sleepRemaining else { return }
             s -= 1
             if s <= 0 {
@@ -229,7 +276,9 @@ struct AudioPlayerView: View {
                     Text("导入音频时会生成曲目/章节列表；若只有一个文件就是单曲。").font(.footnote).foregroundStyle(.secondary)
                 } else {
                     ForEach(Array(book.chapters.enumerated()), id: \.offset) { i, ch in
-                        Button { } label: { Text(ch.title) }
+                        Button { savePosition(); chapterIndex = i; showPlaylist = false } label: {
+                            HStack { Text(ch.displayTitle); Spacer(); if i == chapterIndex { Image(systemName: "play.fill") } }
+                        }.disabled(ch.isVolume)
                     }
                 }
             }
@@ -239,26 +288,48 @@ struct AudioPlayerView: View {
         .presentationDetents([.medium])
     }
 
-    func load() {
-        lyrics = parseLRC(book.lyrics)
-        if !book.lyrics.isEmpty && lyrics.isEmpty {
-            // 非 LRC 纯文本歌词：按行平均铺满
-            let raw = book.lyrics.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-            if !raw.isEmpty {
-                lyrics = raw.enumerated().map { LyricLine(time: Double($0.offset) * 4.0, text: $0.element) }
+    @MainActor func load() async {
+        model.stop(); loadError = ""; loading = true; lyrics = []
+        let index = chapterIndex
+        let current = store?.books.first(where: { $0.id == book.id }) ?? book
+        let activeSource = store?.sourceForBook(current) ?? source
+        model.onEnded = { changeChapter(1) }
+        do {
+            let request: URLRequest
+            var rawLyrics = current.lyrics
+            if let activeSource, chapters.indices.contains(index) {
+                let chapter = chapters[index]
+                let media = try await withTimeout(60) { try await activeSource.fetchChapterAudio(chapter) }
+                request = media.request; rawLyrics = media.lyrics
+            } else if !current.audioUrl.isEmpty, let url = URL(string: current.audioUrl) {
+                request = URLRequest(url: url)
+            } else {
+                let path = chapters.indices.contains(index) ? videoURLFromChapter(chapters[index].text) : ""
+                let local = URL(string: path).flatMap { $0.isFileURL ? $0 : nil } ?? BookStore.filesDir.appendingPathComponent(current.fileName)
+                guard FileManager.default.fileExists(atPath: local.path) else { throw SourceFailure(stage: "音频", message: "找不到音频文件，请重新导入") }
+                request = URLRequest(url: local)
             }
+            guard !Task.isCancelled, chapterIndex == index else { return }
+            lyrics = parseLRC(rawLyrics)
+            let position = current.chapterIndex == index ? Double(current.charOffset) : 0
+            model.load(request, position: position); loading = false
+        } catch {
+            guard !Task.isCancelled, chapterIndex == index else { return }
+            loading = false; loadError = sourceErrorMessage(error)
         }
-        // 音频来源：优先网络地址，否则本地文件
-        if !book.audioUrl.isEmpty, let u = URL(string: book.audioUrl) {
-            model.load(url: u)
-            return
-        }
-        let local = BookStore.filesDir.appendingPathComponent(book.fileName)
-        if FileManager.default.fileExists(atPath: local.path) {
-            model.load(url: local)
-        } else {
-            loadError = "找不到音频文件：\(book.fileName)"
-        }
+    }
+
+    func changeChapter(_ delta: Int) {
+        guard let index = chapters.readableIndex(from: chapterIndex + delta, direction: delta) else { return }
+        savePosition(); chapterIndex = index
+    }
+
+    func savePosition() {
+        guard let store, !loading, var current = store.books.first(where: { $0.id == book.id }) else { return }
+        current.chapterIndex = chapterIndex; current.charOffset = Int(max(0, model.currentTime))
+        current.lastRead = Date()
+        current.progress = chapters.isEmpty ? 0 : (Double(chapterIndex) + (model.duration > 0 ? model.currentTime / model.duration : 0)) / Double(chapters.count)
+        store.updateBook(current)
     }
 
     func seek(_ delta: TimeInterval) {

@@ -14,6 +14,7 @@ import UIKit
     private var delay: Double = 0
     private var startedPolling = false
     private var allowsInvalidCertificates = false
+    private var cookiesEnabled = true
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0) async throws -> SourcePage {
         // The iOS 17 Swift-only WebKit proxy overlay can link against
@@ -25,16 +26,18 @@ import UIKit
         }
         // Each WKWebView can launch a separate WebKit process. Keeping only
         // two active reduces peak memory when many book sources are searched.
+        try await SourceRateLimiter.shared.wait()
         while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
         let loader = SourceWebLoader()
         loader.allowsInvalidCertificates = SourceTLS.allowsInvalidCertificates
+        loader.cookiesEnabled = LegadoJSCtx.ruleSource?.enabledCookieJar ?? true
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()
             return try await withCheckedThrowingContinuation { continuation in
                 active[loader.id] = loader
                 loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
-                config.websiteDataStore = loader.allowsInvalidCertificates ? .nonPersistent() : .default()
+                config.websiteDataStore = loader.allowsInvalidCertificates || !loader.cookiesEnabled ? .nonPersistent() : .default()
                 let web = WKWebView(frame: .init(x: 0, y: 0, width: 390, height: 844), configuration: config)
                 loader.webView = web; web.navigationDelegate = loader
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
@@ -55,7 +58,7 @@ import UIKit
                     loader.finish(.failure(SourceFailure(stage: "网页脚本", message: "WebView 加载或脚本等待超时", url: request.url?.absoluteString ?? "")))
                 }
                 Task {
-                    for cookie in HTTPCookieStorage.shared.cookies ?? [] {
+                    for cookie in loader.cookiesEnabled ? (HTTPCookieStorage.shared.cookies ?? []) : [] {
                         await config.websiteDataStore.httpCookieStore.setCookie(cookie)
                     }
                     guard loader.continuation != nil else { return }
@@ -82,7 +85,9 @@ import UIKit
                         else if JSONSerialization.isValidJSONObject(value), let data = try? JSONSerialization.data(withJSONObject: value) { text = String(decoding: data, as: UTF8.self) }
                         else { text = String(describing: value) }
                         if !text.isEmpty {
-                            for cookie in await webView.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+                            if cookiesEnabled {
+                                for cookie in await webView.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+                            }
                             finish(.success(.init(text: text, url: webView.url?.absoluteString ?? ""))); return
                         }
                     }

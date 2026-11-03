@@ -1,4 +1,6 @@
 import Foundation
+import AVFoundation
+import UIKit
 import CryptoKit
 import Combine
 
@@ -42,10 +44,16 @@ enum SourceValidation {
         var source = source
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        var data = Data("source-engine-20261101-v12".utf8)
+        var data = Data("source-engine-20261103-v13".utf8)
         data.append(SourceTLS.isAllowed(source.bookSourceUrl) ? 1 : 0)
         data.append((try? encoder.encode(source)) ?? Data())
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func verifyMedia(_ request: URLRequest) async throws {
+        guard let url = request.url else { throw SourceFailure(stage: "媒体校验", message: "播放地址无效") }
+        let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]])
+        guard try await asset.load(.isPlayable) else { throw SourceFailure(stage: "媒体校验", message: "播放器无法读取媒体，可能是登录页、错误地址或不支持的格式", url: url.absoluteString) }
     }
 
     static func run(_ source: LegadoSource, keyword: String) async -> SourceValidationReport {
@@ -94,21 +102,30 @@ enum SourceValidation {
                 if !warnings.isEmpty { ok("附加信息警告", warnings.joined(separator: "\n")) }
                 stage = "目录"
                 let chapters = try await withTimeout(90) { try await source.fetchChapters(book: book) }
-                guard let first = chapters.first else { throw SourceFailure(stage: stage, message: "目录为空") }
+                guard let first = chapters.first(where: { !$0.isVolume }) else { throw SourceFailure(stage: stage, message: "目录为空") }
                 ok(stage, "\(chapters.count) 章（遍历目录分页）")
                 stage = "正文"
-                let nextURL = chapters.dropFirst().first?.url ?? first.url
-                if source.isComic {
+                let nextURL = chapters.drop(while: { $0.id != first.id }).dropFirst().first(where: { !$0.isVolume })?.url ?? first.url
+                if source.isAudio {
+                    stage = "音频播放"
+                    let media = try await withTimeout(45) { try await source.fetchChapterAudio(first) }
+                    try await withTimeout(30) { try await SourceValidation.verifyMedia(media.request) }
+                    ok(stage, "首章音频已解析，系统播放器确认可播放")
+                } else if source.isVideo {
+                    stage = "视频播放"
+                    let resource = try await withTimeout(45) { try await source.fetchChapterVideo(first) }
+                    if case .native(let request) = resource {
+                        try await withTimeout(30) { try await SourceValidation.verifyMedia(request) }
+                        ok(stage, "首集已解析，系统播放器确认可播放")
+                    } else {
+                        incomplete = true
+                        report.steps.append(.init(stage: stage, passed: false, detail: "已解析网页播放器；尚未确认网页内媒体能播放，不能标记完整成功"))
+                    }
+                } else if source.isComic {
                     let images = try await withTimeout(45) { try await source.fetchChapterImages(first, nextChapterUrl: nextURL) }
                     guard let address = images.first else { throw SourceFailure(stage: stage, message: "图片列表为空") }
-                    let request = try SourceHTTP.request(address, base: first.url ?? book.url, headers: source.requestHeaders)
-                    let (_, response) = try await SourceTLS.$allowsInvalidCertificates.withValue(SourceTLS.isAllowed(source.bookSourceUrl)) {
-                        try await SourceTLS.data(for: request)
-                    }
-                    guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                          http.mimeType?.hasPrefix("image/") == true else {
-                        throw SourceFailure(stage: stage, message: "首张图片未返回可用图片响应", url: address)
-                    }
+                    let bytes = try await withTimeout(30) { try await SourceImagePipeline.load(address, source: source, cover: false) }
+                    guard UIImage(data: bytes) != nil else { throw SourceFailure(stage: stage, message: "首张图片下载或解密后仍不是有效图片", url: address) }
                     ok(stage, "首章 \(images.count) 张图片，首张响应正常")
                 } else {
                     let text = try await withTimeout(45) { try await source.fetchChapterContent(first, nextChapterUrl: nextURL) }

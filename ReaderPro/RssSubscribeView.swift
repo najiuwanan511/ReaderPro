@@ -4,13 +4,13 @@ import WebKit
 
 // MARK: - RSS 文章与解析（标准 RSS 2.0 / Atom）
 
-struct RssArticle: Identifiable {
-    let id = UUID()
+struct RssArticle: Identifiable, Codable {
+    var id = UUID()
     var title: String
     var link: String
-    var pubDate: String
-    var summary: String
-    var content: String
+    var pubDate: String = ""
+    var summary: String = ""
+    var content: String = ""
     var image: String = ""
 }
 
@@ -134,6 +134,10 @@ struct RssSubscribeView: View {
             .scrollContentBackground(.hidden)
             .background(AppTheme.surface)
             .toolbar {
+                Menu {
+                    NavigationLink("收藏文章") { SavedRssArticlesView(store: store, favorites: true) }
+                    NavigationLink("阅读记录") { SavedRssArticlesView(store: store, favorites: false) }
+                } label: { Image(systemName: "star") }
                 Button { showAdd = true } label: { Image(systemName: "plus") }
                     .accessibilityLabel("添加订阅")
                 Button { showManage = true } label: { Image(systemName: "slider.horizontal.3") }
@@ -161,7 +165,7 @@ struct RssSubscribeView: View {
             }
             .sheet(item: $feedSource) { src in
                 NavigationStack {
-                    if src.singleUrl { BrowserView(initialURL: src.sourceUrl) }
+                    if src.singleUrl { FeedArticleView(store: store, source: src, article: RssArticle(title: src.sourceName, link: src.sourceUrl)) }
                     else { FeedReaderView(store: store, source: src) }
                 }
             }
@@ -292,7 +296,7 @@ struct FeedArticlesView: View {
             NavigationStack {
                 if source.isRssRuleSource && source.ruleContent.isEmpty && source.type == 0 && !article.link.isEmpty {
                     BrowserView(initialURL: article.link)
-                } else { FeedArticleView(source: source, article: article) }
+                } else { FeedArticleView(store: store, source: source, article: article) }
             }
         }
     }
@@ -410,27 +414,63 @@ struct FeedArticlesView: View {
 }
 
 struct FeedArticleView: View {
+    @ObservedObject var store: BookStore
     let source: RssSource
     let article: RssArticle
+    @ObservedObject private var reading = RssReadingStore.shared
+    @StateObject private var speech = SpeechController()
     @State private var content = ""
     @State private var loading = true
     @State private var error = ""
-
+    @State private var retry = 0
+    @State private var showLogin = false
+    @State private var showEditor = false
+    @State private var showBrowser = false
+    private var saved: SavedRssArticle {
+        var copy = article
+        if !content.isEmpty { copy.content = content }
+        return SavedRssArticle(source: activeSource, article: copy)
+    }
+    private var activeSource: RssSource { store.rssSources.first { $0.id == source.id } ?? source }
     var body: some View {
         Group {
             if loading { ProgressView("正在加载正文…") }
-            else if !error.isEmpty { Text(error).font(.footnote).padding() }
-            else if content.isEmpty && !article.link.isEmpty && source.type == 0 { BrowserView(initialURL: article.link) }
-            else { FeedHTMLView(html: content.isEmpty ? article.link : content, baseURL: article.link, type: source.type) }
+            else if !error.isEmpty { VStack { Text(error).font(.footnote); Button("重试") { retry += 1 } }.padding() }
+            else { FeedHTMLView(html: content.isEmpty ? article.link : content, baseURL: article.link, type: activeSource.type, source: activeSource) }
         }
         .navigationTitle(article.title).navigationBarTitleDisplayMode(.inline)
-        .task {
+        .toolbar {
+            Button { reading.toggle(saved) } label: { Image(systemName: reading.isFavorite(saved) ? "star.fill" : "star") }.accessibilityLabel("收藏文章")
+            Menu {
+                Button("刷新") { retry += 1 }
+                Button(speech.isSpeaking ? "停止朗读" : "朗读") {
+                    if speech.isSpeaking { speech.stop() }
+                    else { speech.speak(segments: [stripText(content, preserveNewlines: true)], rate: Float(store.ttsRate), pitch: Float(store.ttsPitch)) }
+                }
+                Button("在浏览器打开") { showBrowser = true }
+                if let url = URL(string: article.link) { ShareLink("分享文章", item: url) }
+                if activeSource.ruleSource.hasLogin { Button("登录 / 接口设置") { showLogin = true } }
+                Button("编辑订阅源") { showEditor = true }
+                NavigationLink("阅读记录") { SavedRssArticlesView(store: store, favorites: false) }
+            } label: { Image(systemName: "ellipsis") }
+        }
+        .sheet(isPresented: $showLogin, onDismiss: { retry += 1 }) { SourceLoginView(source: activeSource.ruleSource) }
+        .sheet(isPresented: $showEditor, onDismiss: { retry += 1 }) { NavigationStack { RssSourceEditorView(store: store, source: activeSource) } }
+        .sheet(isPresented: $showBrowser) { NavigationStack { BrowserView(initialURL: article.link) } }
+        .onDisappear { speech.stop() }
+        .task(id: retry) {
+            loading = true; error = ""
             do {
-                if source.type != 0 && source.ruleContent.isEmpty { content = article.link }
-                else { content = try await source.articleContent(article) }
-                loading = false
+                if activeSource.singleUrl { content = activeSource.startHtml.isEmpty ? article.link : activeSource.startHtml }
+                else if activeSource.type != 0 && activeSource.ruleContent.isEmpty { content = article.link }
+                else { content = try await activeSource.articleContent(article) }
+                guard !Task.isCancelled else { return }
+                loading = false; reading.record(saved)
+            } catch {
+                guard !Task.isCancelled else { return }
+                if !article.content.isEmpty { content = article.content; loading = false; reading.record(saved) }
+                else { self.error = "正文加载失败：" + sourceErrorMessage(error); loading = false }
             }
-            catch { self.error = "正文加载失败：" + sourceErrorMessage(error); loading = false }
         }
     }
 }
@@ -439,11 +479,67 @@ struct FeedHTMLView: UIViewRepresentable {
     let html: String
     let baseURL: String
     let type: Int
+    var source: RssSource? = nil
+    func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration(); config.allowsInlineMediaPlayback = true
+        config.defaultWebpagePreferences.allowsContentJavaScript = source?.enableJs ?? true
+        if source?.enabledCookieJar == false { config.websiteDataStore = .nonPersistent() }
+        if let source, source.enableJs {
+            for (script, time) in [(source.preloadJs, WKUserScriptInjectionTime.atDocumentStart),
+                                   (source.injectJs, .atDocumentEnd),
+                                   (source.singleUrl && !source.startHtml.isEmpty ? source.startJs : "", .atDocumentEnd)] where !script.isEmpty {
+                config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: time, forMainFrameOnly: false))
+            }
+        }
+        let css = source.flatMap { $0.singleUrl && !$0.startHtml.isEmpty && !$0.startStyle.isEmpty ? $0.startStyle : $0.style } ?? ""
+        if !css.isEmpty {
+            let script = "var s=document.createElement('style');s.textContent=" + sourceJSONString(css) + ";(document.head||document.documentElement).appendChild(s);"
+            config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false))
+        }
         let view = WKWebView(frame: .zero, configuration: config)
+        view.navigationDelegate = context.coordinator
+        context.coordinator.source = source
+        view.customUserAgent = sourceUA
+        return view
+    }
+    func updateUIView(_ view: WKWebView, context: Context) {
+        let identity = html + "\n" + baseURL + "\n" + String(type)
+        guard context.coordinator.identity != identity else { return }
+        context.coordinator.identity = identity
+        context.coordinator.task?.cancel()
+        context.coordinator.task = Task { @MainActor [weak view] in
+            guard let view else { return }
+            do {
+                if source?.enabledCookieJar != false {
+                    for cookie in HTTPCookieStorage.shared.cookies ?? [] { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+                }
+                if let source, let rules = FeedWebRules.contentRules(source) {
+                    let list = try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "rss-" + source.id, encodedContentRuleList: rules)
+                    if let list { view.configuration.userContentController.add(list) }
+                }
+                guard !Task.isCancelled else { return }
+                load(view)
+            } catch {
+                guard !Task.isCancelled else { return }
+                view.loadHTMLString("<p>订阅网页配置失败：</p><pre>" + sourceErrorMessage(error).replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;") + "</pre>", baseURL: nil)
+            }
+        }
+    }
+    private func load(_ view: WKWebView) {
         let trimmed = html.trimmingCharacters(in: .whitespacesAndNewlines)
         var rendered = html
+        if type == 0, let url = URL(string: trimmed), ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
+            Task { @MainActor [weak view] in
+                do {
+                    let request: URLRequest
+                    if let source { request = try await source.ruleSource.withRules { try SourceHTTP.request(trimmed, base: baseURL, headers: LegadoJSCtx.headers) } }
+                    else { request = URLRequest(url: url) }
+                    guard !Task.isCancelled else { return }; view?.load(request)
+                } catch { view?.loadHTMLString("<p>网页请求配置失败</p>", baseURL: nil) }
+            }
+            return
+        }
         if (type == 1 || type == 2), let url = URL(string: trimmed),
            ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.host != nil {
             let safeURL = trimmed.replacingOccurrences(of: "&", with: "&amp;")
@@ -453,10 +549,40 @@ struct FeedHTMLView: UIViewRepresentable {
                 ? "<meta name='viewport' content='width=device-width'><img style='max-width:100%' src=\"\(safeURL)\">"
                 : "<meta name='viewport' content='width=device-width'><video style='max-width:100%' controls playsinline src=\"\(safeURL)\"></video>"
         }
-        view.loadHTMLString(rendered, baseURL: URL(string: baseURL))
-        return view
+        if !rendered.lowercased().contains("name='viewport'") && !rendered.lowercased().contains("name=\"viewport\"") {
+            rendered = "<meta name='viewport' content='width=device-width,initial-scale=1'><style>img,video{max-width:100%;height:auto}body{overflow-wrap:anywhere}</style>" + rendered
+        }
+        view.loadHTMLString(rendered, baseURL: source?.loadWithBaseUrl == false ? nil : URL(string: baseURL))
     }
-    func updateUIView(_ view: WKWebView, context: Context) {}
+    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.task?.cancel(); view.stopLoading(); view.navigationDelegate = nil
+    }
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        var source: RssSource?
+        var identity = ""
+        var task: Task<Void, Never>?
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard source?.enabledCookieJar != false else { return }
+            Task { @MainActor in
+                for cookie in await webView.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+            }
+        }
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            guard let url = navigationAction.request.url else { decisionHandler(.cancel); return }
+            guard navigationAction.navigationType != .other else { decisionHandler(.allow); return }
+            guard ["http", "https", "about", "data"].contains(url.scheme?.lowercased() ?? "") else { decisionHandler(.cancel); return }
+            guard let source, !source.shouldOverrideUrlLoading.isEmpty else { decisionHandler(.allow); return }
+            Task {
+                do {
+                    let result = try await source.ruleSource.withRules {
+                        let script = "var url=" + sourceJSONString(url.absoluteString) + ";\n" + sourceScriptBody(source.shouldOverrideUrlLoading)
+                        return LegadoJS.run(script, input: "", baseUrl: url.absoluteString, sourceKey: "", sourceUrl: source.sourceUrl)
+                    }
+                    decisionHandler(result.lowercased() == "true" ? .cancel : .allow)
+                } catch { decisionHandler(.cancel) }
+            }
+        }
+    }
 }
 
 // 与书源请求共用 Cookie、超时和系统证书校验。

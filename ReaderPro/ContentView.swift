@@ -163,7 +163,7 @@ struct BookshelfView: View {
                             // constructing every row inside this ScrollView.
                             LazyVStack {
                                 ForEach(shelfSearch.results) { result in
-                                    Button { shelfResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
+                                    Button { shelfResult = result } label: { SourceBookRow(book: result, source: store.sources.first { $0.bookSourceUrl == result.sourceUrl }) }.buttonStyle(.plain)
                                     Divider()
                                 }
                             }
@@ -208,7 +208,7 @@ struct BookshelfView: View {
             .alert("导入失败", isPresented: $showError) { Button("好", role: .cancel) {} } message: { Text(errorText) }
             .navigationDestination(item: $selectedBook) { book in ReaderView(store: store, bookId: book.id) }
             .navigationDestination(item: $selectedManga) { book in MangaView(store: store, bookId: book.id) }
-            .navigationDestination(item: $selectedAudio) { book in AudioPlayerView(book: book) }
+            .navigationDestination(item: $selectedAudio) { book in AudioPlayerView(book: book, store: store, source: store.sourceForBook(book)) }
             .navigationDestination(item: $selectedVideo) { book in
                 VideoPlayerView(book: book, source: store.sources.first { $0.bookSourceUrl == book.sourceUrl }, store: store)
             }
@@ -458,7 +458,7 @@ struct SourceView: View {
                     } header: { Text("搜索历史") }
                 }
                 ForEach(searchState.results) { r in
-                    Button { selectedResult = r } label: { SourceBookRow(book: r) }
+                    Button { selectedResult = r } label: { SourceBookRow(book: r, source: store.sources.first { $0.bookSourceUrl == r.sourceUrl }) }
                 }
                 if searchState.hasMore && !searchState.searching {
                     Button(searchState.errors.isEmpty ? "加载下一页" : "继续搜索 / 重试失败书源") { searchState.loadMore() }

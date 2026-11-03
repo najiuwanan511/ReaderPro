@@ -8,20 +8,18 @@ final class MangaImageStore {
     static let shared = MangaImageStore()
     private let mem = NSCache<NSString, UIImage>()
 
-    func image(for urlString: String, bookId: String) async -> UIImage? {
-        if let m = mem.object(forKey: urlString as NSString) { return m }
-        if let cached = readDisk(urlString, bookId: bookId) {
-            mem.setObject(cached, forKey: urlString as NSString)
+    func image(for urlString: String, bookId: String, source: LegadoSource? = nil) async -> UIImage? {
+        let cacheKey = bookId + "|" + urlString + "|" + (source.map(SourceValidation.fingerprint) ?? "")
+        if let m = mem.object(forKey: cacheKey as NSString) { return m }
+        if let cached = readDisk(cacheKey, bookId: bookId) {
+            mem.setObject(cached, forKey: cacheKey as NSString)
             return cached
         }
-        guard let url = URL(string: urlString) else { return nil }
-        var req = URLRequest(url: url, timeoutInterval: 30)
-        req.setValue(sourceUA, forHTTPHeaderField: "User-Agent")
         do {
-            let (data, _) = try await SourceHTTP.session.data(for: req)
+            let data = try await SourceImagePipeline.load(urlString, source: source, cover: false)
             if let img = UIImage(data: data) {
-                writeDisk(data, urlString, bookId: bookId)
-                mem.setObject(img, forKey: urlString as NSString)
+                writeDisk(data, cacheKey, bookId: bookId)
+                mem.setObject(img, forKey: cacheKey as NSString)
                 return img
             }
         } catch { return nil }
@@ -50,6 +48,7 @@ struct MangaPageImage: View {
     let ref: String          // 远程 URL 或本地文件名
     let bookId: String
     let enhanced: Bool
+    var source: LegadoSource? = nil
     @State private var ui: UIImage?
     @State private var failed = false
 
@@ -70,7 +69,7 @@ struct MangaPageImage: View {
             ui = nil
             failed = false
             if isRemote {
-                if let img = await MangaImageStore.shared.image(for: ref, bookId: bookId) {
+                if let img = await MangaImageStore.shared.image(for: ref, bookId: bookId, source: source) {
                     ui = enhanced ? enhancedImage(img) : img
                 } else { failed = true }
             } else {
@@ -192,14 +191,14 @@ struct MangaView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     ForEach(displayImages.indices, id: \.self) { i in
-                        MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced)
+                        MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
                     }
                 }
             }
         } else {
             TabView(selection: $page) {
                 ForEach(displayImages.indices, id: \.self) { i in
-                    MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced)
+                    MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
                         .scaleEffect(zoom)
                         .gesture(MagnificationGesture().onChanged { zoom = max(1.0, min(4.0, $0)) })
                         .tag(i)
@@ -267,7 +266,7 @@ struct MangaView: View {
         Task {
             var img: UIImage?
             if isOnline {
-                img = await MangaImageStore.shared.image(for: ref, bookId: b.id)
+                img = await MangaImageStore.shared.image(for: ref, bookId: b.id, source: store.sourceForBook(b))
             } else {
                 let url = BookStore.filesDir.appendingPathComponent(b.id).appendingPathComponent((ref as NSString).lastPathComponent)
                 if let d = try? Data(contentsOf: url) { img = UIImage(data: d) }

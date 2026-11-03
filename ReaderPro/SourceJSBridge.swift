@@ -108,6 +108,7 @@ enum SourceJSBridge {
         }
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(max(0.1, timeout)))
         request.timeoutInterval = max(0.1, deadline.timeIntervalSinceNow)
+        try SourceRateLimiter.shared.waitBlocking()
         let box = ResponseBox()
         let completed = DispatchSemaphore(value: 0)
         let lease = try SourceTLS.lease(for: request, followRedirects: followRedirects)

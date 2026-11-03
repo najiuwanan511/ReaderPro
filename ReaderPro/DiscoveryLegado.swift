@@ -321,7 +321,7 @@ struct ExploreListView: View {
             } else {
                 List {
                     ForEach(results) { result in
-                        Button { selectedResult = result } label: { SourceBookRow(book: result) }.buttonStyle(.plain)
+                        Button { selectedResult = result } label: { SourceBookRow(book: result, source: store.sources.first { $0.bookSourceUrl == result.sourceUrl }) }.buttonStyle(.plain)
                     }
                     moreControls
                 }.listStyle(.plain)

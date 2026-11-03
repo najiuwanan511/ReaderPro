@@ -36,24 +36,30 @@ struct ReaderTabStrip: View {
 struct RemoteBookCover: View {
     let title: String
     let url: String
-    var width: CGFloat = 76
-
+    var width: CGFloat = 68
+    var source: LegadoSource? = nil
+    @State private var image: UIImage?
     var body: some View {
-        AsyncImage(url: URL(string: url)) { phase in
-            if let image = phase.image { image.resizable().scaledToFill() }
+        Group {
+            if let image { Image(uiImage: image).resizable().scaledToFill() }
             else { BookCover(title: title, width: width) }
         }
-        .frame(width: width, height: width * 1.42)
-        .clipped()
+        .frame(width: width, height: width * 1.42).clipped()
         .clipShape(RoundedRectangle(cornerRadius: 3))
+        .task(id: url + "|" + (source?.coverDecodeJs ?? "")) {
+            image = nil
+            guard !url.isEmpty, let data = try? await SourceImagePipeline.load(url, source: source, cover: true), !Task.isCancelled else { return }
+            image = UIImage(data: data)
+        }
     }
 }
 
 struct SourceBookRow: View {
     let book: SourceBook
+    var source: LegadoSource? = nil
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            RemoteBookCover(title: book.title, url: book.cover)
+            RemoteBookCover(title: book.title, url: book.cover, source: source)
             VStack(alignment: .leading, spacing: 7) {
                 Text(book.title).font(.system(size: 16, weight: .medium)).foregroundStyle(.primary).lineLimit(2)
                 Text(book.author.isEmpty ? "作者未知" : book.author).font(.caption).foregroundStyle(.secondary)
@@ -141,7 +147,7 @@ struct SourceBookDetailView: View {
                                 Spacer()
                                 if existingBook?.chapterIndex == entry.offset { Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(AppTheme.accent) }
                             }.padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
-                        }.buttonStyle(.plain).accessibilityIdentifier("chapter-\(entry.offset)")
+                        }.buttonStyle(.plain).disabled(entry.element.isVolume).accessibilityIdentifier("chapter-\(entry.offset)")
                         Divider().padding(.leading, 16)
                     }
                 }
@@ -162,6 +168,8 @@ struct SourceBookDetailView: View {
             NavigationStack {
                 if book.isVideo {
                     VideoPlayerView(book: book, source: source, store: store)
+                } else if book.isAudio {
+                    AudioPlayerView(book: book, store: store, source: source)
                 } else if book.isComicKind {
                     MangaView(store: store, bookId: book.id)
                         .toolbar { ToolbarItem(placement: .topBarLeading) { Button("返回目录") { readingBook = nil } } }
@@ -178,7 +186,7 @@ struct SourceBookDetailView: View {
                 AsyncImage(url: URL(string: displayBook.cover)) { image in image.resizable().scaledToFill() } placeholder: { Color.clear }
                     .blur(radius: 8).overlay(Color.black.opacity(0.25))
                 BookDetailArc().fill(AppTheme.surface).frame(height: 78)
-                RemoteBookCover(title: displayBook.title, url: displayBook.cover, width: 110)
+                RemoteBookCover(title: displayBook.title, url: displayBook.cover, width: 110, source: source)
                     .shadow(color: .black.opacity(0.25), radius: 8, y: 4).padding(.bottom, 20)
             }.frame(height: 204).clipped()
             VStack(spacing: 8) {

@@ -130,8 +130,13 @@ enum SourceTLS {
         }
     }
     private static func makeSession(allow: Bool, redirects: Bool, proxy: SourceProxy.Configuration? = nil,
-                                    scheme: String = "") -> URLSession {
+                                    scheme: String = "", cookies: Bool = true) -> URLSession {
         let configuration = SourceHTTP.configuration()
+        if !cookies {
+            configuration.httpCookieStorage = nil
+            configuration.httpShouldSetCookies = false
+            configuration.httpCookieAcceptPolicy = .never
+        }
         if let proxy {
             if proxy.kind == .http && scheme.lowercased() == "http" {
                 // On iOS 17 proxyConfigurations CONNECT works for HTTPS, but
@@ -163,6 +168,7 @@ enum SourceTLS {
         // Preserve the existing test-injection semantics. A test-provided
         // URLSession captures the request without contacting real proxies.
         if let test = SourceHTTP.testSession { return Lease(session: test, owned: false) }
+        let cookies = LegadoJSCtx.ruleSource?.enabledCookieJar ?? true
         if let proxy {
             // iOS does not authenticate plain-HTTP requests through the
             // connectionProxyDictionary transport used here. Fail before
@@ -171,12 +177,14 @@ enum SourceTLS {
                 throw SourceFailure(stage: "书源代理", message: "暂不支持需要认证的 HTTP 明文代理请求，请改用 HTTPS 书源地址或 SOCKS5 代理")
             }
             return Lease(session: makeSession(allow: allowsInvalidCertificates, redirects: followRedirects,
-                                              proxy: proxy, scheme: request.url?.scheme ?? ""), owned: true)
+                                              proxy: proxy, scheme: request.url?.scheme ?? "", cookies: cookies), owned: true)
         }
+        if !cookies { return Lease(session: makeSession(allow: allowsInvalidCertificates, redirects: followRedirects, cookies: false), owned: true) }
         return Lease(session: session(followRedirects: followRedirects), owned: false)
     }
 
     static func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        try await SourceRateLimiter.shared.wait()
         let lease = try lease(for: request)
         defer { lease.finish() }
         do { return try await lease.session.data(for: request) }

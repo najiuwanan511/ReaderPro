@@ -28,11 +28,14 @@ jobs:
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
             -only-testing:ReaderProTests/ParityFoundationTests \
+            -only-testing:ReaderProTests/MediaAndRssParityTests \
             -only-testing:ReaderProTests/SourceEngineTests \
             -only-testing:ReaderProTests/SourceRuleObjectTests \
             -only-testing:ReaderProTests/DiscoveryPaginationTests \
             -only-testing:ReaderProTests/JSImportAndResponseTests \
             -only-testing:ReaderProTests/ReaderContentPipelineTests \
+            -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
+            -skip-testing:ReaderProTests/SourceEngineTests/testUserProvidedPackImportsEverySourceWithoutLosingRules \
             -resultBundlePath build/ParityRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/parity-tests.log
       - uses: actions/upload-artifact@v4

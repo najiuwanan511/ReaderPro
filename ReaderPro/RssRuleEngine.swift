@@ -10,6 +10,8 @@ extension RssSource {
         source.header = header
         source.jsLib = jsLib
         source.loginUrl = loginUrl
+        source.loginUi = loginUi; source.loginCheckJs = loginCheckJs
+        source.coverDecodeJs = coverDecodeJs; source.concurrentRate = concurrentRate; source.enabledCookieJar = enabledCookieJar
         source.bookSourceComment = sourceComment
         source.exploreUrl = sortUrl
         return source

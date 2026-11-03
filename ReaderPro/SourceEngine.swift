@@ -25,6 +25,12 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     var loginCheckJs: String = ""
     var bookSourceComment: String = ""
     var variableComment: String? = nil
+    var coverDecodeJs: String = ""
+    var concurrentRate: String = ""
+    var enabledCookieJar: Bool = true
+    var eventListener: Bool = false
+    var customButton: Bool = false
+    var bookUrlPattern: String = ""
     var enabledExplore: Bool = true
     var customOrder: Int = 0
     var ruleSearch: RuleSet = RuleSet()
@@ -136,7 +142,7 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         }
     }
     enum CodingKeys: String, CodingKey {
-        case id, customOrder, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, loginUi, loginCheckJs, enabledExplore, bookSourceComment, variableComment
+        case coverDecodeJs, concurrentRate, enabledCookieJar, eventListener, customButton, bookUrlPattern, id, customOrder, bookSourceName, bookSourceUrl, bookSourceGroup, enabled, searchUrl, discoverUrl, exploreUrl, bookSourceType, ruleSearch, ruleBookInfo, ruleToc, ruleContent, ruleDiscover, ruleExplore, header, jsLib, loginUrl, loginUi, loginCheckJs, enabledExplore, bookSourceComment, variableComment
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -154,6 +160,12 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         jsLib = c.tolerantString(.jsLib); enabledExplore = c.tolerantBool(.enabledExplore, defaultValue: true)
         loginUrl = c.tolerantString(.loginUrl)
         loginUi = c.tolerantString(.loginUi); loginCheckJs = c.tolerantString(.loginCheckJs)
+        coverDecodeJs = c.tolerantString(.coverDecodeJs)
+        concurrentRate = c.tolerantString(.concurrentRate)
+        enabledCookieJar = c.tolerantBool(.enabledCookieJar, defaultValue: true)
+        eventListener = c.tolerantBool(.eventListener, defaultValue: false)
+        customButton = c.tolerantBool(.customButton, defaultValue: false)
+        bookUrlPattern = c.tolerantString(.bookUrlPattern)
         bookSourceComment = c.tolerantString(.bookSourceComment)
         variableComment = try? c.decodeIfPresent(String.self, forKey: .variableComment)
         ruleSearch = (try? c.decodeIfPresent(RuleSet.self, forKey: .ruleSearch)) ?? RuleSet()
@@ -173,6 +185,12 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         try c.encode(header, forKey: .header); try c.encode(jsLib, forKey: .jsLib); try c.encode(enabledExplore, forKey: .enabledExplore)
         try c.encode(loginUrl, forKey: .loginUrl)
         try c.encode(loginUi, forKey: .loginUi); try c.encode(loginCheckJs, forKey: .loginCheckJs)
+        try c.encode(coverDecodeJs, forKey: .coverDecodeJs)
+        try c.encode(concurrentRate, forKey: .concurrentRate)
+        try c.encode(enabledCookieJar, forKey: .enabledCookieJar)
+        try c.encode(eventListener, forKey: .eventListener)
+        try c.encode(customButton, forKey: .customButton)
+        try c.encode(bookUrlPattern, forKey: .bookUrlPattern)
         try c.encode(bookSourceComment, forKey: .bookSourceComment)
         try c.encodeIfPresent(variableComment, forKey: .variableComment)
         func encodeRule(_ rule: RuleSet, _ key: CodingKeys) throws {
@@ -191,7 +209,8 @@ struct LegadoSource: Identifiable, Codable, Equatable {
         lhs.bookSourceGroup == rhs.bookSourceGroup && lhs.enabled == rhs.enabled && lhs.searchUrl == rhs.searchUrl &&
         lhs.discoverUrl == rhs.discoverUrl && lhs.exploreUrl == rhs.exploreUrl && lhs.header == rhs.header &&
         lhs.jsLib == rhs.jsLib && lhs.loginUrl == rhs.loginUrl && lhs.loginUi == rhs.loginUi &&
-        lhs.loginCheckJs == rhs.loginCheckJs && lhs.bookSourceComment == rhs.bookSourceComment &&
+        lhs.loginCheckJs == rhs.loginCheckJs &&
+        lhs.coverDecodeJs == rhs.coverDecodeJs && lhs.concurrentRate == rhs.concurrentRate && lhs.enabledCookieJar == rhs.enabledCookieJar && lhs.eventListener == rhs.eventListener && lhs.customButton == rhs.customButton && lhs.bookUrlPattern == rhs.bookUrlPattern && lhs.bookSourceComment == rhs.bookSourceComment &&
         lhs.variableComment == rhs.variableComment && lhs.enabledExplore == rhs.enabledExplore &&
         lhs.ruleSearch == rhs.ruleSearch && lhs.ruleBookInfo == rhs.ruleBookInfo && lhs.ruleToc == rhs.ruleToc &&
         lhs.ruleContent == rhs.ruleContent && lhs.ruleDiscover == rhs.ruleDiscover && lhs.ruleExplore == rhs.ruleExplore &&
@@ -202,7 +221,8 @@ struct LegadoSource: Identifiable, Codable, Equatable {
     // 漫画书源：bookSourceType == 2，或正文规则里带图片提取规则 imageUrl
     var isComic: Bool { bookSourceType == 2 || !ruleContent.imageUrl.isEmpty }
     var isVideo: Bool { bookSourceType == 4 }
-    var localBookKind: String { isVideo ? "video" : (isComic ? "comic" : "web") }
+    var isAudio: Bool { bookSourceType == 1 }
+    var localBookKind: String { isVideo ? "video" : (isAudio ? "audio" : (isComic ? "comic" : "web")) }
 }
 
 extension KeyedDecodingContainer {
@@ -713,6 +733,19 @@ struct RssSource: Identifiable, Codable, Equatable {
     var header: String = ""
     var jsLib: String = ""
     var loginUrl: String = ""
+    var loginUi: String = ""
+    var loginCheckJs: String = ""
+    var coverDecodeJs: String = ""
+    var concurrentRate: String = ""
+    var injectJs: String = ""
+    var preloadJs: String = ""
+    var shouldOverrideUrlLoading: String = ""
+    var contentWhitelist: String = ""
+    var contentBlacklist: String = ""
+    var style: String = ""
+    var startHtml: String = ""
+    var startStyle: String = ""
+    var startJs: String = ""
     var type: Int = 0
     var ruleArticles: String = ""
     var ruleNextPage: String = ""
@@ -724,7 +757,7 @@ struct RssSource: Identifiable, Codable, Equatable {
     var ruleContent: String = ""
 
     enum CodingKeys: String, CodingKey {
-        case id, sourceName, sourceUrl, sourceIcon, sourceGroup, sourceComment, enabled, articleStyle, customOrder, enableJs, enabledCookieJar, loadWithBaseUrl, singleUrl, lastUpdateTime, sortUrl, header, jsLib, loginUrl, type, ruleArticles, ruleNextPage, ruleTitle, rulePubDate, ruleDescription, ruleImage, ruleLink, ruleContent
+        case loginUi, loginCheckJs, coverDecodeJs, concurrentRate, injectJs, preloadJs, shouldOverrideUrlLoading, contentWhitelist, contentBlacklist, style, startHtml, startStyle, startJs, id, sourceName, sourceUrl, sourceIcon, sourceGroup, sourceComment, enabled, articleStyle, customOrder, enableJs, enabledCookieJar, loadWithBaseUrl, singleUrl, lastUpdateTime, sortUrl, header, jsLib, loginUrl, type, ruleArticles, ruleNextPage, ruleTitle, rulePubDate, ruleDescription, ruleImage, ruleLink, ruleContent
     }
     init() {}
     init(from decoder: Decoder) throws {
@@ -745,6 +778,19 @@ struct RssSource: Identifiable, Codable, Equatable {
         if header.isEmpty, let map = try? c.decode([String: String].self, forKey: .header),
            let data = try? JSONSerialization.data(withJSONObject: map), let text = String(data: data, encoding: .utf8) { header = text }
         jsLib = c.tolerantString(.jsLib); loginUrl = c.tolerantString(.loginUrl); type = c.tolerantInt(.type)
+        loginUi = c.tolerantString(.loginUi)
+        loginCheckJs = c.tolerantString(.loginCheckJs)
+        coverDecodeJs = c.tolerantString(.coverDecodeJs)
+        concurrentRate = c.tolerantString(.concurrentRate)
+        injectJs = c.tolerantString(.injectJs)
+        preloadJs = c.tolerantString(.preloadJs)
+        shouldOverrideUrlLoading = c.tolerantString(.shouldOverrideUrlLoading)
+        contentWhitelist = c.tolerantString(.contentWhitelist)
+        contentBlacklist = c.tolerantString(.contentBlacklist)
+        style = c.tolerantString(.style)
+        startHtml = c.tolerantString(.startHtml)
+        startStyle = c.tolerantString(.startStyle)
+        startJs = c.tolerantString(.startJs)
         ruleArticles = c.tolerantString(.ruleArticles); ruleNextPage = c.tolerantString(.ruleNextPage)
         ruleTitle = c.tolerantString(.ruleTitle); rulePubDate = c.tolerantString(.rulePubDate)
         ruleDescription = c.tolerantString(.ruleDescription); ruleImage = c.tolerantString(.ruleImage)
@@ -752,6 +798,19 @@ struct RssSource: Identifiable, Codable, Equatable {
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(loginUi, forKey: .loginUi)
+        try c.encode(loginCheckJs, forKey: .loginCheckJs)
+        try c.encode(coverDecodeJs, forKey: .coverDecodeJs)
+        try c.encode(concurrentRate, forKey: .concurrentRate)
+        try c.encode(injectJs, forKey: .injectJs)
+        try c.encode(preloadJs, forKey: .preloadJs)
+        try c.encode(shouldOverrideUrlLoading, forKey: .shouldOverrideUrlLoading)
+        try c.encode(contentWhitelist, forKey: .contentWhitelist)
+        try c.encode(contentBlacklist, forKey: .contentBlacklist)
+        try c.encode(style, forKey: .style)
+        try c.encode(startHtml, forKey: .startHtml)
+        try c.encode(startStyle, forKey: .startStyle)
+        try c.encode(startJs, forKey: .startJs)
         try c.encode(id, forKey: .id); try c.encode(sourceName, forKey: .sourceName); try c.encode(sourceUrl, forKey: .sourceUrl)
         try c.encode(sourceIcon, forKey: .sourceIcon); try c.encode(sourceGroup, forKey: .sourceGroup); try c.encode(sourceComment, forKey: .sourceComment)
         try c.encode(enabled, forKey: .enabled); try c.encode(articleStyle, forKey: .articleStyle); try c.encode(customOrder, forKey: .customOrder)
