@@ -517,7 +517,7 @@ struct FeedHTMLView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration(); config.allowsInlineMediaPlayback = true
         config.defaultWebpagePreferences.allowsContentJavaScript = source?.enableJs ?? true
-        if source?.enabledCookieJar == false { config.websiteDataStore = .nonPersistent() }
+        config.websiteDataStore = .nonPersistent()
         if let source, source.enableJs, !source.preloadJs.isEmpty {
             let bridge = RssWebBridge(source: source, onAction: onAction ?? { _ in })
             bridge.install(config); context.coordinator.bridge = bridge
@@ -548,6 +548,14 @@ struct FeedHTMLView: UIViewRepresentable {
         context.coordinator.task = Task { @MainActor [weak view] in
             guard let view else { return }
             do {
+                let request: URLRequest
+                if let source {
+                    request = try await source.ruleSource.withRules {
+                        try SourceHTTP.request(baseURL, base: source.sourceUrl, headers: LegadoJSCtx.headers)
+                    }
+                } else { request = URLRequest(url: URL(string: baseURL) ?? URL(string: "about:blank")!) }
+                try Task.checkCancellation()
+                try SourceWebDataStore.configure(view.configuration.websiteDataStore, request: request)
                 if source?.enabledCookieJar != false {
                     for cookie in HTTPCookieStorage.shared.cookies ?? [] { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                 }

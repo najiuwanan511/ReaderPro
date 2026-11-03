@@ -107,6 +107,7 @@ struct EpisodeWebPlayer: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(context.coordinator, name: "readerVideo")
@@ -126,6 +127,12 @@ struct EpisodeWebPlayer: UIViewRepresentable {
         web.uiDelegate = context.coordinator
         web.isOpaque = false; web.backgroundColor = .black
         Task { @MainActor in
+            let request: URLRequest
+            switch resource {
+            case .native(let original), .web(let original), .html(_, let original), .dash(_, let original): request = original
+            }
+            do { try SourceWebDataStore.configure(config.websiteDataStore, request: request) }
+            catch { onStatus(sourceErrorMessage(error)); return }
             for cookie in HTTPCookieStorage.shared.cookies ?? [] { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }
             guard !context.coordinator.cancelled else { return }
             switch resource {
@@ -174,6 +181,13 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             case .native(let original), .web(let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
             case .html(_, let original), .dash(_, let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
             }
+            // AVPlayer does not inherit this WebKit store's proxy. Keep the
+            // HTML media element playing through its configured transport.
+            let original: URLRequest
+            switch parent.resource {
+            case .native(let value), .web(let value), .html(_, let value), .dash(_, let value): original = value
+            }
+            guard (try? SourceProxy.configuration(for: original)) == nil else { return }
             handedOff = true
             Task { @MainActor in
                 if let web = message.webView {

@@ -37,6 +37,7 @@ targets:
         READERPRO_GIT_SHA: development
         IPHONEOS_DEPLOYMENT_TARGET: "17.0"
         SWIFT_VERSION: "5.0"
+        SWIFT_OBJC_BRIDGING_HEADER: ReaderPro/ReaderPro-Bridging-Header.h
         TARGETED_DEVICE_FAMILY: "1,2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_CFBundleDisplayName: "阅读Pro"

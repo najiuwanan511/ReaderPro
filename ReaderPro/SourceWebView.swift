@@ -22,13 +22,8 @@ import UIKit
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0,
                      resourceRegex: String? = nil, navigationRegex: String? = nil, cacheFirst: Bool = false) async throws -> SourcePage {
-        // The iOS 17 Swift-only WebKit proxy overlay can link against
-        // libswiftWebKit, which is absent on supported iOS simulator/runtime
-        // combinations. Never silently bypass a configured source proxy or
-        // make the whole app fail to launch; report this specific limitation.
-        if try SourceProxy.configuration(for: request) != nil {
-            throw SourceFailure(stage: "网页脚本", message: "此书源使用代理，网页渲染暂不支持该代理，请关闭网页渲染或更换书源")
-        }
+        let store = try SourceWebDataStore.make(request: request,
+            ephemeral: SourceTLS.allowsInvalidCertificates || !(LegadoJSCtx.ruleSource?.enabledCookieJar ?? true))
         // Each WKWebView can launch a separate WebKit process. Keeping only
         // two active reduces peak memory when many book sources are searched.
         try await SourceRateLimiter.shared.wait()
@@ -45,7 +40,7 @@ import UIKit
                 active[loader.id] = loader
                 loader.continuation = continuation; loader.script = script; loader.delay = delay
                 let config = WKWebViewConfiguration()
-                config.websiteDataStore = loader.allowsInvalidCertificates || !loader.cookiesEnabled ? .nonPersistent() : .default()
+                config.websiteDataStore = store
                 if loader.resourcePattern != nil {
                     config.userContentController.add(loader, name: "readerResource")
                     config.userContentController.addUserScript(WKUserScript(source: resourceObserver, injectionTime: .atDocumentStart, forMainFrameOnly: false))

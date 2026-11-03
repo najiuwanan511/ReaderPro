@@ -196,7 +196,7 @@ struct SourceLoginWebPage: UIViewRepresentable {
     @Binding var status: String
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> WKWebView {
-        let config = WKWebViewConfiguration(); config.websiteDataStore = .default()
+        let config = WKWebViewConfiguration(); config.websiteDataStore = .nonPersistent()
         if let script = page.script { config.userContentController.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentEnd, forMainFrameOnly: false)) }
         let web = WKWebView(frame: .zero, configuration: config)
         web.accessibilityIdentifier = "sourceLoginWebView"; web.navigationDelegate = context.coordinator; web.uiDelegate = context.coordinator
@@ -223,8 +223,9 @@ struct SourceLoginWebPage: UIViewRepresentable {
                     let request = try await Task.detached {
                         try await source.withRules { try SourceHTTP.request(page.url, base: source.bookSourceUrl, headers: source.requestHeaders) }
                     }.value
-                    if try SourceProxy.configuration(for: request) != nil { throw SourceFailure(stage: "书源登录", message: "网页登录暂不支持此书源代理配置") }
-                    for cookie in HTTPCookieStorage.shared.cookies ?? [] { await web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+                    try Task.checkCancellation()
+                    try SourceWebDataStore.configure(web.configuration.websiteDataStore, request: request)
+                    for cookie in source.enabledCookieJar ? (HTTPCookieStorage.shared.cookies ?? []) : [] { await web.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                     try Task.checkCancellation()
                     web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
                     if let html = page.html { web.loadHTMLString(html, baseURL: request.url) } else { web.load(request) }
@@ -232,6 +233,7 @@ struct SourceLoginWebPage: UIViewRepresentable {
             }
         }
         func cookiesDidChange(in cookieStore: WKHTTPCookieStore) {
+            guard parent.source.enabledCookieJar else { return }
             Task { for cookie in await cookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) } }
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

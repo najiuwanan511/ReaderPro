@@ -359,17 +359,28 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         }
     }
 
-    @MainActor func testWebViewRejectsProxyWithoutFallingBackDirectly() async throws {
+    @MainActor func testWebViewUsesHTTPAndSOCKSProxyWithoutChangingOtherSources() async throws {
         let target = "http://readerproxy.invalid/source-proxy-test"
         let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:8765"])
-        do {
-            _ = try await SourceWebLoader.load(request, timeout: 5)
-            XCTFail("WebView must never silently bypass an unsupported source proxy")
-        } catch {
-            XCTAssertTrue(sourceErrorMessage(error).contains("网页渲染暂不支持该代理"), sourceErrorMessage(error))
-        }
+        let page = try await SourceWebLoader.load(request, script: "document.body.innerText", timeout: 15)
+        XCTAssertEqual(page.text.trimmingCharacters(in: .whitespacesAndNewlines), "proxy-routed:readerproxy.invalid")
+        let socks = try SourceHTTP.request("http://192.0.2.1/source-proxy-test", base: target,
+            headers: ["proxy": "socks5://127.0.0.1:8769@fixture-user@fixture-pass"])
+        let socksPage = try await SourceWebLoader.load(socks, script: "document.body.innerText", timeout: 15)
+        XCTAssertEqual(socksPage.text.trimmingCharacters(in: .whitespacesAndNewlines), "socks5-routed")
         let direct = try SourceHTTP.request("http://127.0.0.1:8765/web-script", base: "http://127.0.0.1:8765")
         let directPage = try await SourceWebLoader.load(direct, timeout: 15, delay: 0.6)
         XCTAssertTrue(directPage.text.contains("网页脚本正文"), directPage.text)
+    }
+
+    @MainActor func testWebViewFailedProxyCannotFallBackToReachableDestination() async throws {
+        let target = "http://127.0.0.1:8765/web-script"
+        let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:1"])
+        do {
+            _ = try await SourceWebLoader.load(request, timeout: 5)
+            XCTFail("WebView bypassed the failed proxy and contacted the destination directly")
+        } catch {
+            XCTAssertFalse(error is CancellationError)
+        }
     }
 }

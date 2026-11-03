@@ -16,7 +16,8 @@ import WebKit
         while let presented = presenter.presentedViewController { presenter = presented }
         active = true
         defer { active = false }
-        let session = VerificationSession(request: request, html: html, source: source, image: image)
+        let store = try SourceWebDataStore.make(request: request, ephemeral: !(source?.enabledCookieJar ?? true))
+        let session = VerificationSession(request: request, html: html, source: source, image: image, store: store)
         let controller = UIHostingController(rootView: VerificationView(session: session, title: title))
         // Keep the requesting screen in the view hierarchy. A .fullScreen
         // presentation calls its onDisappear handlers, which cancel search,
@@ -43,6 +44,7 @@ import WebKit
     let html: String?
     let source: LegadoSource?
     let image: Bool
+    let store: WKWebsiteDataStore
     @Published var status = "请完成网页验证，再点击「验证完成」"
     @Published var code = ""
     @Published var imageData: Data?
@@ -50,8 +52,8 @@ import WebKit
     var continuation: CheckedContinuation<SourcePage, Error>?
     var timer: Task<Void, Never>?
     var dismiss: (() -> Void)?
-    init(request: URLRequest, html: String?, source: LegadoSource?, image: Bool) {
-        self.request = request; self.html = html; self.source = source; self.image = image
+    init(request: URLRequest, html: String?, source: LegadoSource?, image: Bool, store: WKWebsiteDataStore) {
+        self.request = request; self.html = html; self.source = source; self.image = image; self.store = store
     }
     func complete() {
         if image {
@@ -62,7 +64,9 @@ import WebKit
         Task {
             do {
                 let html = try await web.evaluateJavaScript("document.documentElement.outerHTML") as? String ?? ""
-                for cookie in await web.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+                if source?.enabledCookieJar ?? true {
+                    for cookie in await web.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+                }
                 finish(.success(SourcePage(text: html, url: web.url?.absoluteString ?? request.url?.absoluteString ?? "")))
             } catch { status = sourceErrorMessage(error) }
         }
@@ -112,12 +116,12 @@ private struct VerificationWebPage: UIViewRepresentable {
     let session: VerificationSession
     func makeCoordinator() -> Coordinator { Coordinator(session) }
     func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .default()
+        let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = session.store
         let web = WKWebView(frame: .zero, configuration: configuration)
         session.web = web; web.navigationDelegate = context.coordinator
         web.customUserAgent = session.request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
         Task {
-            for cookie in HTTPCookieStorage.shared.cookies ?? [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+            for cookie in (session.source?.enabledCookieJar ?? true) ? (HTTPCookieStorage.shared.cookies ?? []) : [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
             guard session.continuation != nil else { return }
             if let html = session.html, !html.isEmpty { web.loadHTMLString(html, baseURL: session.request.url) }
             else { web.load(session.request) }
@@ -130,6 +134,7 @@ private struct VerificationWebPage: UIViewRepresentable {
         let session: VerificationSession
         init(_ session: VerificationSession) { self.session = session }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard session.source?.enabledCookieJar ?? true else { return }
             Task { for cookie in await webView.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) } }
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { session.status = sourceErrorMessage(error) }
@@ -143,7 +148,6 @@ private struct VerificationWebPage: UIViewRepresentable {
 extension SourceJSBridge {
     static func verify(_ request: URLRequest, title: String, html: String?, image: Bool = false) throws -> SourcePage {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "网页验证", message: "验证脚本必须在后台任务执行") }
-        if try SourceProxy.configuration(for: request) != nil { throw SourceFailure(stage: "网页验证", message: "网页登录暂不支持书源代理配置") }
         let timeout = max(0.1, min(180, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 180))
         let box = WebBox(), source = LegadoJSCtx.ruleSource
         let task = Task { @MainActor in
