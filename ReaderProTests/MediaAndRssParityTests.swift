@@ -2,6 +2,7 @@ import XCTest
 import WebKit
 import AVFoundation
 import MediaPlayer
+import UIKit
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
@@ -131,9 +132,16 @@ final class MediaAndRssParityTests: XCTestCase {
         var received: RssWebAction?
         let bridge = RssWebBridge(source: source) { action in received = action; finished.fulfill() }
         let configuration = WKWebViewConfiguration(); bridge.install(configuration)
-        let web = WKWebView(frame: .zero, configuration: configuration)
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 844), configuration: configuration)
+        // Exercise a live page, as the production RSS screen does. WebKit
+        // can suspend reply promises for a zero-sized, unattached web view.
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = try XCTUnwrap(scenes.flatMap(\.windows).first(where: \.isKeyWindow))
+        web.isUserInteractionEnabled = false; web.accessibilityElementsHidden = true
+        window.addSubview(web)
         defer {
-            bridge.cancel(); web.stopLoading(); configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+            bridge.cancel(); web.stopLoading(); web.removeFromSuperview()
+            configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
         }
         let html = #"""
         <html><body><script>
