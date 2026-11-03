@@ -8,6 +8,76 @@ private actor SpeechPrefetchTestState {
 }
 
 final class RuleManagementParityTests: XCTestCase {
+    func testLegadoAppLinksPreserveNestedQueryAndRecognizeLegacySchemes() throws {
+        let source = "https://rules.test/list?group=甲&token=a+b%25#requestWithoutUA"
+        var components = URLComponents(string: "legado://import/bookSource")!
+        components.queryItems = [URLQueryItem(name: "src", value: source)]
+        let parsed = try LegadoAppLink.parse(XCTUnwrap(components.url))
+        XCTAssertEqual(parsed.kind, .bookSource); XCTAssertEqual(parsed.source, source)
+        for (url, kind) in [
+            ("yuedu://rsssource/importonline?src=https%3A%2F%2Ftest.invalid%2Frss", LegadoAppLink.Kind.rssSource),
+            ("legado://replace/importonline?src=https%3A%2F%2Ftest.invalid%2Frules", .replaceRule),
+            ("legado://import/httpTTS?src=inline", .httpTTS),
+            ("legado://import/addToBookshelf?src=https%3A%2F%2Fbook.test%2F1", .addToBookshelf)
+        ] { XCTAssertEqual(try LegadoAppLink.parse(XCTUnwrap(URL(string: url))).kind, kind) }
+        XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource")!))
+        XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource?src=%20")!))
+        XCTAssertFalse(LegadoAppLink.accepts(URL(string: "https://import/bookSource?src=a")!))
+        XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/readConfig?src=a")!))
+    }
+
+    func testAppLinkImportPreviewKeepsRequestedSourceType() throws {
+        let raw = #"[{"bookSourceName":"书源","bookSourceUrl":"https://book.test"},{"sourceName":"订阅","sourceUrl":"https://rss.test","ruleArticles":".item"}]"#
+        XCTAssertEqual(try LegadoLinkDocument.decode(Data(raw.utf8), kind: .bookSource).names, ["书源"])
+        XCTAssertEqual(try LegadoLinkDocument.decode(Data(raw.utf8), kind: .rssSource).names, ["订阅"])
+        XCTAssertEqual(try LegadoLinkDocument.decode(Data(raw.utf8), kind: .automatic).names, ["书源", "订阅"])
+        let bookOnly = #"{"bookSourceName":"书源","bookSourceUrl":"https://book.test"}"#
+        XCTAssertThrowsError(try LegadoLinkDocument.decode(Data(bookOnly.utf8), kind: .rssSource))
+    }
+
+    func testAppLinkAutomaticDetectionValidatesRulePayloads() throws {
+        for (raw, name) in [
+            (#"{"name":"字典","urlRule":"https://dict.test/{{key}}"}"#, "字典"),
+            (#"{"id":42,"name":"目录","rule":"^第.*章"}"#, "目录"),
+            (#"{"id":43,"name":"朗读","url":"https://tts.test/{{speakText}}"}"#, "朗读"),
+            (#"{"id":44,"name":"替换","pattern":"旧字","replacement":"新字"}"#, "替换")
+        ] { XCTAssertEqual(try LegadoLinkDocument.decode(Data(raw.utf8), kind: .automatic).names, [name]) }
+        XCTAssertThrowsError(try LegadoLinkDocument.decode(Data("[]".utf8), kind: .textTocRule))
+        XCTAssertThrowsError(try LegadoLinkDocument.decode(Data(#"{"name":"错误","rule":"["}"#.utf8), kind: .textTocRule))
+        XCTAssertThrowsError(try LegadoLinkDocument.decode(Data(#"{"name":"错误"}"#.utf8), kind: .dictRule))
+    }
+
+    @MainActor func testAppLinkPreviewDoesNotSaveUntilAppliedAndMergesRuleIdentity() async throws {
+        let suite = "ReaderPro.AppLinkTest." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!, library = ReaderRuleLibrary(defaults: defaults)
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let raw = #"[{"id":7,"name":"初始","rule":"^第.*章"}]"#
+        let preview = try LegadoLinkDocument.decode(Data(raw.utf8), kind: .textTocRule)
+        XCTAssertTrue(library.txtRules.isEmpty)
+        let store = BookStore()
+        _ = try await preview.apply(store: store, library: library)
+        _ = try await LegadoLinkDocument.decode(Data(#"{"id":7,"name":"更新","rule":"^卷"}"#.utf8), kind: .textTocRule).apply(store: store, library: library)
+        XCTAssertEqual(library.txtRules.count, 1); XCTAssertEqual(library.txtRules[0].name, "更新")
+        XCTAssertEqual(ReaderRuleLibrary(defaults: defaults).txtRules[0].rule, "^卷")
+    }
+
+    @MainActor func testScriptOpenURLRoutesImportWithoutStartingVerificationWebView() async throws {
+        let event = expectation(description: "App import route")
+        let observer = NotificationCenter.default.addObserver(forName: .sourceOpenAppURL, object: nil, queue: .main) { value in
+            XCTAssertEqual(value.object as? String, "legado://import/bookSource?src=https%3A%2F%2Frules.test%2Flist")
+            event.fulfill()
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+        let source = SourceTestFixtures.login()
+        try await Task.detached {
+            try await source.withRules {
+                _ = LegadoJS.run("java.openUrl('legado://import/bookSource?src=https%3A%2F%2Frules.test%2Flist')", input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+                try LegadoJSCtx.failures?.check()
+            }
+        }.value
+        await fulfillment(of: [event], timeout: 3)
+    }
+
     @MainActor func testPurchaseRefreshPreservesPositionAndInvalidatesOnlyPurchasedText() async throws {
         let store = BookStore(), oldBooks = store.books, oldSources = store.sources
         defer { store.books = oldBooks; store.sources = oldSources; store.save() }

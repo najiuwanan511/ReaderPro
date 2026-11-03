@@ -32,6 +32,7 @@ struct ContentView: View {
         .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
         .task(id: scenePhase) { if scenePhase == .active { await RuleSubscriptionStore.shared.updateDue(store: store) } }
+        .modifier(SourceAppLinkReceiver(store: store))
     }
     private func validateSelectedTab() {
         if (selectedTab == 1 && !showDiscovery) || (selectedTab == 2 && !showRss) || !(0...3).contains(selectedTab) { selectedTab = 0 }

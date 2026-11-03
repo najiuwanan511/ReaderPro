@@ -1,6 +1,26 @@
 import XCTest
 
 final class SourceImportLoginUITests: XCTestCase {
+    func testDiscoveryScriptAppLinkPreviewsThenPersistsImportedSource() {
+        continueAfterFailure = false; executionTimeAllowance = 180
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--app-link-ui-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["source-explore-http://127.0.0.1:8765"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10)); source.tap()
+        let action = app.buttons["一键导入"]
+        XCTAssertTrue(action.waitForExistence(timeout: 10)); action.tap()
+        let confirm = app.buttons["appLinkConfirmImport"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts["一键导入测试源"].exists)
+        confirm.tap()
+        XCTAssertTrue(app.staticTexts["appLinkImportResult"].waitForExistence(timeout: 10))
+        let attachment = XCTAttachment(screenshot: app.screenshot()); attachment.name = "发现脚本一键导入成功"; attachment.lifetime = .keepAlways; add(attachment)
+        app.buttons["关闭"].tap(); app.tabBars.buttons["管理"].tap()
+        XCTAssertTrue(app.staticTexts["一键导入测试源"].waitForExistence(timeout: 10))
+        XCTAssertEqual(app.state, .runningForeground)
+    }
+
     func testSearchRuleWaitsForVisibleVerificationAndResumesUsingCookies() {
         continueAfterFailure = false; executionTimeAllowance = 300
         let app = XCUIApplication()

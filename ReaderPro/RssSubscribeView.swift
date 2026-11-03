@@ -500,6 +500,7 @@ struct FeedArticleView: View {
             else if isSourceURL(action.scope) { webAction = RssWebAction(command: "openUrl", value: action.scope) }
             else { webMessage = "当前网页打开操作缺少有效网址：" + action.value }
         case "searchBook", "addBook": webAction = action
+        case "openUrl": SourceAppURL.open(action.value, base: article.link)
         default:
             let address = resolveUrl(action.value, base: article.link)
             if isSourceURL(address) { webAction = RssWebAction(command: action.command, value: address) }

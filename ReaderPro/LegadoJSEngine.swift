@@ -316,7 +316,13 @@ final class LegadoJS {
             } catch { JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current()) }
         }
         java.setObject(browse, forKeyedSubscript: "startBrowser" as NSString)
-        java.setObject(browse, forKeyedSubscript: "openUrl" as NSString)
+        let openAppURL: @convention(block) (String, JSValue) -> Void = { address, _ in
+            guard address.utf8.count < 64 * 1024 else {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: "openUrl 链接过长", in: JSContext.current()); return
+            }
+            SourceAppURL.open(address, base: baseUrl)
+        }
+        java.setObject(openAppURL, forKeyedSubscript: "openUrl" as NSString)
         let select: @convention(block) (String, String) -> String = { text, selector in encodedStrings(LegadoDOM.css(text, selector).map(\.full)) }
         let attribute: @convention(block) (String, String) -> String = { text, name in
             LegadoDOM.css(text, "body > *").first.map { htmlAttrs($0.open)[name.lowercased()] ?? "" } ?? ""
@@ -573,7 +579,6 @@ final class LegadoJS {
             java.setObject(toast, forKeyedSubscript: "longToast" as NSString)
             java.setObject(copy, forKeyedSubscript: "copyText" as NSString)
             java.setObject(browser, forKeyedSubscript: "startBrowser" as NSString)
-            java.setObject(browser, forKeyedSubscript: "openUrl" as NSString)
             java.setObject(showBrowser, forKeyedSubscript: "showBrowser" as NSString)
         }
         if structuredResult is [String] {

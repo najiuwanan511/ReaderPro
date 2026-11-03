@@ -203,7 +203,7 @@ struct SourceFixtureRoot: View {
             NavigationStack { SourceManagementView(store: store) }.tabItem { Label("管理", systemImage: "list.bullet") }
             DiscoveryView(store: store).tabItem { Label("发现", systemImage: "safari") }
             NavigationStack { SourceView(store: store) }.tabItem { Label("搜索", systemImage: "magnifyingglass") }
-        }.task {
+        }.modifier(SourceAppLinkReceiver(store: store)).task {
             guard !loaded else { return }; loaded = true
             var source = SourceTestFixtures.html(); source.id = "fixture-html"
             if ProcessInfo.processInfo.arguments.contains("--source-login-fixture") { source = SourceTestFixtures.login() }
@@ -223,6 +223,11 @@ struct SourceFixtureRoot: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--discovery-pages-fixture") {
                 source.exploreUrl = "分页分类::/discovery/pages?page={{page}}"
+            }
+            if ProcessInfo.processInfo.arguments.contains("--app-link-ui-fixture") {
+                var link = URLComponents(string: "legado://import/bookSource")!
+                link.queryItems = [URLQueryItem(name: "src", value: #"{"bookSourceName":"一键导入测试源","bookSourceUrl":"https://app-link.test","exploreUrl":"分类::/list"}"#)]
+                source.exploreUrl = "[{\"title\":\"一键导入\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
             }
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {
                 source.exploreUrl = "重复分类::/library/categories/fiction\n重复分类::/library/categories/fiction\n重复分类::/library/categories/alternate"
