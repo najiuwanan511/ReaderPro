@@ -20,6 +20,7 @@ enum SourceVideoResource {
     case native(URLRequest)
     case web(URLRequest)
     case html(String, URLRequest)
+    case dash(String?, URLRequest)
 
     static func isMediaURL(_ raw: String) -> Bool {
         let path = URLComponents(string: SourceHTTP.options(raw).url)?.path.lowercased() ?? ""
@@ -37,7 +38,7 @@ enum SourceVideoResource {
         }
         if text.hasPrefix("<") {
             if text.range(of: "<MPD", options: .caseInsensitive) != nil {
-                throw SourceFailure(stage: "视频格式", message: "此线路返回 DASH/MPD，系统播放器不支持，请选择 m3u8 或 MP4 线路", url: base)
+                return .dash(text, try SourceHTTP.request(base, base: base, headers: headers))
             }
             // Do not run text cleanup on media HTML or signed URLs.
             let addresses = cssExtractAll(text, "video@src") + cssExtractAll(text, "video source@src")
@@ -65,7 +66,7 @@ enum SourceVideoResource {
             return .web(request)
         }
         if path.hasSuffix(".mpd") {
-            throw SourceFailure(stage: "视频格式", message: "此线路返回 DASH/MPD，系统播放器不支持，请选择 m3u8 或 MP4 线路", url: request.url?.absoluteString ?? "")
+            return .dash(nil, request)
         }
         return .native(request)
     }
@@ -124,12 +125,14 @@ struct SourceVideoDetails {
 extension LegadoSource {
     func fetchChapterVideoDetails(_ chapter: BookChapter) async throws -> SourceVideoDetails {
         let capture = SourceMediaCapture()
-        let resource = try await LegadoJSCtx.$mediaCapture.withValue(capture) { try await fetchChapterVideo(chapter) }
+        let resource = try await LegadoJSCtx.$mediaCapture.withValue(capture) {
+            try await withChapterRules(chapter) { try await fetchChapterVideo(chapter).resolvedForPlayback() }
+        }
         return SourceVideoDetails(resource: resource, subContent: capture.subContent.isEmpty ? chapter.subContent : capture.subContent)
     }
 }
 extension SourceVideoResource {
     var request: URLRequest {
-        switch self { case .native(let request), .web(let request), .html(_, let request): return request }
+        switch self { case .native(let request), .web(let request), .html(_, let request), .dash(_, let request): return request }
     }
 }

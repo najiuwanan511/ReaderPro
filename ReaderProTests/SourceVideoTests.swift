@@ -61,9 +61,11 @@ final class SourceVideoTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, SourceTestFixtures.base + "/video/episode2.m3u8?sign=a%2Bb&part=2")
     }
 
-    func testPromptTextAndUnsupportedManifestProduceExplicitErrors() {
+    func testPromptTextAndUnsupportedManifestProduceExplicitErrors() async throws {
         XCTAssertThrowsError(try SourceVideoResource.make("刷新正文播放", base: SourceTestFixtures.base, headers: [:]))
-        XCTAssertThrowsError(try SourceVideoResource.make("<MPD><Period/></MPD>", base: SourceTestFixtures.base, headers: [:]))
+        let resource = try SourceVideoResource.make("<MPD><Period/></MPD>", base: SourceTestFixtures.base, headers: [:])
+        do { _ = try await resource.resolvedForPlayback(); XCTFail("Empty DASH must fail explicitly") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("DASH")) }
     }
 
     func testVideoURLOptionsOverrideSourceHeadersWithoutDamagingSignature() throws {

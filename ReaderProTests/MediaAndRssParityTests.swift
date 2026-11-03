@@ -4,6 +4,40 @@ import AVFoundation
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
+    @MainActor func testDashVideoActuallyPlaysSeparatedAudioAndVideoSegmentsWithHeaders() async throws {
+        let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/video/dash/manifest.mpd")!)
+        var headers = request; headers.setValue("ReaderPro", forHTTPHeaderField: "X-Video")
+        let resource = try await SourceVideoResource.dash(nil, headers).resolvedForPlayback()
+        guard case .native(let playable) = resource else { return XCTFail("DASH did not resolve to native playback") }
+        let response = try await URLSession.shared.data(from: XCTUnwrap(playable.url))
+        let master = String(decoding: response.0, as: UTF8.self)
+        XCTAssertTrue(master.contains("TYPE=AUDIO")); XCTAssertTrue(master.contains("avc1.64000c,mp4a.40.2"))
+        let player = AVPlayer(playerItem: AVPlayerItem(asset: AVURLAsset(url: try XCTUnwrap(playable.url), options: ["AVURLAssetHTTPHeaderFieldsKey": playable.allHTTPHeaderFields ?? [:]])))
+        defer { player.pause(); player.replaceCurrentItem(with: nil) }
+        player.play()
+        let end = Date().addingTimeInterval(20)
+        while player.currentTime().seconds < 0.4 && Date() < end && player.currentItem?.status != .failed {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertNil(player.currentItem?.error)
+        XCTAssertGreaterThan(player.currentTime().seconds, 0.3, player.currentItem?.error?.localizedDescription ?? "DASH never advanced")
+    }
+
+    func testDashTemplateInheritanceTimeRepeatsAndUnsupportedEncryption() throws {
+        let xml = #"""
+        <MPD type="static" mediaPresentationDuration="PT6S"><BaseURL>https://cdn.test/root/</BaseURL><Period><AdaptationSet mimeType="video/mp4" codecs="avc1.64001f">
+        <SegmentTemplate timescale="10" initialization="init-$RepresentationID$.mp4" media="$Time$-$Number%03d$.m4s" startNumber="7"><SegmentTimeline><S t="0" d="20" r="-1"/></SegmentTimeline></SegmentTemplate>
+        <Representation id="HD" bandwidth="1000"><BaseURL>video/</BaseURL></Representation></AdaptationSet></Period></MPD>
+        """#
+        let manifest = try DashManifest(data: Data(xml.utf8), url: URL(string: "https://source.test/manifest.mpd")!)
+        let playlist = try XCTUnwrap(manifest.playlists["track0.m3u8"])
+        XCTAssertTrue(playlist.contains("https://cdn.test/root/video/init-HD.mp4"))
+        for part in ["0-007.m4s", "20-008.m4s", "40-009.m4s"] { XCTAssertTrue(playlist.contains(part)) }
+        XCTAssertEqual(playlist.components(separatedBy: "#EXTINF:").count - 1, 3)
+        XCTAssertThrowsError(try DashManifest(data: Data(xml.replacingOccurrences(of: "<Representation", with: "<ContentProtection schemeIdUri='urn:mpeg:dash:mp4protection:2011'/><Representation").utf8), url: URL(string: "https://source.test/a.mpd")!))
+        XCTAssertThrowsError(try DashManifest(data: Data(xml.replacingOccurrences(of: "type=\"static\"", with: "type=\"dynamic\"").utf8), url: URL(string: "https://source.test/a.mpd")!))
+    }
+
     @MainActor func testMediaInterruptionsPauseAndCannotResumeAReplacementPlayer() {
         let controls = MediaPlaybackControls.shared, first = UUID(), second = UUID()
         var pauses = 0, plays = 0

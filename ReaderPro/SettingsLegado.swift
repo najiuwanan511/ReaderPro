@@ -3,7 +3,7 @@ import UniformTypeIdentifiers
 
 // MARK: - 「我的」页（对标开源阅读 pref_main.xml 的分组结构）
 // 顶部：书源管理 / TXT目录规则 / 替换净化 / 字典规则 / 主题模式 / Web服务
-// 「设置」组：备份与恢复 / 主题设置 / 其他设置
+// 「设置」组：主题设置 / 其他设置
 // 「其他」组：书签 / 阅读记录 / 文件管理 / 关于 / 退出
 
 struct SettingsView: View {
@@ -47,9 +47,6 @@ struct SettingsView: View {
 
                 // 「设置」组
                 Section {
-                    NavigationLink { BackupSettingsView(store: store) } label: {
-                        SettingRow(icon: "arrow.clockwise.icloud", iconTint: .blue, title: "备份与恢复", summary: "本地备份 + WebDAV 云同步")
-                    }
                     NavigationLink { ThemeSettingsView(store: store) } label: {
                         SettingRow(icon: "paintbrush", iconTint: .purple, title: "主题设置", summary: "配色、阅读主题")
                     }
@@ -579,13 +576,29 @@ struct AboutView: View {
                 SettingRow(icon: "checkmark.seal", iconTint: .green, title: "本地阅读", summary: "TXT / EPUB / MOBI / AZW3 / DOCX / FB2 / PDF / CBZ")
                 SettingRow(icon: "magnifyingglass", iconTint: .blue, title: "多源搜索", summary: "Legado 书源 + JS 书源引擎")
                 SettingRow(icon: "headphones", iconTint: .purple, title: "音频 / 视频", summary: "带歌词音频 + 弹幕视频（选集/换源）")
-                SettingRow(icon: "icloud", iconTint: .teal, title: "云备份", summary: "WebDAV 云同步")
             } header: { SettingSectionHeader(title: "功能") }
             Section {
                 Text("本项目为个人自用学习用途，不上架。书源内容版权归原作者所有。").font(.footnote).foregroundStyle(.secondary)
             } header: { SettingSectionHeader(title: "声明") }
+            Section {
+                NavigationLink("开源许可") {
+                    List {
+                        license("SWCompression", file: "SWCompression-LICENSE")
+                        license("Unrar Swift", file: "Unrar-Swift-MIT")
+                        license("UnRAR", file: "Unrar-LICENSE")
+                    }.navigationTitle("开源许可")
+                }
+            }
         }
         .navigationTitle("关于")
         .navigationBarTitleDisplayMode(.inline)
+    }
+    private func license(_ name: String, file: String) -> some View {
+        NavigationLink(name) {
+            ScrollView {
+                Text(Bundle.main.url(forResource: file, withExtension: "txt").flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? name)
+                    .font(.footnote.monospaced()).textSelection(.enabled).padding()
+            }.navigationTitle(name)
+        }
     }
 }

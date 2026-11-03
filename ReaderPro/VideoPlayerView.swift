@@ -132,9 +132,10 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             case .native(let request), .web(let request):
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
                 web.load(request)
-            case .html(let html, let request):
+            case .html(let html, let request), .dash(.some(let html), let request):
                 web.customUserAgent = request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
                 web.loadHTMLString(html, baseURL: request.url)
+            case .dash(.none, let request): web.load(request)
             }
         }
         return web
@@ -171,7 +172,7 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             var request = URLRequest(url: URL(string: raw)!)
             switch parent.resource {
             case .native(let original), .web(let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
-            case .html(_, let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
+            case .html(_, let original), .dash(_, let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
             }
             handedOff = true
             Task { @MainActor in
@@ -233,7 +234,7 @@ struct VideoPlayerView: View {
                 if let resource {
                     switch resource {
                     case .native: NativeVideoPlayer(player: model.player)
-                    case .web, .html:
+                    case .web, .html, .dash:
                         EpisodeWebPlayer(resource: resource, sourceRegex: source?.ruleContent.androidValue("sourceRegex") ?? "", onStatus: { webStatus = $0 }, onMedia: { request in
                             self.resource = .native(request); model.play(request, title: book.title, author: book.author)
                         }).id("\(episodeIndex)-\(retry)")

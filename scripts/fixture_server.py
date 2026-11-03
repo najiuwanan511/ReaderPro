@@ -292,6 +292,17 @@ class Handler(BaseHTTPRequestHandler):
             data = '<ul class="books"><li><a class="name" href="/book/1/">已登录可搜索小说</a><em>测试作者</em></li></ul>'.encode()
             self.send_response(200); self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
+        if path.startswith('/video/dash/'):
+            if self.headers.get('X-Video') != 'ReaderPro':
+                self.send_error(403, 'missing DASH source headers'); return
+            name = path.rsplit('/', 1)[-1]
+            target = Path('scripts/fixtures/dash') / name
+            if not target.is_file() or target.suffix not in ('.mpd', '.m4s'):
+                self.send_error(404); return
+            data = target.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/dash+xml' if name.endswith('.mpd') else 'video/mp4')
+            self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
         if path.startswith('/video/hls/'):
             if self.headers.get('X-Video') != 'ReaderPro' or self.headers.get('Referer') != 'http://127.0.0.1:8765/video/book':
                 self.send_error(403, 'missing HLS source headers')

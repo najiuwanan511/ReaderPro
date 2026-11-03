@@ -113,7 +113,7 @@ enum SourceValidation {
                     ok(stage, "首章音频已解析，系统播放器确认可播放")
                 } else if source.isVideo {
                     stage = "视频播放"
-                    let resource = try await withTimeout(45) { try await source.fetchChapterVideo(first) }
+                    let resource = try await withTimeout(45) { try await source.fetchChapterVideoDetails(first).resource }
                     if case .native(let request) = resource {
                         try await withTimeout(30) { try await SourceValidation.verifyMedia(request) }
                         ok(stage, "首集已解析，系统播放器确认可播放")
