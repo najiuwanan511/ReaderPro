@@ -227,6 +227,7 @@ struct BookshelfView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("导入本地书籍", systemImage: "square.and.arrow.down") { importing = true }
+                        NavigationLink("添加网址 / 书架清单") { ShelfTransferView(store: store) }
                         Button("刷新书架目录", systemImage: "arrow.clockwise") { refresh.start(store: store) }.disabled(refresh.running)
                         NavigationLink("分组管理") { ShelfGroupsView(store: store) }
                         NavigationLink("缓存管理") { CacheManagementView(store: store) }

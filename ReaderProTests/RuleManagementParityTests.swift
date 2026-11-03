@@ -3,6 +3,48 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testShelfListsAcceptAndroidNullsAndExportPortableNamesAndOnlineAddresses() throws {
+        let decoded = try ShelfTransfer.decode(Data(#"[{"name":"书名","author":null,"intro":null},{"name":""}]"#.utf8))
+        XCTAssertEqual(decoded.count, 1); XCTAssertEqual(decoded[0].author, "")
+        var local = LocalBook(title: "本地书", author: "作者", fileName: "private.txt", kind: "txt")
+        local.bookUrl = "/private/path/private.txt"
+        var web = LocalBook(title: "在线书", fileName: "a.web", kind: "web")
+        web.sourceUrl = "https://books.test"; web.bookUrl = "https://books.test/1"
+        let exported = try ShelfTransfer.decode(ShelfTransfer.encode([local, web]))
+        XCTAssertTrue(exported[0].bookUrl.isEmpty); XCTAssertEqual(exported[1].bookUrl, web.bookUrl)
+        XCTAssertEqual(exported.map(\.name), ["本地书", "在线书"])
+    }
+
+    func testBookURLMatchingUsesExactHostExplicitOriginAndFullPattern() {
+        var domain = LegadoSource(); domain.bookSourceUrl = "https://books.test"
+        var other = LegadoSource(); other.bookSourceUrl = "https://rules.test"; other.bookUrlPattern = #"https://mirror\.test/book/\d+"#
+        XCTAssertEqual(ShelfTransfer.matchingSources(for: "https://books.test/book/1", sources: [domain,other]).map(\.id), [domain.id])
+        XCTAssertTrue(ShelfTransfer.matchingSources(for: "https://books.test.evil/book/1", sources: [domain,other]).isEmpty)
+        XCTAssertEqual(ShelfTransfer.matchingSources(for: "https://mirror.test/book/1", sources: [domain,other]).map(\.id), [other.id])
+        XCTAssertTrue(ShelfTransfer.matchingSources(for: "https://mirror.test/book/1/extra", sources: [domain,other]).isEmpty)
+        XCTAssertEqual(ShelfTransfer.matchingSources(for: #"https://books.test/book/1,{"origin":"https://rules.test"}"#, sources: [domain,other]).map(\.id), [other.id])
+        other.enabled = false
+        XCTAssertTrue(ShelfTransfer.matchingSources(for: "https://mirror.test/book/1", sources: [domain,other]).isEmpty)
+    }
+
+    func testAddBookURLAndAndroidListSearchFetchActualMetadataAndDirectory() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"; source.bookSourceName = "清单样例"
+        source.searchUrl = "/parity/search?page={{page}}"
+        source.ruleSearch.bookList = "$.books[*]"; source.ruleSearch.name = "$.title"; source.ruleSearch.author = "$.author"; source.ruleSearch.bookUrl = "$.url"
+        source.ruleBookInfo.name = "$.title"; source.ruleBookInfo.author = "$.author"; source.ruleBookInfo.tocUrl = "$.toc"
+        source.ruleToc.chapterList = "$.chapters[*]"; source.ruleToc.chapterName = "$.title"; source.ruleToc.chapterUrl = "$.url"
+        let result = try await ShelfTransfer.resolveURL(source.bookSourceUrl + "/parity/book/1", sources: [source])
+        let book = try await ShelfTransfer.makeBook(source: result.0, info: result.1)
+        XCTAssertEqual(book.title, "分页小说1"); XCTAssertEqual(book.author, "作者"); XCTAssertEqual(book.chapters.count, 3)
+        XCTAssertEqual(book.bookUrl, source.bookSourceUrl + "/parity/book/1")
+        let matched = try await ShelfTransfer.preciseSearch(ShelfListEntry(name: "分页小说1", author: "作者"), sources: [source])
+        XCTAssertEqual(matched.1.url, book.bookUrl)
+        do {
+            _ = try await ShelfTransfer.preciseSearch(ShelfListEntry(name: "分页小说1", author: "另一个作者"), sources: [source])
+            XCTFail("Must not import an unrelated author's book")
+        } catch { XCTAssertTrue(sourceErrorMessage(error).contains("同名同作者")) }
+    }
+
     func testReadingStatisticsCarryShortSessionsAndSplitAtMidnight() throws {
         let suite = "ReadingStatistics." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }

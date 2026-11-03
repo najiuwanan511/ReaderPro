@@ -198,6 +198,8 @@ class Handler(BaseHTTPRequestHandler):
                 payload = [{"bookSourceName": "规则更新样例", "bookSourceUrl": "https://rule-update-fixture.test", "searchUrl": "/search?key={{key}}"}]
             elif path == '/parity/file-info':
                 payload = {"downloads": ["/parity/book.txt"]}
+            elif path.startswith('/parity/book/'):
+                payload = {"title": "分页小说" + path.rsplit('/', 1)[-1], "author": "作者", "toc": "/parity/toc"}
             elif path == '/parity/protected':
                 status, payload = 401, {"error": "login required"}
             elif path == '/parity/toc':
