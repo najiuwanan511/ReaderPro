@@ -109,12 +109,16 @@ private final class RemoteLibraryXML: NSObject, XMLParserDelegate {
 struct RemoteLibraryView: View {
     @ObservedObject var store: BookStore
     @AppStorage("remoteLibrary.address") private var address = ""
-    @State private var username = "", password = ""
+    @State private var username = ""
+    @State private var password = ""
     @State private var client: RemoteLibraryClient?
     @State private var folder: URL?
     @State private var entries: [RemoteLibraryEntry] = []
-    @State private var query = "", error = "", status = ""
-    @State private var loading = false, importing = false
+    @State private var query = ""
+    @State private var error = ""
+    @State private var status = ""
+    @State private var loading = false
+    @State private var importing = false
     @State private var selectedDelete: RemoteLibraryEntry?
     @State private var operation: Task<Void, Never>?
     @State private var operationID = UUID()
