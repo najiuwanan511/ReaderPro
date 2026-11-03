@@ -1,8 +1,34 @@
 import XCTest
 import WebKit
+import AVFoundation
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
+    @MainActor func testMediaInterruptionsPauseAndCannotResumeAReplacementPlayer() {
+        let controls = MediaPlaybackControls.shared, first = UUID(), second = UUID()
+        var pauses = 0, plays = 0
+        func activate(_ owner: UUID) {
+            controls.activate(owner: owner, title: "测试", author: "", play: { plays += 1 }, pause: { pauses += 1 },
+                              isPlaying: { true }, toggle: {}, seek: { _ in }, skip: { _ in })
+        }
+        activate(first)
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: nil,
+            userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.began.rawValue])
+        XCTAssertEqual(pauses, 1)
+        activate(second)
+        NotificationCenter.default.post(name: AVAudioSession.interruptionNotification, object: nil,
+            userInfo: [AVAudioSessionInterruptionTypeKey: AVAudioSession.InterruptionType.ended.rawValue,
+                       AVAudioSessionInterruptionOptionKey: AVAudioSession.InterruptionOptions.shouldResume.rawValue])
+        XCTAssertEqual(plays, 0, "An interruption from the previous episode must not start its replacement")
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
+        XCTAssertEqual(pauses, 2)
+        controls.release(owner: second)
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
+        XCTAssertEqual(pauses, 2)
+    }
+
     func testRssWebRequestsParseHeadersAndReturnBodyRatherThanResponseEnvelope() async throws {
         var source = RssSource(); source.sourceUrl = "http://127.0.0.1:8765"
         let headers = #"{"X-Login":"rss-bridge-token"}"#

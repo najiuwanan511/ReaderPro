@@ -86,6 +86,7 @@ final class AudioPlayerModel: ObservableObject {
         if position > 0 { p.seek(to: CMTime(seconds: position, preferredTimescale: 600)) }
         MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
             play: { [weak self] in self?.play() }, pause: { [weak self] in self?.pause() },
+            isPlaying: { [weak self] in self?.isPlaying == true },
             toggle: { [weak self] in self?.toggle() }, seek: { [weak self] in self?.seek(to: $0) },
             skip: { [weak self] delta in guard let self else { return }; self.seek(to: self.currentTime + delta) },
             next: onEnded, previous: onPrevious)

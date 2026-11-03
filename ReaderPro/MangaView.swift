@@ -113,6 +113,10 @@ struct MangaView: View {
     @AppStorage("manga.brightness") private var imageBrightness = 0.0
     @AppStorage("manga.contrast") private var imageContrast = 1.0
     @AppStorage("manga.saturation") private var imageSaturation = 1.0
+    @AppStorage("manga.filter.r") private var filterRed = 0.0
+    @AppStorage("manga.filter.g") private var filterGreen = 0.0
+    @AppStorage("manga.filter.b") private var filterBlue = 0.0
+    @AppStorage("manga.filter.a") private var filterAlpha = 0.0
     @AppStorage("manga.showFooter") private var showFooter = true
     @State private var showImageSettings = false
     @State private var showSourceAction = false
@@ -202,8 +206,27 @@ struct MangaView: View {
                         Text("饱和度"); Slider(value: $imageSaturation, in: 0...2)
                         Button("还原图片设置") { imageBrightness = 0; imageContrast = 1; imageSaturation = 1 }
                     }
+                    Section {
+                        filterSlider("红色", value: $filterRed)
+                        filterSlider("绿色", value: $filterGreen)
+                        filterSlider("蓝色", value: $filterBlue)
+                        filterSlider("透明度", value: $filterAlpha)
+                        Button("还原颜色滤镜") { filterRed = 0; filterGreen = 0; filterBlue = 0; filterAlpha = 0 }
+                    } header: { Text("颜色滤镜") } footer: { Text("0 保留原通道，255 完全滤除该通道。") }
                 }.navigationTitle("漫画设置").toolbar { Button("完成") { showImageSettings = false } }
             }
+        }
+    }
+
+    private var filterColor: Color {
+        Color(.sRGB, red: (255 - min(255, max(0, filterRed))) / 255,
+              green: (255 - min(255, max(0, filterGreen))) / 255,
+              blue: (255 - min(255, max(0, filterBlue))) / 255)
+    }
+    private func filterSlider(_ name: String, value: Binding<Double>) -> some View {
+        VStack(alignment: .leading) {
+            Text("\(name)：\(Int(value.wrappedValue))")
+            Slider(value: value, in: 0...255, step: 1)
         }
     }
 
@@ -251,6 +274,7 @@ struct MangaView: View {
                     ForEach(Array(displayImages.enumerated()), id: \.offset) { _, address in
                         MangaPageImage(isRemote: isOnline, ref: address, bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
                             .brightness(imageBrightness).contrast(imageContrast).saturation(imageSaturation)
+                            .colorMultiply(filterColor).opacity((255 - min(255, max(0, filterAlpha))) / 255)
                     }
                     if isOnline, b.chapters.readableIndex(from: chapter + 1) != nil { Button("下一章") { changeChapter(1) }.padding() }
                 }
@@ -261,6 +285,7 @@ struct MangaView: View {
                 ForEach(Array(displayImages.enumerated()), id: \.offset) { i, address in
                     MangaPageImage(isRemote: isOnline, ref: address, bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
                         .brightness(imageBrightness).contrast(imageContrast).saturation(imageSaturation)
+                        .colorMultiply(filterColor).opacity((255 - min(255, max(0, filterAlpha))) / 255)
                         .scaleEffect(zoom)
                         .gesture(MagnificationGesture().onChanged { zoom = max(1.0, min(4.0, $0)) })
                         .tag(i)

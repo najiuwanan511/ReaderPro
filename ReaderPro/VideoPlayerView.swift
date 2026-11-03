@@ -75,6 +75,7 @@ final class VideoPlayerModel: ObservableObject {
         player.replaceCurrentItem(with: item)
         MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
             play: { [weak self] in self?.player.play() }, pause: { [weak self] in self?.player.pause() },
+            isPlaying: { [weak self] in guard let self else { return false }; return self.player.rate > 0 || self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate },
             toggle: { [weak self] in guard let self else { return }; if self.player.rate > 0 { self.player.pause() } else { self.player.play() } },
             seek: { [weak self] seconds in guard seconds.isFinite, seconds >= 0 else { return }; self?.player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) },
             skip: { [weak self] seconds in guard let self else { return }; self.player.seek(to: CMTime(seconds: max(0, self.currentTime + seconds), preferredTimescale: 600)) }, next: onEnded)
