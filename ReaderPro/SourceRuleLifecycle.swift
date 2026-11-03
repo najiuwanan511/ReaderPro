@@ -23,7 +23,8 @@ extension LegadoSource {
         }
         let status = value["status"] as? Int ?? 200
         guard (200..<300).contains(status) else { throw SourceFailure(stage: stage, message: "HTTP \(status)：登录检测后请求仍未成功", url: address) }
-        return SourcePage(text: body, url: address, status: status, headers: value["headers"] as? [String: String] ?? [:])
+        let bytes = (value["bytesBase64"] as? String).flatMap { Data(base64Encoded: $0) }
+        return SourcePage(text: body, url: address, status: status, headers: value["headers"] as? [String: String] ?? [:], bytes: bytes)
     }
 
     func chapterWebPage(_ response: SourcePage) async throws -> SourcePage {

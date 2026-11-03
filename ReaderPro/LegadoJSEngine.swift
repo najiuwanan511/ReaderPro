@@ -607,7 +607,8 @@ final class LegadoJS {
         ctx.evaluateScript(Self.javaStringScript)
         ctx.evaluateScript(SourceJava.script)
         if let response {
-            let payload: [String: Any] = ["text": response.text, "url": response.url, "status": response.status, "headers": response.headers]
+            var payload: [String: Any] = ["text": response.text, "url": response.url, "status": response.status, "headers": response.headers]
+            if let bytes = response.bytes { payload["bytesBase64"] = bytes.base64EncodedString() }
             if let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) {
                 ctx.setObject(false, forKeyedSubscript: "_strictContentHTTP" as NSString)
                 let value = ctx.objectForKeyedSubscript("_response")?.call(withArguments: [json])
@@ -683,7 +684,14 @@ final class LegadoJS {
             else { address = value.invokeMethod("url", withArguments: [])?.toString() ?? baseUrl }
             let headers = value.invokeMethod("headers", withArguments: [])?.toDictionary() as? [String: String] ?? [:]
             guard exception.isEmpty else { LegadoJSCtx.failures?.add(exception); return "" }
-            let payload: [String: Any] = ["text": body, "url": address, "status": Int(status), "headers": headers]
+            var payload: [String: Any] = ["text": body, "url": address, "status": Int(status), "headers": headers]
+            if response?.bytes != nil {
+                let object = value.invokeMethod("body", withArguments: [])
+                if let values = object?.invokeMethod("bytes", withArguments: [])?.toArray() as? [NSNumber],
+                   values.allSatisfy({ (-128...255).contains($0.intValue) }) {
+                    payload["bytesBase64"] = Data(values.map { UInt8(truncatingIfNeeded: $0.intValue) }).base64EncodedString()
+                } else { LegadoJSCtx.failures?.add("在线朗读登录检测必须返回包含音频字节的响应"); return "" }
+            }
             return (try? JSONSerialization.data(withJSONObject: payload)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         }
         func string(_ value: JSValue?) -> String? {
@@ -790,6 +798,10 @@ final class LegadoJS {
         return {
             body: function() {
                 if(_strictContentHTTP && (data.status<200 || data.status>=300)) throw Error('HTTP '+data.status+'：正文脚本请求失败');
+                if(data.bytesBase64 != null) return {
+                    bytes:function(){return java.base64DecodeToByteArray(data.bytesBase64);},
+                    string:function(){return data.text;}, toString:function(){return data.text;}
+                };
                 return data.text;
             },
             code: function() { return data.status; }, statusCode: function() { return data.status; },

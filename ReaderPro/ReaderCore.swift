@@ -377,6 +377,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private var httpTask: Task<Void, Never>?
     private var audioPlayer: AVAudioPlayer?
     private var audioCompletion: CheckedContinuation<Void, Error>?
+    private var speechGeneration = UUID()
 
     override init() {
         super.init()
@@ -398,19 +399,16 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         let id = UserDefaults.standard.string(forKey: "speech.engineID") ?? "system"
         if id != "system", let engine = ReaderRuleLibrary.shared.httpTts.first(where: { $0.enabled && String($0.id) == id }) {
             let texts = queue; queue = []; isSpeaking = true
+            let run = speechGeneration
             httpTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 do {
                     try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
                     try AVAudioSession.sharedInstance().setActive(true)
-                    for segment in texts {
-                        var rest = segment[...]
-                        while !rest.isEmpty {
-                            try Task.checkCancellation()
-                            let part = String(rest.prefix(400)); rest = rest.dropFirst(part.count)
-                            let worker = Task.detached { try await engine.audio(text: part, speed: max(1, Int(rate * 20))) }
-                            let data = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
-                            try Task.checkCancellation()
+                    try await SpeechAudioSequence.run(parts: SpeechAudioSequence.parts(texts), fetch: { part in
+                        try await engine.audio(text: part, speed: max(1, Int(rate * 20)))
+                    }, play: { data in
+                            guard self.speechGeneration == run else { throw CancellationError() }
                             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                                 do {
                                     let player = try AVAudioPlayer(data: data); player.delegate = self
@@ -418,10 +416,12 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
                                     guard player.play() else { self.audioCompletion = nil; continuation.resume(throwing: SourceFailure(stage: "在线朗读", message: "系统不能播放接口返回的音频")); return }
                                 } catch { continuation.resume(throwing: error) }
                             }
-                        }
-                    }
+                    })
+                    guard self.speechGeneration == run else { return }
                     self.isSpeaking = false; self.audioPlayer = nil; self.httpTask = nil; onDone()
                 } catch {
+                    guard self.speechGeneration == run else { return }
+                    self.audioPlayer?.stop(); self.audioPlayer = nil; self.httpTask = nil
                     if !Task.isCancelled { self.error = sourceErrorMessage(error); self.isSpeaking = false }
                 }
             }
@@ -447,6 +447,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     }
 
     func stop() {
+        speechGeneration = UUID(); onDone = nil
         httpTask?.cancel(); httpTask = nil
         audioPlayer?.stop(); audioPlayer = nil
         audioCompletion?.resume(throwing: CancellationError()); audioCompletion = nil

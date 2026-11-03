@@ -47,15 +47,34 @@ struct HttpTTS: ManagedReaderRule {
                 try await LegadoJSCtx.$speakText.withValue(text) {
                     try await LegadoJSCtx.$speakSpeed.withValue(speed) {
                         let request = try SourceHTTP.request(url, base: SourceHTTP.options(url).url, headers: ruleSource.requestHeaders)
-                        let (data, response) = try await SourceTLS.data(for: request)
-                        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), !data.isEmpty else {
+                        try await SourceRateLimiter.shared.wait()
+                        let original: SourcePage
+                        do {
+                            let (data, response) = try await SourceTLS.data(for: request)
+                            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+                            let headers = http.allHeaderFields.reduce(into: [String: String]()) { $0[String(describing: $1.key).lowercased()] = String(describing: $1.value) }
+                            original = SourcePage(text: SourceHTTP.decode(data, response: response), url: response.url?.absoluteString ?? url,
+                                                  status: http.statusCode, headers: headers, bytes: data)
+                        } catch {
+                            try Task.checkCancellation()
+                            guard !loginCheckJs.isEmpty else { throw error }
+                            original = SourcePage(text: sourceErrorMessage(error), url: request.url?.absoluteString ?? url, status: 500, bytes: Data())
+                        }
+                        // Android runs loginCheckJs before checking HTTP status and
+                        // plays the returned response, which may be a retry request.
+                        let checked = try ruleSource.checkedLoginResponse(original, stage: "在线朗读")
+                        guard (200..<300).contains(checked.status), let data = checked.bytes, !data.isEmpty else {
                             throw SourceFailure(stage: "在线朗读", message: "朗读接口未返回音频", url: request.url?.absoluteString ?? "")
                         }
-                        if !loginCheckJs.isEmpty {
-                            _ = try ruleSource.checkedLoginResponse(SourcePage(text: SourceHTTP.decode(data, response: response), url: response.url?.absoluteString ?? url, status: http.statusCode), stage: "在线朗读")
+                        let mime = (checked.headers["content-type"] ?? "").components(separatedBy: ";")[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                        if mime == "application/json" || mime.hasPrefix("text/") {
+                            throw SourceFailure(stage: "在线朗读", message: String(checked.text.prefix(2000)), url: checked.url)
                         }
-                        if let contentType, !contentType.isEmpty, !(http.mimeType ?? "").localizedCaseInsensitiveContains(contentType) {
-                            throw SourceFailure(stage: "在线朗读", message: "返回的音频类型与规则配置不符：" + (http.mimeType ?? "未知"))
+                        if let contentType, !contentType.isEmpty, !mime.isEmpty {
+                            let regex = try NSRegularExpression(pattern: contentType), range = NSRange(mime.startIndex..., in: mime)
+                            guard regex.firstMatch(in: mime, range: range)?.range == range else {
+                                throw SourceFailure(stage: "在线朗读", message: "返回的音频类型与规则配置不符：" + mime)
+                            }
                         }
                         return data
                     }

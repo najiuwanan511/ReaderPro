@@ -2,6 +2,11 @@ import XCTest
 import UIKit
 @testable import ReaderPro
 
+private actor SpeechPrefetchTestState {
+    var values: [String] = []
+    func record(_ value: String) { values.append(value) }
+}
+
 final class RuleManagementParityTests: XCTestCase {
     func testShelfListsAcceptAndroidNullsAndExportPortableNamesAndOnlineAddresses() throws {
         let decoded = try ShelfTransfer.decode(Data(#"[{"name":"书名","author":null,"intro":null},{"name":""}]"#.utf8))
@@ -245,6 +250,37 @@ final class RuleManagementParityTests: XCTestCase {
         let data = try await engine.audio(text: "你好世界", speed: 12)
         XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "RIFF")
         XCTAssertGreaterThan(data.count, 1000)
+    }
+
+    func testHttpTtsLoginCheckCanRecoverUnauthorizedResponseAndReplaceAudioBytes() async throws {
+        var engine = HttpTTS(); engine.name = "登录朗读"; engine.url = "http://127.0.0.1:8765/parity/protected"
+        engine.contentType = "audio/(wav|mpeg)"
+        engine.loginCheckJs = #"if(result.code()===401){result=java.connect('http://127.0.0.1:8765/parity/tts?text='+encodeURIComponent(speakText)+'&speed='+speakSpeed);} result;"#
+        let data = try await engine.audio(text: "你好世界", speed: 12)
+        XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "RIFF")
+        engine.loginCheckJs = "result"
+        do { _ = try await engine.audio(text: "你好世界", speed: 12); XCTFail("Unrecovered 401 must fail") }
+        catch { XCTAssertTrue(sourceErrorMessage(error).contains("401")) }
+    }
+
+    @MainActor func testHttpSpeechPrefetchesOnlyTheNextSegmentAndPlaysInOrder() async throws {
+        let nextReady = expectation(description: "Next audio fetched during current playback")
+        let state = SpeechPrefetchTestState()
+        var played: [String] = []
+        try await SpeechAudioSequence.run(parts: ["一", "二", "三"], fetch: { text in
+            await state.record(text)
+            if text == "二" { nextReady.fulfill() }
+            return Data(text.utf8)
+        }, play: { data in
+            let text = String(decoding: data, as: UTF8.self)
+            if text == "一" {
+                await self.fulfillment(of: [nextReady], timeout: 5)
+                let fetched = await state.values
+                XCTAssertEqual(fetched, ["一", "二"])
+            }
+            played.append(text)
+        })
+        XCTAssertEqual(played, ["一", "二", "三"])
     }
 
     func testDirectoryRefreshPreservesRawCacheAndPositionWhenChaptersAreInserted() {

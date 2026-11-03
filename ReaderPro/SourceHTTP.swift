@@ -34,6 +34,7 @@ struct SourcePage {
     let url: String
     var status: Int = 200
     var headers: [String: String] = [:]
+    var bytes: Data? = nil
 }
 
 enum SourceHTTP {
