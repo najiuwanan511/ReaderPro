@@ -1,9 +1,51 @@
 import XCTest
 import WebKit
 import AVFoundation
+import MediaPlayer
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
+    @MainActor func testOnlineSpeechPublishesLockScreenStatePausesForHeadphoneRemovalAndClearsOnStop() async throws {
+        let defaults = UserDefaults.standard, library = ReaderRuleLibrary.shared
+        let oldEngine = defaults.object(forKey: "speech.engineID"), oldList = library.httpTts
+        let speech = SpeechController()
+        defer {
+            speech.stop(); library.httpTts = oldList
+            if let oldEngine { defaults.set(oldEngine, forKey: "speech.engineID") }
+            else { defaults.removeObject(forKey: "speech.engineID") }
+        }
+        var engine = HttpTTS(); engine.id = -9876; engine.name = "锁屏朗读回归"
+        engine.url = "http://127.0.0.1:8765/parity/tts?text={{speakText}}&speed={{speakSpeed}}"
+        library.httpTts = [engine]; defaults.set(String(engine.id), forKey: "speech.engineID")
+        let finished = expectation(description: "HTTP speech resumes and completes")
+        speech.speak(segments: ["你好世界", "你好世界"], rate: 0.6, pitch: 1, title: "测试书 · 第一章", author: "作者") { finished.fulfill() }
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
+            userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
+        XCTAssertTrue(speech.isPaused)
+        try await Task.sleep(nanoseconds: 350_000_000)
+        XCTAssertTrue(speech.isSpeaking, "A paused HTTP segment must wait for resume instead of completing")
+        XCTAssertEqual(speech.error, "")
+        let info = try XCTUnwrap(MPNowPlayingInfoCenter.default().nowPlayingInfo)
+        XCTAssertEqual(info[MPMediaItemPropertyTitle] as? String, "测试书 · 第一章")
+        XCTAssertEqual(info[MPNowPlayingInfoPropertyPlaybackRate] as? Double, 0)
+        XCTAssertNil(info[MPMediaItemPropertyPlaybackDuration])
+        XCTAssertFalse(MPRemoteCommandCenter.shared().changePlaybackPositionCommand.isEnabled)
+        XCTAssertTrue(MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled)
+        speech.togglePause()
+        await fulfillment(of: [finished], timeout: 15)
+        XCTAssertFalse(speech.isSpeaking)
+        XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
+        speech.stop()
+        XCTAssertFalse(MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled)
+    }
+
+    func testSpeechParagraphOffsetsSkipBlankLinesAndUseUTF16() {
+        let text = "开头😀\n\n  第二段\n末段"
+        let paragraphs = ReaderSpeechText.paragraphs(text, from: 2)
+        XCTAssertEqual(paragraphs.map(\.text), ["😀", "第二段", "末段"])
+        XCTAssertEqual(paragraphs.map(\.offset), [2, 6, 12])
+    }
+
     @MainActor func testDashVideoActuallyPlaysSeparatedAudioAndVideoSegmentsWithHeaders() async throws {
         let request = URLRequest(url: URL(string: "http://127.0.0.1:8765/video/dash/manifest.mpd")!)
         var headers = request; headers.setValue("ReaderPro", forHTTPHeaderField: "X-Video")

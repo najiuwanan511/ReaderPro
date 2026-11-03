@@ -382,6 +382,9 @@ final class SourceHeaderCompatibilityTests: XCTestCase {
         let direct = try await SourceWebLoader.load(URLRequest(url: targetURL), timeout: 15, delay: 0.6)
         XCTAssertTrue(direct.text.contains("网页脚本正文"), "Destination must be reachable before checking failed proxy routing")
         let request = try SourceHTTP.request(target, base: target, headers: ["proxy": "http://127.0.0.1:1"])
+        // Rule compilation must succeed independently: its failure must not
+        // be mistaken for proof that the bad proxy prevented a connection.
+        try await SourceWebDataStore.preventLocalBypass(WKWebViewConfiguration(), request: request)
         do {
             _ = try await SourceWebLoader.load(request, timeout: 5)
             XCTFail("WebView bypassed the failed proxy and contacted the destination directly")

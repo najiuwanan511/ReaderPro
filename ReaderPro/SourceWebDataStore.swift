@@ -30,10 +30,18 @@ import WebKit
         guard try SourceProxy.configuration(for: request) != nil else { return }
         if loopbackRules == nil {
             loopbackRules = Task {
-                let rules = #"[{"trigger":{"url-filter":"^https?://(localhost|[a-z0-9.-]+\\.localhost|127\\.[0-9.]+|\\[::1\\])([:/]|$)","url-filter-is-case-sensitive":false},"action":{"type":"block"}}]"#
+                // Content blockers accept a smaller regex language than ICU;
+                // separate alternatives instead of using unsupported '|'.
+                let patterns = ["^https?://localhost[:/]", "^https?://[a-z0-9.-]+[.]localhost[:/]",
+                                "^https?://127[.][0-9.]+[:/]", #"^https?://\[::1\]"#,
+                                #"^https?://\[0:0:0:0:0:0:0:1\]"#]
+                let entries = patterns.map { ["trigger": ["url-filter": $0, "url-filter-is-case-sensitive": false], "action": ["type": "block"]] as [String: Any] }
+                let rules = String(decoding: try JSONSerialization.data(withJSONObject: entries), as: UTF8.self)
                 return try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "ReaderPro.proxyNoLocalBypass", encodedContentRuleList: rules)
             }
         }
-        if let rules = try await loopbackRules?.value { configuration.userContentController.add(rules) }
+        do {
+            if let rules = try await loopbackRules?.value { configuration.userContentController.add(rules) }
+        } catch { loopbackRules = nil; throw error }
     }
 }

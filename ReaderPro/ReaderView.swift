@@ -835,13 +835,17 @@ private final class ReaderScrollProgress {
             return
         }
         guard let currentChapter = chapter else { return }
-        let segments: [String]
-        if attributed.length > 0 {
-            let start = min(max(currentCharOffset(), 0), attributed.length)
-            segments = attributed.attributedSubstring(from: NSRange(location: start, length: attributed.length - start)).string.components(separatedBy: .newlines)
-        } else { segments = paragraphs(currentChapter) }
+        let content = attributed.length > 0 ? attributed.string : store.purify(currentChapter.text, book: book)
+        let paragraphs = ReaderSpeechText.paragraphs(content, from: currentCharOffset())
         let speakingChapter = chapterIndex
-        speech.speak(segments: segments, rate: Float(store.ttsRate), pitch: Float(store.ttsPitch)) {
+        speech.speak(segments: paragraphs.map(\.text), rate: Float(store.ttsRate), pitch: Float(store.ttsPitch),
+                     title: "\(book?.title ?? "朗读") · \(currentChapter.title)", author: book?.author ?? "", onParagraph: { index in
+            guard chapterIndex == speakingChapter, paragraphs.indices.contains(index) else { return }
+            let offset = paragraphs[index].offset
+            pageIndex = pageIndex(for: offset)
+            scrollProgress.offset = offset; chapterLanding = .offset(offset)
+            saveProgress(); jumpToken += 1
+        }) {
             guard chapterIndex == speakingChapter, let b = book,
                   let next = b.chapters.readableIndex(from: speakingChapter + 1) else { return }
             openChapter(next, continuingSpeech: true)

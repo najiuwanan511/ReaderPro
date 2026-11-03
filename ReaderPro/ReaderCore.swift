@@ -425,14 +425,21 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private var audioCompletion: CheckedContinuation<Void, Error>?
     private var speechGeneration = UUID()
     private var savedSegments: [String] = []
+    private let controlID = UUID()
+    private var speechTitle = "朗读", speechAuthor = ""
+    private var onParagraph: ((Int) -> Void)?
 
     override init() {
         super.init()
         synth.delegate = self
     }
 
-    func speak(segments: [String], from startingIndex: Int = 0, rate: Float, pitch: Float, onDone: @escaping () -> Void = {}) {
+    func speak(segments: [String], from startingIndex: Int = 0, rate: Float, pitch: Float,
+               title: String = "朗读", author: String = "", onParagraph: ((Int) -> Void)? = nil,
+               onDone: @escaping () -> Void = {}) {
         stop(); error = ""
+        speechTitle = title; speechAuthor = author
+        self.onParagraph = onParagraph
         savedSegments = segments.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         paragraphIndex = max(0, min(startingIndex, max(0, savedSegments.count - 1)))
         queue = Array(savedSegments.dropFirst(paragraphIndex))
@@ -445,11 +452,22 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             onDone()
             return
         }
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch { self.error = sourceErrorMessage(error); return }
+        MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
+            play: { [weak self] in if self?.isPaused == true { self?.togglePause() } },
+            pause: { [weak self] in if self?.isPaused == false { self?.togglePause() } },
+            isPlaying: { [weak self] in self?.isSpeaking == true && self?.isPaused == false },
+            toggle: { [weak self] in self?.togglePause() }, seek: nil, skip: nil,
+            next: { [weak self] in self?.skipParagraph(1) }, previous: { [weak self] in self?.skipParagraph(-1) })
         let id = UserDefaults.standard.string(forKey: "speech.engineID") ?? "system"
         if id != "system", let engine = ReaderRuleLibrary.shared.httpTts.first(where: { $0.enabled && String($0.id) == id }) {
             let start = paragraphIndex
             let chunks = queue.enumerated().flatMap { position, text in SpeechAudioSequence.parts([text]).map { (text: $0, paragraph: start + position) } }
             queue = []; isSpeaking = true
+            publishPlaybackState()
             let run = speechGeneration
             httpTask = Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -459,7 +477,8 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
                     try await SpeechAudioSequence.run(parts: chunks.map(\.text), fetch: { part in
                         try await engine.audio(text: part, speed: max(1, Int(rate * 20)))
                     }, onStart: { index in
-                        guard self.speechGeneration == run else { return }; self.paragraphIndex = chunks[index].paragraph
+                        guard self.speechGeneration == run else { return }
+                        self.paragraphIndex = chunks[index].paragraph; self.publishPlaybackState()
                     }, play: { data in
                             guard self.speechGeneration == run else { throw CancellationError() }
                             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -471,21 +490,25 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
                             }
                     })
                     guard self.speechGeneration == run else { return }
-                    self.isSpeaking = false; self.audioPlayer = nil; self.httpTask = nil; onDone()
+                    self.isSpeaking = false; self.audioPlayer = nil; self.httpTask = nil
+                    MediaPlaybackControls.shared.release(owner: self.controlID); onDone()
                 } catch {
                     guard self.speechGeneration == run else { return }
                     self.audioPlayer?.stop(); self.audioPlayer = nil; self.httpTask = nil
                     if !Task.isCancelled { self.error = sourceErrorMessage(error); self.isSpeaking = false }
+                    MediaPlaybackControls.shared.release(owner: self.controlID)
                 }
             }
         } else if id != "system" {
             isSpeaking = false; error = "选中的在线朗读引擎已删除或停用，请重新选择引擎"
+            MediaPlaybackControls.shared.release(owner: controlID)
         } else { next() }
     }
 
     private func next() {
         guard !queue.isEmpty else {
             isSpeaking = false
+            MediaPlaybackControls.shared.release(owner: controlID)
             onDone?()
             return
         }
@@ -496,12 +519,14 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         u.rate = rate
         u.pitchMultiplier = pitch
         isSpeaking = true
+        publishPlaybackState()
         currentUtterance = u
         synth.speak(u)
     }
 
     func stop() {
-        speechGeneration = UUID(); onDone = nil
+        MediaPlaybackControls.shared.release(owner: controlID)
+        speechGeneration = UUID(); onDone = nil; onParagraph = nil
         httpTask?.cancel(); httpTask = nil
         audioPlayer?.stop(); audioPlayer = nil
         audioCompletion?.resume(throwing: CancellationError()); audioCompletion = nil
@@ -522,13 +547,21 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             isPaused = true; audioPlayer?.pause()
             if currentUtterance != nil { synth.pauseSpeaking(at: .immediate) }
         }
+        publishPlaybackState()
+    }
+
+    private func publishPlaybackState() {
+        MediaPlaybackControls.shared.updateSpeech(owner: controlID, paragraph: paragraphIndex, count: savedSegments.count,
+                                                 playing: isSpeaking && !isPaused)
+        onParagraph?(paragraphIndex)
     }
 
     func skipParagraph(_ delta: Int) {
         guard !savedSegments.isEmpty else { return }
         let parts = savedSegments, target = max(0, min(paragraphIndex + delta, parts.count - 1))
-        let finished = onDone ?? {}, rate = self.rate, pitch = self.pitch
-        speak(segments: parts, from: target, rate: rate, pitch: pitch, onDone: finished)
+        let finished = onDone ?? {}, progress = onParagraph, rate = self.rate, pitch = self.pitch
+        speak(segments: parts, from: target, rate: rate, pitch: pitch, title: speechTitle, author: speechAuthor,
+              onParagraph: progress, onDone: finished)
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {

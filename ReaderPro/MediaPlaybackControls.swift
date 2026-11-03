@@ -39,8 +39,8 @@ final class MediaPlaybackControls {
     }
     func activate(owner: UUID, title: String, author: String, play: @escaping () -> Void, pause: @escaping () -> Void,
                   isPlaying: @escaping () -> Bool,
-                  toggle: @escaping () -> Void, seek: @escaping (Double) -> Void,
-                  skip: @escaping (Double) -> Void, next: (() -> Void)? = nil, previous: (() -> Void)? = nil) {
+                  toggle: @escaping () -> Void, seek: ((Double) -> Void)?,
+                  skip: ((Double) -> Void)?, next: (() -> Void)? = nil, previous: (() -> Void)? = nil) {
         clear(); self.owner = owner
         playAction = play; pauseAction = pause; self.isPlaying = isPlaying
         MPNowPlayingInfoCenter.default().nowPlayingInfo = [MPMediaItemPropertyTitle: title, MPMediaItemPropertyArtist: author,
@@ -56,10 +56,14 @@ final class MediaPlaybackControls {
         }
         add(commands.playCommand) { _ in play() }; add(commands.pauseCommand) { _ in pause() }
         add(commands.togglePlayPauseCommand) { _ in toggle() }
-        add(commands.changePlaybackPositionCommand) { if let event = $0 as? MPChangePlaybackPositionCommandEvent { seek(event.positionTime) } }
+        commands.changePlaybackPositionCommand.isEnabled = seek != nil
+        if let seek { add(commands.changePlaybackPositionCommand) { if let event = $0 as? MPChangePlaybackPositionCommandEvent { seek(event.positionTime) } } }
         commands.skipForwardCommand.preferredIntervals = [15]; commands.skipBackwardCommand.preferredIntervals = [15]
-        add(commands.skipForwardCommand) { skip(($0 as? MPSkipIntervalCommandEvent)?.interval ?? 15) }
-        add(commands.skipBackwardCommand) { skip(-(($0 as? MPSkipIntervalCommandEvent)?.interval ?? 15)) }
+        commands.skipForwardCommand.isEnabled = skip != nil; commands.skipBackwardCommand.isEnabled = skip != nil
+        if let skip {
+            add(commands.skipForwardCommand) { skip(($0 as? MPSkipIntervalCommandEvent)?.interval ?? 15) }
+            add(commands.skipBackwardCommand) { skip(-(($0 as? MPSkipIntervalCommandEvent)?.interval ?? 15)) }
+        }
         commands.nextTrackCommand.isEnabled = next != nil; commands.previousTrackCommand.isEnabled = previous != nil
         if let next { add(commands.nextTrackCommand) { _ in next() } }
         if let previous { add(commands.previousTrackCommand) { _ in previous() } }
@@ -73,6 +77,17 @@ final class MediaPlaybackControls {
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }
     func release(owner: UUID) { if self.owner == owner { clear() } }
+    func updateSpeech(owner: UUID, paragraph: Int, count: Int, playing: Bool) {
+        guard self.owner == owner else { return }
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPNowPlayingInfoPropertyPlaybackRate] = playing ? 1.0 : 0.0
+        info[MPMediaItemPropertyAlbumTitle] = "第 \(paragraph + 1) / \(count) 段"
+        // Paragraphs have no reliable duration until synthesized. Do not
+        // advertise a time scrubber with invented second-based positions.
+        info.removeValue(forKey: MPNowPlayingInfoPropertyElapsedPlaybackTime)
+        info.removeValue(forKey: MPMediaItemPropertyPlaybackDuration)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
     private func clear() {
         for (command, token) in handlers { command.removeTarget(token); command.isEnabled = false }
         handlers = []; owner = nil; interruptedOwner = nil; playAction = nil; pauseAction = nil; isPlaying = nil
