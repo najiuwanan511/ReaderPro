@@ -179,7 +179,9 @@ struct SourceExploreCard: View {
                         .id("\(entry.offset)|\(entry.element.title)|\(entry.element.type)")
                         .layoutValue(key: ExploreStyleKey.self, value: entry.element.style)
                 }
-            }.padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 6)
+            // Android's source card has 16 dp outer padding, then an 8 dp
+            // frame inset. CategoryFlow includes Flexbox's own 3 dp padding.
+            }.padding(.horizontal, 24).padding(.top, 8)
             if !actionError.isEmpty { Text(actionError).font(.caption).foregroundStyle(.red).padding(.horizontal, 16) }
         }
     }
@@ -233,7 +235,7 @@ private struct ExploreCategoryControl: View {
         case "text":
             TextField(name, text: $value).textInputAutocapitalization(.never).autocorrectionDisabled()
                 .multilineTextAlignment(textAlignment).frame(minWidth: 96, maxHeight: stretches ? .infinity : nil)
-                .padding(.horizontal, 12).padding(.vertical, 6)
+                .padding(.horizontal, 12).padding(.vertical, 4)
                 .background(AppTheme.surfaceMuted, in: Capsule())
                 .accessibilityIdentifier("explore-input-\(index)")
                 .onChange(of: value) { _, new in

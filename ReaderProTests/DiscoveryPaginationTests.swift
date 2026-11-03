@@ -167,15 +167,28 @@ final class DiscoveryPaginationTests: XCTestCase {
         let rows = ExploreFlowGeometry.widths(container: 300, sizes: sizes, styles: [first,second,third,fourth])
         XCTAssertEqual(rows.count, 2)
         XCTAssertEqual(rows[0][0].1, 150, accuracy: 0.01)
-        XCTAssertEqual(rows[0][1].1, 138, accuracy: 0.01)
-        XCTAssertEqual(rows[1][0].1, 102, accuracy: 0.01)
-        XCTAssertEqual(rows[1][1].1, 186, accuracy: 0.01)
+        XCTAssertEqual(rows[0][1].1, 124, accuracy: 0.01)
+        XCTAssertEqual(rows[1][0].1, 98.5, accuracy: 0.01)
+        XCTAssertEqual(rows[1][1].1, 175.5, accuracy: 0.01)
         let long = ExploreFlowGeometry.widths(container: 200, sizes: [CGSize(width: 1200,height: 20)], styles: [ExploreStyle()])
-        XCTAssertEqual(long[0][0].1, 194)
+        XCTAssertEqual(long[0][0].1, 188)
         var full = ExploreStyle(); full.basisPercent = 1
-        XCTAssertEqual(ExploreFlowGeometry.widths(container: 200, sizes: [.zero], styles: [full])[0][0].1, 194)
+        XCTAssertEqual(ExploreFlowGeometry.widths(container: 200, sizes: [.zero], styles: [full])[0][0].1, 188)
         full.shrink = 0
         XCTAssertEqual(ExploreFlowGeometry.widths(container: 200, sizes: [.zero], styles: [full])[0][0].1, 200)
+    }
+
+    func testAndroidCategoryDividersChangeWrappingAndPercentWidth() {
+        // Three 60 dp controls require: 6 padding + 18 margins + 16
+        // middle dividers + 180 content = 220 dp, matching Android XML.
+        let sizes = Array(repeating: CGSize(width: 60, height: 26), count: 3)
+        let styles = Array(repeating: ExploreStyle(), count: 3)
+        XCTAssertEqual(ExploreFlowGeometry.widths(container: 220, sizes: sizes, styles: styles).count, 1)
+        XCTAssertEqual(ExploreFlowGeometry.widths(container: 219, sizes: sizes, styles: styles).count, 2)
+        var half = ExploreStyle(); half.basisPercent = 0.5
+        let rows = ExploreFlowGeometry.widths(container: 220, sizes: sizes, styles: [half, half, half])
+        XCTAssertEqual(rows.map(\.count), [1, 1, 1], "Percent widths include margins and must wrap as on Android")
+        XCTAssertEqual(rows[0][0].1, 110)
     }
 
     func testDefaultDiscoverySkipsSectionLabelsAndNeverRequestsControlURLs() async throws {
