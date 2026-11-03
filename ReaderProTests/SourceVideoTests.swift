@@ -12,6 +12,15 @@ final class SourceVideoTests: XCTestCase {
         XCTAssertEqual(text.localBookKind, "web")
     }
 
+    func testImportedLocalVideoStillUsesTheNativePlayer() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        try Data([0, 0, 0, 24]).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        guard case .native(let request) = try SourceVideoResource.make(file.absoluteString, base: file.absoluteString, headers: [:]) else { return XCTFail("Expected imported local video") }
+        XCTAssertEqual(request.url, file)
+        XCTAssertThrowsError(try SourceVideoResource.make(file.appendingPathExtension("missing").absoluteString, base: file.absoluteString, headers: [:]))
+    }
+
     func testPack1330DramaRulesResolveDifferentEpisodesAndPreserveSignedURLs() async throws {
         let source = SourceTestFixtures.video()
         let books = try await source.discover(category: ExploreCategory(title: "短剧", url: "/video/list"))

@@ -26,6 +26,12 @@ enum SourceVideoResource {
     static func make(_ raw: String, base: String, headers: [String: String], forceWeb: Bool = false) throws -> Self {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SourceFailure(stage: "视频解析", message: "章节规则未返回播放地址，请检查登录状态或播放线路", url: base) }
+        if let file = URL(string: text), file.isFileURL {
+            guard FileManager.default.isReadableFile(atPath: file.path) else {
+                throw SourceFailure(stage: "本地视频", message: "视频文件不存在或无法读取，请重新导入", url: file.lastPathComponent)
+            }
+            return .native(URLRequest(url: file))
+        }
         if text.hasPrefix("<") {
             if text.range(of: "<MPD", options: .caseInsensitive) != nil {
                 throw SourceFailure(stage: "视频格式", message: "此线路返回 DASH/MPD，系统播放器不支持，请选择 m3u8 或 MP4 线路", url: base)
