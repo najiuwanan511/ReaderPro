@@ -38,14 +38,46 @@ struct RuleSubscription: ManagedReaderRule {
 @MainActor final class RuleSubscriptionStore: ObservableObject {
     static let shared = RuleSubscriptionStore()
     @Published var subscriptions: [RuleSubscription] {
-        didSet { UserDefaults.standard.set(try? JSONEncoder().encode(subscriptions), forKey: "rules.subscriptions") }
+        didSet {
+            defaults.set(try? JSONEncoder().encode(subscriptions), forKey: "rules.subscriptions")
+            let ids = Set(subscriptions.map(\.id)); staged = staged.filter { ids.contains($0.key) }; pending = pending.filter { ids.contains($0.key) }
+        }
     }
     @Published private(set) var running = false
     @Published private(set) var status: [Int64: String] = [:]
     @Published private(set) var pending: [Int64: Int] = [:]
-    private enum Payload { case sources(SourcePackImportResult), replacements([ReplaceRule]) }
-    private var staged: [Int64: Payload] = [:]
-    init() { subscriptions = UserDefaults.standard.data(forKey: "rules.subscriptions").flatMap { try? JSONDecoder().decode([RuleSubscription].self, from: $0) } ?? [] }
+    private let defaults: UserDefaults
+    private enum Payload: Codable {
+        case sources(SourcePackImportResult), replacements([ReplaceRule])
+        enum CodingKeys: String, CodingKey { case bookSources, rssSources, replacements }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            if c.contains(.replacements) { self = .replacements(try c.decode([ReplaceRule].self, forKey: .replacements)) }
+            else {
+                var document = SourcePackImportResult()
+                document.sources = try c.decode([LegadoSource].self, forKey: .bookSources)
+                document.rssSources = try c.decode([RssSource].self, forKey: .rssSources); self = .sources(document)
+            }
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            switch self {
+            case .sources(let document): try c.encode(document.sources, forKey: .bookSources); try c.encode(document.rssSources, forKey: .rssSources)
+            case .replacements(let rules): try c.encode(rules, forKey: .replacements)
+            }
+        }
+        var count: Int { switch self { case .sources(let document): return document.sources.count + document.rssSources.count; case .replacements(let rules): return rules.count } }
+    }
+    private var staged: [Int64: Payload] = [:] {
+        didSet { defaults.set(try? JSONEncoder().encode(staged), forKey: "rules.pendingUpdates") }
+    }
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        subscriptions = defaults.data(forKey: "rules.subscriptions").flatMap { try? JSONDecoder().decode([RuleSubscription].self, from: $0) } ?? []
+        let ids = Set(subscriptions.map(\.id))
+        staged = (defaults.data(forKey: "rules.pendingUpdates").flatMap { try? JSONDecoder().decode([Int64: Payload].self, from: $0) } ?? [:]).filter { ids.contains($0.key) }
+        pending = staged.mapValues(\.count)
+    }
 
     func updateDue(store: BookStore) async { await update(subscriptions.filter { $0.isDue() }, store: store, manual: false) }
     func update(_ items: [RuleSubscription], store: BookStore, manual: Bool = true) async {
@@ -55,7 +87,7 @@ struct RuleSubscription: ManagedReaderRule {
             status[subscription.id] = "正在检查…"
             let boundSource = store.sources.first { $0.bookSourceUrl == subscription.sourceUrl } ?? LegadoSource()
             do {
-                let payload = try await Task.detached(priority: .utility) {
+                let downloaded = try await Task.detached(priority: .utility) {
                     try await withTimeout(90) {
                         var engine = boundSource
                         if engine.bookSourceUrl.isEmpty { engine.bookSourceUrl = subscription.url }
@@ -84,8 +116,10 @@ struct RuleSubscription: ManagedReaderRule {
                 }.value
                 guard let index = subscriptions.firstIndex(where: { $0.id == subscription.id }) else { continue }
                 subscriptions[index].update = Int64(Date().timeIntervalSince1970 * 1000)
-                let count: Int
-                switch payload { case .sources(let document): count = document.sources.count + document.rssSources.count; case .replacements(let rules): count = rules.count }
+                let payload = changed(downloaded, store: store), count = payload.count
+                guard count > 0 else {
+                    staged[subscription.id] = nil; pending[subscription.id] = nil; status[subscription.id] = "规则没有变化"; continue
+                }
                 if manual || subscription.silentUpdate {
                     apply(payload, store: store); status[subscription.id] = "已更新 \(count) 条规则"; staged[subscription.id] = nil; pending[subscription.id] = nil
                 } else {
@@ -98,6 +132,28 @@ struct RuleSubscription: ManagedReaderRule {
         guard let payload = staged.removeValue(forKey: id) else { return }
         apply(payload, store: store); status[id] = "已应用 \(pending[id] ?? 0) 条规则"; pending[id] = nil
     }
+    private func changed(_ payload: Payload, store: BookStore) -> Payload {
+        switch payload {
+        case .sources(var document):
+            document.sources = document.sources.filter { incoming in
+                guard let old = store.sources.first(where: { $0.bookSourceUrl == incoming.bookSourceUrl }) else { return true }
+                var copy = incoming; copy.id = old.id; copy.enabled = old.enabled; copy.enabledExplore = old.enabledExplore; copy.customOrder = old.customOrder; copy.bookSourceGroup = old.bookSourceGroup
+                return copy != old
+            }
+            document.rssSources = document.rssSources.filter { incoming in
+                guard let old = store.rssSources.first(where: { $0.sourceUrl == incoming.sourceUrl }) else { return true }
+                var copy = incoming; copy.id = old.id; copy.enabled = old.enabled; copy.articleStyle = old.articleStyle; copy.customOrder = old.customOrder; copy.sourceGroup = old.sourceGroup
+                return copy != old
+            }
+            return .sources(document)
+        case .replacements(let rules):
+            return .replacements(rules.filter { incoming in
+                guard let old = store.replaceRules.first(where: { $0.id == incoming.id || ($0.name == incoming.name && $0.pattern == incoming.pattern) }) else { return true }
+                var copy = incoming; copy.id = old.id; copy.enabled = old.enabled; copy.order = old.order
+                return copy != old
+            })
+        }
+    }
     private func apply(_ payload: Payload, store: BookStore) {
         switch payload {
         case .sources(var document):
@@ -107,7 +163,12 @@ struct RuleSubscription: ManagedReaderRule {
             }
             _ = store.mergeImportedSources(document)
         case .replacements(let rules):
-            for rule in rules { if let index = store.replaceRules.firstIndex(where: { $0.id == rule.id }) { store.replaceRules[index] = rule } else { store.replaceRules.append(rule) } }
+            for rule in rules {
+                if let index = store.replaceRules.firstIndex(where: { $0.id == rule.id || ($0.name == rule.name && $0.pattern == rule.pattern) }) {
+                    var copy = rule; copy.id = store.replaceRules[index].id; copy.enabled = store.replaceRules[index].enabled; copy.order = store.replaceRules[index].order
+                    store.replaceRules[index] = copy
+                } else { store.replaceRules.append(rule) }
+            }
             store.save()
         }
     }

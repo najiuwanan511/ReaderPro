@@ -194,6 +194,8 @@ class Handler(BaseHTTPRequestHandler):
                     state['active'] -= 1
                     maximum = state['max']
                 payload = {"index": query.get('index', [''])[0], "key": query.get('key', [''])[0], "page": query.get('page', [''])[0], "maxActive": maximum}
+            elif path == '/parity/rule-sub':
+                payload = [{"bookSourceName": "规则更新样例", "bookSourceUrl": "https://rule-update-fixture.test", "searchUrl": "/search?key={{key}}"}]
             elif path == '/parity/file-info':
                 payload = {"downloads": ["/parity/book.txt"]}
             elif path == '/parity/protected':

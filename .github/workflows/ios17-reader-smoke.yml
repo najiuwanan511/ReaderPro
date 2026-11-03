@@ -16,7 +16,6 @@ jobs:
           brew install xcodegen
           xcodegen generate
           mkdir -p build
-          python3 scripts/fetch_user_pack.py
           python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
           for i in {1..20}; do
             if curl --fail --silent http://127.0.0.1:8765/health; then break; fi

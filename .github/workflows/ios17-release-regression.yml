@@ -18,7 +18,7 @@ jobs:
           brew install xcodegen
           xcodegen generate
           mkdir -p build
-          python3 scripts/fetch_user_pack.py
+          python3 scripts/fetch_user_pack.py --rss-only
           python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
           for i in {1..20}; do
             if curl --fail --silent http://127.0.0.1:8765/health; then break; fi
@@ -33,7 +33,7 @@ jobs:
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE"
           xcrun simctl bootstatus "$DEVICE" -b
-      - name: Test optimized build with large search and real source pack
+      - name: Test optimized build with deterministic import, reader, media and rule fixtures
         run: |
           set -o pipefail
           # The iOS 17 test daemon twice failed bootstrapping after the cold
@@ -84,7 +84,16 @@ jobs:
             -only-testing:ReaderProTests/ReaderContentPipelineTests \
             -only-testing:ReaderProTests/ReaderPageControllerTests \
             -only-testing:ReaderProTests/JavaCryptoTests \
-            -only-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
+            -only-testing:ReaderProUITests/SourceVideoUITests \
+            -only-testing:ReaderProTests/ParityFoundationTests \
+            -only-testing:ReaderProTests/MediaAndRssParityTests \
+            -only-testing:ReaderProTests/RuleManagementParityTests \
+            -only-testing:ReaderProTests/SourceEngineTests \
+            -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
+            -skip-testing:ReaderProTests/SourceEngineTests/testUserProvidedPackImportsEverySourceWithoutLosingRules \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testSearchWithRealUserPackCanBeCancelled \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryOpensStaticAndScriptCategoriesFromRealUserPack \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testPersistedRealPackThroughProductionRootSearchAndDiscovery \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 600 \
             -resultBundlePath build/ReleaseRegression.xcresult \

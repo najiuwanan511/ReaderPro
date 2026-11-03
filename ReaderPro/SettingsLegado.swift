@@ -40,7 +40,7 @@ struct SettingsView: View {
                     Button { showThemeMode = true } label: {
                         SettingRow(icon: "circle.lefthalf.filled", iconTint: .purple, title: "主题模式", summary: themeModeText)
                     }.buttonStyle(.plain)
-                    Button { comingSoon("Web服务") } label: {
+                    NavigationLink { LocalWebServiceView(store: store) } label: {
                         SettingRow(icon: "network", iconTint: .cyan, title: "Web服务", summary: "局域网浏览器传书 / 管理")
                     }.buttonStyle(.plain)
                 }
@@ -72,7 +72,7 @@ struct SettingsView: View {
                     NavigationLink { AboutView() } label: {
                         SettingRow(icon: "info.circle", iconTint: .gray, title: "关于")
                     }
-                    Button { comingSoon("退出") } label: {
+                    Button { comingSoonText = "iOS 由系统管理应用运行。返回主屏幕即可离开，正在播放的音频可在控制中心停止。"; showComingSoon = true } label: {
                         SettingRow(icon: "power", iconTint: .red, title: "退出")
                     }.buttonStyle(.plain)
                 } header: { SettingSectionHeader(title: "其他") }
@@ -88,7 +88,7 @@ struct SettingsView: View {
                 Button("深色") { themeMode = "dark" }
                 Button("取消", role: .cancel) {}
             }
-            .alert("本版暂未实现", isPresented: $showComingSoon) {
+            .alert("退出应用", isPresented: $showComingSoon) {
                 Button("好", role: .cancel) {}
             } message: {
                 Text(comingSoonText)

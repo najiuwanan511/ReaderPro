@@ -3,19 +3,73 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    @MainActor func testPendingRuleUpdatesSurviveRelaunchAndUnchangedRulesAreNotOfferedAgain() async throws {
+        let name = "RuleUpdate." + UUID().uuidString, defaults = UserDefaults(suiteName: name)!
+        let store = BookStore(), original = store.sources
+        defer { defaults.removePersistentDomain(forName: name); store.sources = original; store.save() }
+        store.sources.removeAll { $0.bookSourceUrl == "https://rule-update-fixture.test" }
+        var subscription = RuleSubscription(); subscription.url = "http://127.0.0.1:8765/parity/rule-sub"
+        let first = RuleSubscriptionStore(defaults: defaults); first.subscriptions = [subscription]
+        await first.update([subscription], store: store, manual: false)
+        XCTAssertEqual(first.pending[subscription.id], 1)
+        XCTAssertFalse(store.sources.contains(where: { $0.bookSourceUrl == "https://rule-update-fixture.test" }))
+        let relaunched = RuleSubscriptionStore(defaults: defaults)
+        XCTAssertEqual(relaunched.pending[subscription.id], 1)
+        relaunched.applyPending(subscription.id, store: store)
+        XCTAssertTrue(store.sources.contains(where: { $0.bookSourceUrl == "https://rule-update-fixture.test" }))
+        await relaunched.update([subscription], store: store, manual: false)
+        XCTAssertNil(relaunched.pending[subscription.id]); XCTAssertEqual(relaunched.status[subscription.id], "规则没有变化")
+    }
+
+    func testWebUploadParserWaitsForCompleteBinaryBodyAndRejectsAmbiguousLengths() throws {
+        let head = Data("POST /file?name=book.txt&key=secret HTTP/1.1\r\nContent-Length: 4\r\n\r\n".utf8)
+        XCTAssertNil(try LocalWebRequest.parse(head + Data([0,255])))
+        let request = try XCTUnwrap(LocalWebRequest.parse(head + Data([0,255,13,10])))
+        XCTAssertEqual(request.body, Data([0,255,13,10])); XCTAssertEqual(request.value("name"), "book.txt")
+        for invalid in ["Content-Length: -1", "Content-Length: 4\r\nContent-Length: 4", "Transfer-Encoding: chunked"] {
+            XCTAssertThrowsError(try LocalWebRequest.parse(Data(("POST /file HTTP/1.1\r\n" + invalid + "\r\n\r\n").utf8)))
+        }
+    }
+
+    @MainActor func testLocalWebServiceAuthenticatesAndImportsActualUploadedBook() async throws {
+        let store = BookStore(), original = store.books, service = LocalWebService()
+        service.start(store: store)
+        defer {
+            service.stop()
+            for book in store.books where !original.contains(where: { $0.id == book.id }) { try? FileManager.default.removeItem(at: BookStore.filesDir.appendingPathComponent(book.fileName)) }
+            store.books = original; store.saveBooks()
+        }
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in service.running }, object: nil)
+        await fulfillment(of: [ready], timeout: 10)
+        let base = try XCTUnwrap(service.loopbackAddress)
+        var anonymous = try XCTUnwrap(URLComponents(url: base, resolvingAgainstBaseURL: false)); anonymous.query = nil
+        let (_, denied) = try await URLSession.shared.data(from: try XCTUnwrap(anonymous.url))
+        XCTAssertEqual((denied as? HTTPURLResponse)?.statusCode, 403)
+        var components = try XCTUnwrap(URLComponents(url: base, resolvingAgainstBaseURL: false))
+        components.path = "/file"; components.queryItems?.append(URLQueryItem(name: "name", value: "Web上传.txt"))
+        var upload = URLRequest(url: try XCTUnwrap(components.url)); upload.httpMethod = "POST"; upload.httpBody = Data("第一章 开篇\nWeb上传正文".utf8)
+        let (body, response) = try await URLSession.shared.data(for: upload)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200, String(decoding: body, as: UTF8.self))
+        XCTAssertTrue(store.books.contains(where: { $0.title == "Web上传" && $0.chapters.first?.text.contains("Web上传正文") == true }))
+    }
+
     private func fontFixture(code: Int) -> Data {
         func number(_ value: Int, _ width: Int) -> Data {
             Data((0..<width).reversed().map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
         }
         var head = Data(repeating: 0, count: 54); head[51] = 1
-        let glyph = number(1,2) + Data(repeating: 0, count: 8) + number(1,2) + number(0,2) + Data([1,1]) + number(10,2) + number(20,2) + number(30,2) + number(40,2)
-        let cmap = number(0,2) + number(1,2) + number(3,2) + number(10,2) + number(12,4)
-            + number(12,2) + number(0,2) + number(28,4) + number(0,4) + number(1,4) + number(code,4) + number(code,4) + number(1,4)
+        var glyph = number(1,2); glyph += Data(repeating: 0, count: 8)
+        glyph += number(1,2); glyph += number(0,2); glyph += Data([1,1])
+        for value in [10,20,30,40] { glyph += number(value,2) }
+        var cmap = Data()
+        for value in [0,1,3,10] { cmap += number(value,2) }
+        cmap += number(12,4); cmap += number(12,2); cmap += number(0,2)
+        for value in [28,0,1,code,code,1] { cmap += number(value,4) }
         let tables: [(String,Data)] = [("head",head),("maxp",number(0x10000,4)+number(2,2)),("loca",number(0,4)+number(0,4)+number(glyph.count,4)),("glyf",glyph),("cmap",cmap)]
         var output = number(0x10000,4) + number(tables.count,2) + Data(repeating:0,count:6)
         var payload = Data(), offset = 12 + tables.count * 16
         for (name, data) in tables {
-            output += Data(name.utf8) + number(0,4) + number(offset,4) + number(data.count,4)
+            output += Data(name.utf8); output += number(0,4); output += number(offset,4); output += number(data.count,4)
             payload += data; offset += data.count
         }
         return output + payload

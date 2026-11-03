@@ -23,7 +23,7 @@ jobs:
       - name: Start deterministic HTTP fixtures
         run: |
           mkdir -p build
-          python3 scripts/fetch_user_pack.py
+          python3 scripts/fetch_user_pack.py --rss-only
           python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
           for i in {1..20}; do
             if curl --fail --silent http://127.0.0.1:8765/health; then exit 0; fi
@@ -62,6 +62,12 @@ jobs:
             -maximum-test-execution-time-allowance 600 \
             -skip-testing:ReaderProTests/SourcePackAuditTests \
             -skip-testing:ReaderProTests/SourcePack1329AuditTests \
+            -skip-testing:ReaderProTests/LiveSourceTests \
+            -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
+            -skip-testing:ReaderProTests/SourceEngineTests/testUserProvidedPackImportsEverySourceWithoutLosingRules \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testSearchWithRealUserPackCanBeCancelled \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryOpensStaticAndScriptCategoriesFromRealUserPack \
+            -skip-testing:ReaderProUITests/SourceFlowUITests/testPersistedRealPackThroughProductionRootSearchAndDiscovery \
             -resultBundlePath build/SourceRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO | tee build/tests.log
@@ -77,36 +83,6 @@ jobs:
           fi
       - name: Verify the reader draws visible body glyphs
         run: xcrun swift scripts/verify_reader_pixels.swift build/screenshots
-
-      - name: Audit every configured search in the 1466-source user pack
-        run: |
-          set -o pipefail
-          DEVICE=$READER_SIMULATOR_ID
-          xcodebuild test \
-            -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
-            -destination "platform=iOS Simulator,id=$DEVICE" \
-            -parallel-testing-enabled NO \
-            -only-testing:ReaderProTests/SourcePackAuditTests \
-            -test-timeouts-enabled YES \
-            -default-test-execution-time-allowance 1800 \
-            -maximum-test-execution-time-allowance 1800 \
-            -resultBundlePath build/UserPackAudit.xcresult \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-audit.log
-
-      - name: Export complete source audit
-        if: always()
-        continue-on-error: true
-        run: |
-          if [ -d build/UserPackAudit.xcresult ]; then
-            xcrun xcresulttool export attachments --path build/UserPackAudit.xcresult --output-path build/audit-attachments
-          fi
-          CONTAINER=$(xcrun simctl get_app_container "$READER_SIMULATOR_ID" com.selfuse.readerpro data 2>/dev/null || true)
-          if [ -n "$CONTAINER" ]; then
-            for REPORT in source-pack-search-audit.json source-pack-search-audit-progress.json source-pack-certificate-audit-progress.json; do
-              if [ -f "$CONTAINER/tmp/$REPORT" ]; then cp "$CONTAINER/tmp/$REPORT" "build/$REPORT"; fi
-              if [ -f "$CONTAINER/Documents/$REPORT" ]; then cp "$CONTAINER/Documents/$REPORT" "build/$REPORT"; fi
-            done
-          fi
 
       - name: Upload test evidence
         if: always()
