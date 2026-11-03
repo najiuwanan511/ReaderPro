@@ -60,7 +60,8 @@ import Foundation
     /// A moving window: chapter 1 loads 2, 3, 4; chapter 2 loads 3, 4, 5.
     /// Serial background fetching preserves source variables and leaves network
     /// capacity for a reader jump. An in-flight next chapter is reused on a turn.
-    func preload(bookID: String, after index: Int, count: Int = 3) {
+    func preload(bookID: String, after index: Int, count requested: Int? = nil) {
+        let count = requested ?? (UserDefaults.standard.object(forKey: "reader.preloadCount") as? Int ?? 3)
         preloadTasks[bookID]?.cancel()
         guard let book = store?.books.first(where: { $0.id == bookID }),
               book.kind == "web", book.chapters.indices.contains(index), count > 0 else { return }

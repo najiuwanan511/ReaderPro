@@ -155,7 +155,19 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         if path.startswith('/parity/'):
             status = 200
-            if path == '/parity/protected':
+            query = parse_qs(parsed.query)
+            if path == '/parity/ajax':
+                batch = query.get('batch', [''])[0]
+                with bridge_stress_lock:
+                    state = bridge_stress_counts.setdefault('ajax-' + batch, {'active': 0, 'max': 0})
+                    state['active'] += 1
+                    state['max'] = max(state['max'], state['active'])
+                time.sleep(0.15)
+                with bridge_stress_lock:
+                    state['active'] -= 1
+                    maximum = state['max']
+                payload = {"index": query.get('index', [''])[0], "key": query.get('key', [''])[0], "page": query.get('page', [''])[0], "maxActive": maximum}
+            elif path == '/parity/protected':
                 status, payload = 401, {"error": "login required"}
             elif path == '/parity/toc':
                 payload = {"chapters": [

@@ -11,18 +11,23 @@ enum ExploreFlowGeometry {
         var used: CGFloat = 0
         func finish() {
             guard !row.isEmpty else { return }
-            let remaining = max(0, width - used)
+            let remaining = width - used
             let grow = row.reduce(0.0) { $0 + styles[$1.0].grow }
-            rows.append(row.map { index, size in (index, size + (grow > 0 ? remaining * styles[index].grow / grow : 0)) })
+            let shrink = row.reduce(0.0) { $0 + styles[$1.0].shrink * $1.1 }
+            rows.append(row.map { index, size in
+                if remaining >= 0 { return (index, size + (grow > 0 ? remaining * styles[index].grow / grow : 0)) }
+                return (index, max(1, size + (shrink > 0 ? remaining * styles[index].shrink * size / shrink : 0)))
+            })
             row = []; used = 0
         }
         for index in sizes.indices {
             let style = styles[index]
             var size = style.basisPercent >= 0 ? width * style.basisPercent : sizes[index].width
-            if style.shrink > 0 { size = min(size, width) }
             size = max(1, size)
             if !row.isEmpty && (style.wrapBefore || used + spacing + size > width + 0.01) { finish() }
-            used += (row.isEmpty ? 0 : spacing) + size
+            // Android's children have a 3 dp margin on all sides. Percent
+            // basis is measured before margins; growth/shrink includes them.
+            used += spacing + size
             row.append((index, size))
         }
         finish()
@@ -48,14 +53,14 @@ struct CategoryFlow: Layout {
         let styles = subviews.map { $0[ExploreStyleKey.self] }
         let rows = ExploreFlowGeometry.widths(container: width, sizes: subviews.map { $0.sizeThatFits(.unspecified) }, styles: styles, spacing: spacing)
         var frames = Array(repeating: CGRect.zero, count: subviews.count)
-        var y: CGFloat = 0
+        var y: CGFloat = spacing / 2
         for row in rows {
             let dimensions = row.map { subviews[$0.0].dimensions(in: ProposedViewSize(width: $0.1, height: nil)) }
             let baseline = dimensions.enumerated().filter { styles[row[$0.offset].0].alignSelf == "baseline" }.map { $0.element[.firstTextBaseline] }.max() ?? 0
             let height = dimensions.enumerated().map { offset, size in
                 size.height + (styles[row[offset].0].alignSelf == "baseline" ? baseline - size[.firstTextBaseline] : 0)
             }.max() ?? 0
-            var x: CGFloat = 0
+            var x: CGFloat = spacing / 2
             for (offset, item) in row.enumerated() {
                 let size = dimensions[offset], alignment = styles[item.0].alignSelf
                 let dy: CGFloat
@@ -71,6 +76,6 @@ struct CategoryFlow: Layout {
             }
             y += height + spacing
         }
-        return (CGSize(width: width, height: max(0, y - spacing)), frames)
+        return (CGSize(width: width, height: subviews.isEmpty ? 0 : max(0, y - spacing / 2)), frames)
     }
 }

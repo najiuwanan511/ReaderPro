@@ -87,7 +87,7 @@ enum SourceJSBridge {
 
     static func request(_ address: String, base: String, headers: [String: String],
                         method: String = "", body: String = "", timeout: Double = 20,
-                        followRedirects: Bool = true) throws -> [String: Any] {
+                        followRedirects: Bool = true, cancelled: () -> Bool = { Task.isCancelled }) throws -> [String: Any] {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "脚本兼容性", message: "网络脚本必须在后台书源任务中执行") }
         if let inline = try SourceHTTP.inlinePage(address) {
             return ["text": inline.text, "url": inline.url, "status": 200, "headers": [String: String]()]
@@ -121,7 +121,7 @@ enum SourceJSBridge {
         }
         task.resume()
         while box.get() == nil {
-            if Task.isCancelled { task.cancel(); throw CancellationError() }
+            if cancelled() { task.cancel(); throw CancellationError() }
             if Date() >= deadline { task.cancel(); throw URLError(.timedOut) }
             // Wake immediately for a completed request; timed waits retain
             // bounded cancellation/deadline checks while avoiding an extra
@@ -137,5 +137,47 @@ enum SourceJSBridge {
         let text = (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()
         return ["text": text, "url": response.url?.absoluteString ?? address,
                 "status": http?.statusCode ?? 0, "headers": fields]
+    }
+
+    private final class Batch: @unchecked Sendable {
+        let lock = NSLock()
+        var next = 0
+        var stopped = false
+        var values: [[String: Any]?]
+        init(count: Int) { values = Array(repeating: nil, count: count) }
+        func take() -> Int? {
+            lock.lock(); defer { lock.unlock() }
+            guard !stopped, next < values.count else { return nil }
+            let value = next; next += 1; return value
+        }
+        func save(_ value: [String: Any], at index: Int) { lock.lock(); values[index] = value; lock.unlock() }
+        func cancel() { lock.lock(); stopped = true; lock.unlock() }
+        var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
+    }
+
+    static func requestAll(_ addresses: [String], base: String, headers: [String: String]) throws -> [[String: Any]] {
+        guard !addresses.isEmpty else { return [] }
+        let snapshot = SourceRuleSnapshot(), batch = Batch(count: addresses.count), group = DispatchGroup()
+        let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(30))
+        for _ in 0..<min(6, addresses.count) {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                defer { group.leave() }
+                snapshot.perform {
+                    while let index = batch.take() {
+                        do {
+                            let value = try request(addresses[index], base: base, headers: headers,
+                                                    timeout: max(0.1, deadline.timeIntervalSinceNow), cancelled: { batch.cancelled })
+                            batch.save(value, at: index)
+                        } catch { batch.save(["error": sourceErrorMessage(error)], at: index) }
+                    }
+                }
+            }
+        }
+        while group.wait(timeout: .now() + .milliseconds(20)) == .timedOut {
+            if Task.isCancelled { batch.cancel(); throw CancellationError() }
+            if Date() >= deadline { batch.cancel(); throw URLError(.timedOut) }
+        }
+        return batch.values.map { $0 ?? ["error": "并发请求已取消"] }
     }
 }

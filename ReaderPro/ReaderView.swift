@@ -55,6 +55,9 @@ private final class ReaderScrollProgress {
     @State private var showCatalog = false
     @State private var showSearch = false
     @State private var showBookmarks = false
+    @State private var selectedDictionary: ReaderSelectedText?
+    @State private var selectedShare: ReaderSelectedText?
+    @State private var selectedReplacement: ReplaceRule?
     @State private var showSourceChange = false
     @State private var showDownloadAll = false
     @State private var searchText = ""
@@ -182,6 +185,26 @@ private final class ReaderScrollProgress {
         .sheet(isPresented: $showSettings) { settingsSheet }
         .sheet(isPresented: $showStyle) { styleSheet }
         .sheet(isPresented: $showBookmarks) { bookmarksSheet }
+        .sheet(item: $selectedDictionary) { selection in NavigationStack { DictionaryLookupView(word: selection.text) } }
+        .sheet(item: $selectedShare) { ReaderShareSheet(text: $0.text) }
+        .sheet(item: $selectedReplacement) { rule in NavigationStack { ReplaceRuleEditorView(store: store, rule: rule) } }
+        .onReceive(NotificationCenter.default.publisher(for: .readerSelectionAction)) { notification in
+            guard let info = notification.userInfo, let action = info["action"] as? String,
+                  let text = info["text"] as? String, !text.isEmpty else { return }
+            let offset = info["offset"] as? Int ?? currentCharOffset()
+            switch action {
+            case "dictionary": selectedDictionary = ReaderSelectedText(text: text, offset: offset)
+            case "share": selectedShare = ReaderSelectedText(text: text, offset: offset)
+            case "replace":
+                var rule = ReplaceRule(); rule.name = "选文替换"; rule.pattern = text; rule.isRegex = false; rule.scope = book?.title ?? ""
+                selectedReplacement = rule
+            case "speak": speech.stop(); speech.speak(segments: [text], rate: Float(store.ttsRate), pitch: Float(store.ttsPitch))
+            case "search": searchText = text; showSearch = true
+            case "bookmark":
+                store.addBookmark(Bookmark(bookId: bookId, chapterIndex: chapterIndex, paragraphIndex: pageIndex(for: offset), snippet: text, charOffset: offset))
+            default: break
+            }
+        }
         .sheet(isPresented: $showSourceChange) { sourceChangeSheet }
         .sheet(isPresented: $showReplaceRules) {
             NavigationStack { ReplaceRuleView(store: store, bookID: bookId) }
@@ -401,7 +424,7 @@ private final class ReaderScrollProgress {
     func pageView(i: Int, size: CGSize, interactive: Bool = true) -> some View {
         let range = pages.indices.contains(i) ? pages[i] : NSRange(location: 0, length: 0)
         let sub = attributed.attributedSubstring(from: range)
-        PageTextView(attributed: sub, pageSize: pageSize)
+        PageTextView(attributed: sub, pageSize: pageSize, chapterOffset: range.location)
             .frame(width: pageSize.width, height: pageSize.height)
             .frame(width: size.width, height: size.height)
             .background(Color.clear)

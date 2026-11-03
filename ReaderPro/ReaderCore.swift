@@ -88,10 +88,11 @@ func makeReaderTextView(attributed: NSAttributedString, size: CGSize) -> UITextV
     container.lineBreakMode = .byCharWrapping
     container.maximumNumberOfLines = 0
     manager.addTextContainer(container)
-    let view = UITextView(frame: CGRect(origin: .zero, size: size), textContainer: container)
+    let view = ReaderSelectableTextView(frame: CGRect(origin: .zero, size: size), textContainer: container)
     view.backgroundColor = .clear
-    view.isEditable = false; view.isSelectable = false
-    view.isScrollEnabled = false; view.isUserInteractionEnabled = false
+    view.isEditable = false; view.isSelectable = true
+    view.isScrollEnabled = false; view.isUserInteractionEnabled = true
+    view.delegate = ReaderSelectionDelegate.shared
     view.textContainerInset = .zero
     container.widthTracksTextView = false; container.heightTracksTextView = false
     view.attributedText = attributed
@@ -114,9 +115,11 @@ func setReaderTextIfChanged(_ view: UITextView, _ attributed: NSAttributedString
 struct PageTextView: UIViewRepresentable {
     let attributed: NSAttributedString
     let pageSize: CGSize
+    var chapterOffset: Int = 0
 
     func makeUIView(context: Context) -> UITextView {
         let tv = makeReaderTextView(attributed: attributed, size: pageSize)
+        (tv as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
         tv.isAccessibilityElement = true
         tv.accessibilityIdentifier = "readerPage"
         tv.accessibilityLabel = attributed.string
@@ -125,6 +128,7 @@ struct PageTextView: UIViewRepresentable {
 
     func updateUIView(_ tv: UITextView, context: Context) {
         tv.textContainer.size = pageSize
+        (tv as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
         tv.attributedText = attributed
         tv.layoutManager.ensureLayout(for: tv.textContainer)
         tv.setNeedsDisplay()
@@ -145,9 +149,9 @@ struct FullTextReader: UIViewRepresentable {
         tv.accessibilityLabel = attributed.string
         tv.backgroundColor = .clear
         tv.isEditable = false
-        tv.isSelectable = false
+        tv.isSelectable = true
         tv.isScrollEnabled = false
-        tv.isUserInteractionEnabled = false
+        tv.isUserInteractionEnabled = true
         tv.textContainerInset = .zero
         tv.textContainer.lineFragmentPadding = 0
         tv.textContainer.lineBreakMode = .byCharWrapping
@@ -472,16 +476,16 @@ final class PageHostController: UIViewController {
         textView?.frame = CGRect(x: (view.bounds.width - w) / 2, y: (view.bounds.height - h) / 2, width: w, height: h)
     }
 
-    func configure(attributed: NSAttributedString, size: CGSize, background: UIColor, index: Int) {
+    func configure(attributed: NSAttributedString, size: CGSize, background: UIColor, index: Int, chapterOffset: Int = 0) {
         self.index = index
         self.pageSize = size
         if textView == nil {
             let tv = makeReaderTextView(attributed: attributed, size: size)
             tv.backgroundColor = .clear
             tv.isEditable = false
-            tv.isSelectable = false
+            tv.isSelectable = true
             tv.isScrollEnabled = false
-            tv.isUserInteractionEnabled = false
+            tv.isUserInteractionEnabled = true
             tv.isAccessibilityElement = true
             tv.accessibilityIdentifier = "readerPage"
             tv.textContainerInset = .zero
@@ -491,6 +495,7 @@ final class PageHostController: UIViewController {
         }
         view.backgroundColor = background
         textView?.textContainer.size = size
+        (textView as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
         textView?.attributedText = attributed
         textView?.accessibilityLabel = attributed.string
         view.setNeedsLayout()
@@ -564,6 +569,7 @@ struct CurlPageController: UIViewControllerRepresentable {
 
         @objc func readerTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
+            if let text = view.subviews.compactMap({ $0 as? UITextView }).first, text.selectedRange.length > 0 { return }
             let fraction = tap.location(in: view).x / view.bounds.width
             if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
             else if fraction > 2.0 / 3.0 { parent.onEdgeTap(true) }
@@ -572,6 +578,7 @@ struct CurlPageController: UIViewControllerRepresentable {
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldReceive touch: UITouch) -> Bool {
+            if let text = touch.view as? UITextView, text.selectedRange.length > 0 { return false }
             guard parent.animatedCurl, let view = gestureRecognizer.view, view.bounds.width > 0 else { return true }
             let fraction = touch.location(in: view).x / view.bounds.width
             return fraction >= 1.0 / 3.0 && fraction <= 2.0 / 3.0
@@ -590,7 +597,8 @@ struct CurlPageController: UIViewControllerRepresentable {
                 sub = NSAttributedString(string: "正在打开下一章…")
             } else { return nil }
             let host = PageHostController()
-            host.configure(attributed: sub, size: displayed.pageSize, background: displayed.background, index: index)
+            host.configure(attributed: sub, size: displayed.pageSize, background: displayed.background, index: index,
+                           chapterOffset: displayed.pages.indices.contains(index) ? displayed.pages[index].location : 0)
             return host
         }
 

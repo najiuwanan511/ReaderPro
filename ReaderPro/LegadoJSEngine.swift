@@ -209,6 +209,18 @@ final class LegadoJS {
             return json
         }
         java.setObject(request, forKeyedSubscript: "_request" as NSString)
+        let requests: @convention(block) (String) -> String = { json in
+            do {
+                let addresses = try JSONDecoder().decode([String].self, from: Data(json.utf8))
+                let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
+                let results = try SourceJSBridge.requestAll(addresses, base: baseUrl, headers: headers)
+                return String(decoding: try JSONSerialization.data(withJSONObject: results), as: UTF8.self)
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return "[]"
+            }
+        }
+        java.setObject(requests, forKeyedSubscript: "_requests" as NSString)
         let importScript: @convention(block) (String) -> String = { path in
             do {
                 let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
@@ -760,7 +772,7 @@ final class LegadoJS {
         return _response(java._request(String(url), '', '', typeof headers === 'string' ? headers : JSON.stringify(headers || {}), timeout || 20000, true));
     };
     java.ajax = function(url, timeout) { return java.connect(Array.isArray(url) ? url[0] : url, {}, timeout).body(); };
-    java.ajaxAll = function(urls) { return _array(urls.map(function(url) { return java.connect(url); })); };
+    java.ajaxAll = function(urls) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)))).map(function(data){return _response(JSON.stringify(data));})); };
     ['get','head','post'].forEach(function(method) {
         var storedGet = java.get;
         java[method] = function(url, body, headers, timeout) {

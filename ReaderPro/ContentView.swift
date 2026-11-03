@@ -5,21 +5,34 @@ import AVFoundation
 struct ContentView: View {
     @StateObject private var store = BookStore()
     @EnvironmentObject private var network: NetworkBootstrap
+    @AppStorage("ui.showDiscovery") private var showDiscovery = true
+    @AppStorage("ui.showRss") private var showRss = true
+    @State private var selectedTab = UserDefaults.standard.integer(forKey: "ui.homeTab")
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             BookshelfView(store: store)
-                .tabItem { Label("书架", systemImage: "books.vertical.fill") }
+                .tabItem { Label("书架", systemImage: "books.vertical.fill") }.tag(0)
+            if showDiscovery {
             DiscoveryView(store: store)
-                .tabItem { Label("发现", systemImage: "safari") }
+                .tabItem { Label("发现", systemImage: "safari") }.tag(1)
+            }
+            if showRss {
             RssSubscribeView(store: store)
-                .tabItem { Label("订阅", systemImage: "bookmark") }
+                .tabItem { Label("订阅", systemImage: "bookmark") }.tag(2)
+            }
             SettingsView(store: store)
-                .tabItem { Label("我的", systemImage: "person.fill") }
+                .tabItem { Label("我的", systemImage: "person.fill") }.tag(3)
         }
+        .onAppear { validateSelectedTab() }
+        .onChange(of: showDiscovery) { _, _ in validateSelectedTab() }
+        .onChange(of: showRss) { _, _ in validateSelectedTab() }
         .tint(AppTheme.accent)
         .toolbarBackground(AppTheme.surface, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
+    }
+    private func validateSelectedTab() {
+        if (selectedTab == 1 && !showDiscovery) || (selectedTab == 2 && !showRss) || !(0...3).contains(selectedTab) { selectedTab = 0 }
     }
 
     // 启动即联网检测：断网时在顶部给出提示（联网后自动消失）

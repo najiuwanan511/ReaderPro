@@ -362,7 +362,26 @@ func decodeTextData(_ data: Data) -> String {
     return String(data: data, encoding: .isoLatin1) ?? ""
 }
 
-func splitTxtChapters(_ text: String, bookTitle: String) -> [BookChapter] {
+func splitTxtChapters(_ text: String, bookTitle: String, rules: [TxtTocRule]? = nil) -> [BookChapter] {
+    let customRules = (rules ?? ReaderRuleLibrary.shared.txtRules).filter(\.enable).sorted { $0.serialNumber < $1.serialNumber }
+    let ns = text as NSString
+    for rule in customRules {
+        guard let regex = try? NSRegularExpression(pattern: rule.rule, options: .anchorsMatchLines) else { continue }
+        let matches = regex.matches(in: text, range: NSRange(location: 0, length: ns.length)).filter { $0.range.length > 0 }
+        guard !matches.isEmpty else { continue }
+        var result: [BookChapter] = []
+        if let first = matches.first, first.range.location > 0 {
+            let preface = ns.substring(to: first.range.location).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !preface.isEmpty { result.append(BookChapter(title: "前言", text: preface)) }
+        }
+        for (index, match) in matches.enumerated() {
+            let start = NSMaxRange(match.range)
+            let end = index + 1 < matches.count ? matches[index + 1].range.location : ns.length
+            let title = rule.replacement.isEmpty ? ns.substring(with: match.range) : regex.replacementString(for: match, in: text, offset: 0, template: rule.replacement)
+            result.append(BookChapter(title: title.trimmingCharacters(in: .whitespacesAndNewlines), text: ns.substring(with: NSRange(location: start, length: end - start)).trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+        return result
+    }
     let lines = text.components(separatedBy: .newlines)
     let pattern = #"^\s*(第[一二三四五六七八九十百千0-9０-９]+[章节回卷篇]|Chapter\s+\d+|序章|楔子|前言|正文|引子).{0,40}$"#
     let re = try? NSRegularExpression(pattern: pattern)

@@ -12,6 +12,7 @@ struct SettingsView: View {
     @State private var showThemeMode = false
     @State private var showComingSoon = false
     @State private var comingSoonText = ""
+    @ObservedObject private var readerRules = ReaderRuleLibrary.shared
 
     var body: some View {
         NavigationStack {
@@ -24,13 +25,13 @@ struct SettingsView: View {
                     NavigationLink { SourceView(store: store) } label: {
                         SettingRow(icon: "magnifyingglass", iconTint: .indigo, title: "多源搜索", summary: "搜索书名、作者并查看目录")
                     }
-                    Button { comingSoon("TXT目录规则") } label: {
+                    NavigationLink { ReaderRuleLibraryView(title: "TXT目录规则", rules: $readerRules.txtRules) } label: {
                         SettingRow(icon: "list.bullet.indent", iconTint: .teal, title: "TXT目录规则", summary: "自定义 TXT 章节识别规则")
                     }.buttonStyle(.plain)
                     NavigationLink { ReplaceRuleView(store: store) } label: {
                         SettingRow(icon: "wand.and.stars", iconTint: .orange, title: "替换净化", summary: "正则替换规则，正文去广告净化")
                     }
-                    Button { comingSoon("字典规则") } label: {
+                    NavigationLink { ReaderRuleLibraryView(title: "字典规则", rules: $readerRules.dictionaries) } label: {
                         SettingRow(icon: "text.badge.plus", iconTint: .green, title: "字典规则", summary: "长按查词 / 翻译")
                     }.buttonStyle(.plain)
                     Button { showThemeMode = true } label: {
@@ -225,26 +226,29 @@ struct OtherSettingsView: View {
     @State private var showComingSoon = false
     @State private var comingSoonText = ""
     @State private var cacheCleared = false
+    @AppStorage("ui.homeTab") private var homeTab = 0
+    @AppStorage("ui.showDiscovery") private var showDiscovery = true
+    @AppStorage("ui.showRss") private var showRss = true
+    @AppStorage("network.userAgent") private var userAgent = ""
 
     var body: some View {
         List {
             Section {
-                Button { comingSoon("默认主页") } label: {
-                    SettingRow(icon: "house", iconTint: .blue, title: "默认主页", summary: "启动时显示的书架 / 发现 / 订阅")
-                }.buttonStyle(.plain)
-                SettingRow(icon: "sparkles", iconTint: .purple, title: "显示发现", isOn: Binding(get: { true }, set: { _ in comingSoon("显示/隐藏底部标签") }))
-                SettingRow(icon: "bookmark", iconTint: .orange, title: "显示订阅", isOn: Binding(get: { true }, set: { _ in comingSoon("显示/隐藏底部标签") }))
+                Picker("默认主页", selection: $homeTab) {
+                    Text("书架").tag(0)
+                    if showDiscovery { Text("发现").tag(1) }
+                    if showRss { Text("订阅").tag(2) }
+                    Text("我的").tag(3)
+                }
+                Toggle("显示发现", isOn: $showDiscovery).onChange(of: showDiscovery) { _, enabled in if !enabled && homeTab == 1 { homeTab = 0 } }
+                Toggle("显示订阅", isOn: $showRss).onChange(of: showRss) { _, enabled in if !enabled && homeTab == 2 { homeTab = 0 } }
             } header: { SettingSectionHeader(title: "主界面") }
 
             Section {
-                Button { comingSoon("用户代理") } label: {
-                    SettingRow(icon: "network", iconTint: .teal, title: "用户代理", summary: "自定义请求 User-Agent")
-                }.buttonStyle(.plain)
-                Button {
-                    clearCache()
-                } label: {
-                    SettingRow(icon: "trash", iconTint: .red, title: "清理缓存", summary: cacheCleared ? "缓存已清理" : "清理漫画图片缓存")
-                }.buttonStyle(.plain)
+                TextField("自定义 User-Agent（留空使用默认）", text: $userAgent, axis: .vertical).textInputAutocapitalization(.never).autocorrectionDisabled()
+                NavigationLink { CacheManagementView(store: store) } label: {
+                    SettingRow(icon: "tray.full", iconTint: .blue, title: "缓存管理", summary: "正文下载、预加载数量、图片和网页缓存")
+                }
             } header: { SettingSectionHeader(title: "其他设置") }
 
             Section {

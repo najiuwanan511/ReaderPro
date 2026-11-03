@@ -247,7 +247,10 @@ extension KeyedDecodingContainer {
     }
 }
 
-let sourceUA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+var sourceUA: String {
+    let custom = UserDefaults.standard.string(forKey: "network.userAgent")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return custom.isEmpty ? "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" : custom
+}
 
 // URLSession and synchronous JS bridge requests both observe this deadline.
 func withTimeout<T: Sendable>(_ seconds: Double, _ op: @escaping @Sendable () async throws -> T) async throws -> T {
