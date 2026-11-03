@@ -1,6 +1,25 @@
 import XCTest
 
 final class DiscoveryPaginationUITests: XCTestCase {
+    func testDiscoveryScriptToastShowsSourceAndAllowsNavigation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--discovery-controls-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["回归测试书源"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15)); source.tap()
+        let action = app.buttons["explore-button-4"]
+        XCTAssertTrue(action.waitForExistence(timeout: 15)); action.tap()
+        let notice = app.staticTexts["sourceScriptToast"]
+        XCTAssertTrue(notice.waitForExistence(timeout: 5))
+        XCTAssertEqual(notice.label, "回归测试书源: 发现参数已更新")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "发现脚本中文提示"; shot.lifetime = .keepAlways; add(shot)
+        let category = app.buttons["打开小说"]
+        XCTAssertTrue(category.waitForExistence(timeout: 15)); category.tap()
+        XCTAssertTrue(app.staticTexts["测试小说"].waitForExistence(timeout: 30), "Script notifications must not intercept navigation")
+    }
+
     func testDiscoveryCanScrollBothDirectionsAfterExpandingAndCollapsingSource() {
         continueAfterFailure = false
         executionTimeAllowance = 300

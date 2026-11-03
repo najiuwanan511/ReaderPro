@@ -237,7 +237,7 @@ struct SourceFixtureRoot: View {
                   {title:'关键词',type:'text',action:'infoMap.save()'},
                   {title:'模式',type:'toggle',chars:['关','开'],default:'关',action:'infoMap.save();java.refreshExplore()'},
                   {title:'频道',type:'select',chars:['小说','其他'],default:'小说',action:'infoMap.save();java.refreshExplore()'},
-                  {title:'更新',type:'button',viewName:"'刷新参数'",action:"infoMap.put('更新次数',String(Number(infoMap.get('更新次数')||0)+1));infoMap.save();java.refreshExplore()"},
+                  {title:'更新',type:'button',viewName:"'刷新参数'",action:"java.longToast('发现参数已更新');infoMap.put('更新次数',String(Number(infoMap.get('更新次数')||0)+1));infoMap.save();java.refreshExplore()"},
                   {title:'打开'+channel,url:channel==='小说'?'/library/categories/fiction':'/library/categories/alternate',style:{layout_wrapBefore:true}},
                   {title:'更新次数'+(infoMap.get('更新次数')||'0')}
                 ]

@@ -521,6 +521,11 @@ final class LegadoJS {
         chapterObj.setObject(chapter?.isPay ?? false, forKeyedSubscript: "isPay" as NSString)
         ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
+        let notify: @convention(block) (String, String, Bool) -> Void = { message, tag, long in
+            SourceExecutionLog.shared.add(tag.isEmpty ? message : tag + ": " + message, source: sourceUrl)
+            Task { @MainActor in SourceScriptToast.show(message, tag: tag, long: long) }
+        }
+        java.setObject(notify, forKeyedSubscript: "_toast" as NSString)
         ctx.evaluateScript(Self.compatibilityScript)
         ctx.evaluateScript(#"""
         function _loginMap(value) {
@@ -955,7 +960,8 @@ final class LegadoJS {
     java.log = function(value) { java._log(String(value)); return value; };
     java.logType = function(value) { java._log(value==null?'null':Object.prototype.toString.call(value)); };
     java.getTag = function() { return source.bookSourceName || source.sourceName || ''; };
-    java.toast = java.longToast = function() {};
+    java.toast = function(value) { java._toast(String(value), java.getTag(), false); };
+    java.longToast = function(value) { java._toast(String(value), java.getTag(), true); };
     java.ruleUrl = baseUrl;
     java.getSource = function() { return source; };
     java.getBook = function() { return book; };
