@@ -445,6 +445,7 @@ struct AllBookmarksView: View {
 
 struct ReadRecordView: View {
     @ObservedObject var store: BookStore
+    @ObservedObject private var statistics = ReadingStatistics.shared
 
     private var totalMinutes: Int { store.books.reduce(0) { $0 + $1.totalMinutes } }
     private var sortedBooks: [LocalBook] { store.books.sorted { $0.lastRead > $1.lastRead } }
@@ -465,6 +466,14 @@ struct ReadRecordView: View {
                 }
                 .padding(.vertical, 6)
             } header: { SettingSectionHeader(title: "统计") }
+
+            if !statistics.dailyTotals.isEmpty {
+                Section("每日阅读") {
+                    ForEach(statistics.dailyTotals, id: \.day) { day in
+                        HStack { Text(day.day); Spacer(); Text("\(Int(day.seconds) / 60) 分 \(Int(day.seconds) % 60) 秒").foregroundStyle(.secondary) }
+                    }
+                }
+            }
 
             Section {
                 ForEach(sortedBooks) { book in

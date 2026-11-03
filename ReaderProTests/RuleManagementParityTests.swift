@@ -3,6 +3,18 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testReadingStatisticsCarryShortSessionsAndSplitAtMidnight() throws {
+        let suite = "ReadingStatistics." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let stats = ReadingStatistics(defaults: defaults), start = Date(timeIntervalSince1970: 86380)
+        XCTAssertEqual(stats.record(bookID: "book", title: "书", from: start, to: start.addingTimeInterval(40), calendar: calendar), 0)
+        XCTAssertEqual(stats.entries.map(\.seconds), [20,20])
+        let restored = ReadingStatistics(defaults: defaults)
+        XCTAssertEqual(restored.record(bookID: "book", title: "书", from: start.addingTimeInterval(100), to: start.addingTimeInterval(125), calendar: calendar), 1)
+        XCTAssertEqual(restored.entries.reduce(0) { $0 + $1.seconds }, 65)
+    }
+
     func testReaderTapRegionsUseIndependentRowsAndColumnsWithPersistedActions() {
         let suite = "TapRegions." + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }

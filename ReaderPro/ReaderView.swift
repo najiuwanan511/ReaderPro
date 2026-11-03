@@ -38,6 +38,7 @@ private final class ReaderScrollProgress {
     @ObservedObject var store: BookStore
     let bookId: String
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     // 章节 / 分页
     @State private var chapterIndex = 0
@@ -110,7 +111,8 @@ private final class ReaderScrollProgress {
     @State private var coverDrag: CGFloat = 0
 
     // 阅读时长
-    @State private var readingStart = Date()
+    @State private var readingStart: Date?
+    private let statisticsTick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
 
     @StateObject private var speech = SpeechController()
 
@@ -157,7 +159,7 @@ private final class ReaderScrollProgress {
             .accessibilityIdentifier("readerViewport")
             .onAppear {
                 lastSize = size
-                readingStart = Date()
+                if scenePhase == .active && readingStart == nil { readingStart = Date() }
                 onAppear(size: size)
                 if let book, let source = store.sourceForBook(book) { Task.detached { await source.callBookEvent("startRead", book: book) } }
             }
@@ -187,11 +189,7 @@ private final class ReaderScrollProgress {
             store.chapterCache.cancel(bookID: bookId)
             if !loading && chapter?.text.hasPrefix("__URL__") != true { saveProgress() }
             cancelChapterLoad()
-            let minutes = max(0, Int(Date().timeIntervalSince(readingStart) / 60))
-            if minutes > 0, var b = store.books.first(where: { $0.id == bookId }) {
-                b.totalMinutes += minutes
-                store.updateBook(b)
-            }
+            recordReadingTime(resume: false)
             speech.stop()
             autoTimer?.invalidate()
             UIScreen.main.brightness = initialBrightness
@@ -234,6 +232,11 @@ private final class ReaderScrollProgress {
         .onChange(of: book?.useReplaceRule) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
         .onChange(of: store.replaceRules) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
         .onChange(of: speech.error) { _, value in if !value.isEmpty { errorText = value } }
+        .onReceive(statisticsTick) { _ in if readingStart != nil { recordReadingTime(resume: scenePhase == .active) } }
+        .onChange(of: scenePhase) { _, value in
+            if value == .active { if readingStart == nil { readingStart = Date() } }
+            else { recordReadingTime(resume: false) }
+        }
         .sheet(isPresented: $showDownloadAll) { downloadSheet }
         .alert("加载失败", isPresented: .constant(!errorText.isEmpty)) {
             Button("重试") { errorText = ""; loadChapterIfNeeded() }
@@ -668,6 +671,15 @@ private final class ReaderScrollProgress {
         } else {
             UIScreen.main.brightness = CGFloat(store.brightness)
         }
+    }
+
+    func recordReadingTime(resume: Bool) {
+        let end = Date()
+        if let start = readingStart, var current = book {
+            let added = ReadingStatistics.shared.record(bookID: current.id, title: current.title, from: start, to: end)
+            if added > 0 { current.totalMinutes += added; store.updateBook(current) }
+        }
+        readingStart = resume ? end : nil
     }
 
     // MARK: 进度
