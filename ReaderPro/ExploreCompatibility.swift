@@ -1,5 +1,9 @@
 import Foundation
 
+extension LegadoJSCtx {
+    @TaskLocal static var exploreAction = false
+}
+
 struct ExploreStyle: Equatable {
     var grow: Double = 0
     var shrink: Double = 1
@@ -190,7 +194,7 @@ extension LegadoSource {
         return try await withTimeout(30) {
             try await self.withRules {
                 let before = ExploreInfo.revision(self.bookSourceUrl)
-                _ = self.runExploreScript(action)
+                _ = LegadoJSCtx.$exploreAction.withValue(true) { self.runExploreScript(action) }
                 try LegadoJSCtx.failures?.check()
                 return before != ExploreInfo.revision(self.bookSourceUrl)
             }

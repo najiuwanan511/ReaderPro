@@ -590,6 +590,15 @@ final class LegadoJS {
         let refreshExplore: @convention(block) () -> Void = { ExploreInfo.refresh(sourceUrl) }
         ctx.setObject(infoMap, forKeyedSubscript: "_exploreInfo" as NSString)
         if loginContext == nil { java.setObject(refreshExplore, forKeyedSubscript: "refreshExplore" as NSString) }
+        if loginContext == nil && LegadoJSCtx.exploreAction {
+            // ExploreAdapter uses SourceLoginJsExtensions for controls. Its
+            // reUiView callback refreshes the categories regardless of deltaUp;
+            // upUiData is deliberately empty (it is not a login form).
+            java.setObject(refreshExplore, forKeyedSubscript: "reLoginView" as NSString)
+            java.setObject(refreshExplore, forKeyedSubscript: "reUiView" as NSString)
+            let update: @convention(block) (JSValue) -> Void = { _ in }
+            java.setObject(update, forKeyedSubscript: "upLoginData" as NSString)
+        }
         ctx.evaluateScript(Self.exploreInfoScript)
         SourceCrypto.install(java, context: ctx)
         SourceFiles.install(java, base: baseUrl)

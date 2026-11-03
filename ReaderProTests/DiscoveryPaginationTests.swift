@@ -153,6 +153,25 @@ final class DiscoveryPaginationTests: XCTestCase {
         XCTAssertTrue(result[0].displayError?.contains("broken display name") == true)
     }
 
+    func testDiscoveryLoginRefreshCallbackRebuildsCategoriesWithoutChangingLoginData() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://explore-login-callback.test/" + UUID().uuidString
+        source.exploreUrl = #"@js: [{title:infoMap.get('频道')||'甲',url:'/list'}]"#
+        let initial = try await source.resolvedExploreCategories()
+        XCTAssertEqual(initial.map(\.title), ["甲"])
+        for call in ["java.reLoginView()", "java.reLoginView(true)", "java.reUiView(false)"] {
+            let action = ExploreCategory(title: "切换", url: "", type: "button",
+                action: "infoMap.put('频道','乙');java.upLoginData({'频道':'不能写入登录表单'});" + call)
+            let revision = ExploreInfo.revision(source.bookSourceUrl)
+            let refreshed = try await source.performExploreAction(action)
+            XCTAssertTrue(refreshed)
+            XCTAssertEqual(ExploreInfo.revision(source.bookSourceUrl), revision + 1)
+            let updated = try await source.resolvedExploreCategories()
+            XCTAssertEqual(updated.map(\.title), ["乙"])
+            XCTAssertNil(SourceLoginInfo.map(source.bookSourceUrl)["频道"])
+        }
+    }
+
     func testAndroidDiagnosticCategoryIsNotARequestAndEmptyDynamicNamesShowNull() async throws {
         let diagnostic = ExploreCategory(title: "ERROR:需要登录", url: "请先登录并选择接口")
         XCTAssertEqual(diagnostic.diagnosticMessage, "请先登录并选择接口")
