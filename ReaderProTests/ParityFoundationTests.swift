@@ -2,6 +2,34 @@ import XCTest
 @testable import ReaderPro
 
 final class ParityFoundationTests: XCTestCase {
+    func testURLBridgePreservesAndroidRelativePathsAndFormQuerySemantics() throws {
+        let failures = RuleFailures()
+        let result = LegadoJSCtx.$failures.withValue(failures) {
+            LegadoJS.run(#"""
+            var u=java.toURL('../chapter%20one?name=%E4%B8%AD+%E6%96%87&token=a%2Bb%3D&name=last&%6B=value&empty=&flag','https://reader.test:8443/book/list/');
+            var p=u.searchParams;
+            [u.host,u.origin,u.pathname,p.get('name'),p.get('token'),p.get('%6B'),p.get('empty'),p.get('flag'),p.containsKey('empty'),p.size(),java.toURL('https://reader.test/a').searchParams===null].join('|');
+            """#, input: "", baseUrl: "https://reader.test", sourceKey: "", sourceUrl: "https://reader.test")
+        }
+        try failures.check()
+        XCTAssertEqual(result, "reader.test|https://reader.test:8443|/book/chapter%20one|last|a+b=|value||null|true|5|true")
+    }
+
+    func testNetworkProbeReturnsPerAddressFailureTimingWithoutDiscardingOtherResults() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"
+        try await source.withRules {
+            let result = LegadoJS.run(#"""
+            var r=java.ajaxTestAll([baseUrl+'/health','http://127.0.0.1:1/denied',baseUrl+'/denied'],2000,true);
+            if(r.size()!==3||r.get(0).body()!=='ready'||r.get(0).callTime()<0||!r.get(0).isSuccessful())throw Error('healthy probe lost');
+            if(r.get(1).callTime()>=0||!r.get(1).body())throw Error('failure did not carry error timing');
+            if(r.get(2).code()!==403||r.get(2).isSuccessful()||r.get(2).callTime()<0)throw Error('HTTP error is not a transport failure');
+            r.get(0).putCallTime(123);r.get(0).callTime();
+            """#, input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check()
+            XCTAssertEqual(result, "123")
+        }
+    }
+
     func testSourceArchiveScriptsExtractRealSevenZipAndRarContents() throws {
         for (suffix, name, expected) in [("7z", "chapter.txt", "七压缩正文"), ("rar", "README.md", "# Unrar\n\nA description of this package.\n")] {
             let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "source-files", withExtension: suffix))

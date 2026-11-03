@@ -162,7 +162,8 @@ enum SourceJSBridge {
         var cancelled: Bool { lock.lock(); defer { lock.unlock() }; return stopped }
     }
 
-    static func requestAll(_ addresses: [String], base: String, headers: [String: String], skipRateLimit: Bool = false) throws -> [[String: Any]] {
+    static func requestAll(_ addresses: [String], base: String, headers: [String: String], skipRateLimit: Bool = false,
+                           timeout: Double = 20, isTest: Bool = false) throws -> [[String: Any]] {
         guard !addresses.isEmpty else { return [] }
         let snapshot = SourceRuleSnapshot(), batch = Batch(count: addresses.count), group = DispatchGroup()
         let deadline = min(LegadoJSCtx.deadline ?? .distantFuture, Date().addingTimeInterval(30))
@@ -172,13 +173,31 @@ enum SourceJSBridge {
                 defer { group.leave() }
                 snapshot.perform {
                     while let index = batch.take() {
+                        let started = Date()
                         do {
-                            let value = try SourceRateLimiter.$skipped.withValue(skipRateLimit || SourceRateLimiter.skipped) {
+                            var value = try SourceRateLimiter.$skipped.withValue(skipRateLimit || SourceRateLimiter.skipped) {
                                 try request(addresses[index], base: base, headers: headers,
-                                            timeout: max(0.1, deadline.timeIntervalSinceNow), cancelled: { batch.cancelled })
+                                            timeout: max(0.1, min(timeout, deadline.timeIntervalSinceNow)), cancelled: { batch.cancelled })
                             }
+                            value["callTime"] = Int(Date().timeIntervalSince(started) * 1000)
                             batch.save(value, at: index)
-                        } catch { batch.save(["error": sourceErrorMessage(error)], at: index) }
+                        } catch {
+                            if isTest {
+                                let code: Int
+                                switch (error as NSError).code {
+                                case NSURLErrorTimedOut: code = -2
+                                case NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed: code = -3
+                                case NSURLErrorCannotConnectToHost: code = -4
+                                case NSURLErrorNetworkConnectionLost: code = -5
+                                case NSURLErrorSecureConnectionFailed, NSURLErrorServerCertificateUntrusted,
+                                     NSURLErrorServerCertificateHasBadDate, NSURLErrorServerCertificateHasUnknownRoot,
+                                     NSURLErrorServerCertificateNotYetValid: code = -6
+                                default: code = -7
+                                }
+                                batch.save(["text": sourceErrorMessage(error), "url": addresses[index], "status": 200,
+                                            "headers": [String: String](), "callTime": code], at: index)
+                            } else { batch.save(["error": sourceErrorMessage(error)], at: index) }
+                        }
                     }
                 }
             }

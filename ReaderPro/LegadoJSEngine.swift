@@ -227,11 +227,12 @@ final class LegadoJS {
             return json
         }
         java.setObject(request, forKeyedSubscript: "_request" as NSString)
-        let requests: @convention(block) (String, Bool) -> String = { json, skipRateLimit in
+        let requests: @convention(block) (String, Bool, Double, Bool) -> String = { json, skipRateLimit, timeout, isTest in
             do {
                 let addresses = try JSONDecoder().decode([String].self, from: Data(json.utf8))
                 let headers = SourceLoginHeaders.merge(urlContext?.headers ?? LegadoJSCtx.headers, source: sourceUrl)
-                let results = try SourceJSBridge.requestAll(addresses, base: baseUrl, headers: headers, skipRateLimit: skipRateLimit)
+                let results = try SourceJSBridge.requestAll(addresses, base: baseUrl, headers: headers, skipRateLimit: skipRateLimit,
+                                                            timeout: timeout > 0 ? timeout / 1000 : 20, isTest: isTest)
                 return String(decoding: try JSONSerialization.data(withJSONObject: results), as: UTF8.self)
             } catch {
                 JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
@@ -239,6 +240,32 @@ final class LegadoJS {
             }
         }
         java.setObject(requests, forKeyedSubscript: "_requests" as NSString)
+        let parseURL: @convention(block) (String, String) -> String = { address, base in
+            do {
+                let relativeBase = base.isEmpty ? nil : URL(string: base)
+                guard let url = URL(string: address, relativeTo: relativeBase)?.absoluteURL,
+                      let parts = URLComponents(url: url, resolvingAgainstBaseURL: true), let scheme = parts.scheme else {
+                    throw SourceFailure(stage: "脚本 URL", message: "无效的绝对地址或基准地址")
+                }
+                var params: [String: String] = [:]
+                for pair in (parts.percentEncodedQuery ?? "").split(separator: "&", omittingEmptySubsequences: false) {
+                    let fields = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+                    guard fields.count == 2 else { continue }
+                    // Android JsURL decodes values as form data, retains the
+                    // original key, and keeps the last duplicated parameter.
+                    params[String(fields[0])] = String(fields[1]).replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? String(fields[1])
+                }
+                let host = parts.host ?? ""
+                let origin = scheme + "://" + host + (parts.port.map { ":\($0)" } ?? "")
+                let result: [String: Any] = ["host": host, "origin": origin, "pathname": parts.percentEncodedPath,
+                                           "searchParams": parts.percentEncodedQuery == nil ? NSNull() : params]
+                return String(decoding: try JSONSerialization.data(withJSONObject: result), as: UTF8.self)
+            } catch {
+                JSContext.current()?.exception = JSValue(newErrorFromMessage: sourceErrorMessage(error), in: JSContext.current())
+                return "{}"
+            }
+        }
+        java.setObject(parseURL, forKeyedSubscript: "_toURL" as NSString)
         let log: @convention(block) (String) -> Void = { SourceExecutionLog.shared.add($0, source: sourceUrl) }
         java.setObject(log, forKeyedSubscript: "_log" as NSString)
         let importScript: @convention(block) (String) -> String = { path in
@@ -835,6 +862,9 @@ final class LegadoJS {
                 return data.text;
             },
             code: function() { return data.status; }, statusCode: function() { return data.status; },
+            isSuccessful: function() { return data.status>=200 && data.status<300; },
+            callTime: function() { return data.callTime || 0; },
+            putCallTime: function(value) { data.callTime=Number(value); },
             header: function(name) { return data.headers[String(name).toLowerCase()] || ''; },
             // Jsoup's Response.headers(name) returns a list; without a name,
             // headers() returns the map. Real redirect rules use [0] or
@@ -859,7 +889,18 @@ final class LegadoJS {
         return _response(java._request(String(url), '', '', typeof headers === 'string' ? headers : JSON.stringify(headers || {}), timeout || 20000, true));
     };
     java.ajax = function(url, timeout) { return java.connect(Array.isArray(url) ? url[0] : url, {}, timeout).body(); };
-    java.ajaxAll = function(urls, skipRateLimit) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)), !!skipRateLimit)).map(function(data){return _response(JSON.stringify(data));})); };
+    java.ajaxAll = function(urls, skipRateLimit) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)), !!skipRateLimit, 20000, false)).map(function(data){return _response(JSON.stringify(data));})); };
+    java.ajaxTestAll = function(urls, timeout, skipRateLimit) { return _array(JSON.parse(java._requests(JSON.stringify(Array.from(urls).map(String)), !!skipRateLimit, Number(timeout)||20000, true)).map(function(data){return _response(JSON.stringify(data));})); };
+    java.toURL = function(url, base) {
+        var parsed=JSON.parse(java._toURL(String(url),base==null?'':String(base))), values=parsed.searchParams;
+        if(values!==null)parsed.searchParams=_methods(Object.assign({},values),{
+            get:function(key){return Object.prototype.hasOwnProperty.call(values,String(key))?values[String(key)]:null;},
+            containsKey:function(key){return Object.prototype.hasOwnProperty.call(values,String(key));},
+            size:function(){return Object.keys(values).length;},
+            keySet:function(){return _array(Object.keys(values));}
+        });
+        return parsed;
+    };
     ['get','head','post'].forEach(function(method) {
         var storedGet = java.get;
         java[method] = function(url, body, headers, timeout) {
@@ -874,6 +915,8 @@ final class LegadoJS {
         return date.getFullYear()+'/'+pad(date.getMonth()+1)+'/'+pad(date.getDate())+' '+pad(date.getHours())+':'+pad(date.getMinutes());
     };
     java.log = function(value) { java._log(String(value)); return value; };
+    java.logType = function(value) { java._log(value==null?'null':Object.prototype.toString.call(value)); };
+    java.getTag = function() { return source.bookSourceName || source.sourceName || ''; };
     java.toast = java.longToast = function() {};
     java.ruleUrl = baseUrl;
     java.getSource = function() { return source; };
