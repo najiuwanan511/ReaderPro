@@ -3,6 +3,23 @@ import XCTest
 // Keep these flows in the existing test class so both CI configurations run
 // them, including the iPhone 14 Pro Max / iOS 17 Release configuration.
 extension SourceFlowUITests {
+    func testDiscoveryScriptButtonOpensNativeVideoAndReturnsToCategories() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--video-ui-fixture", "--video-script-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["短剧视频测试源"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15)); source.tap()
+        let category = app.buttons["脚本播放"]
+        XCTAssertTrue(category.waitForExistence(timeout: 15)); category.tap()
+        let time = app.staticTexts["videoPlaybackTime"]
+        XCTAssertTrue(time.waitForExistence(timeout: 15))
+        let advanced = NSPredicate(format: "label MATCHES %@", "已播放 ([2-9]|[1-9][0-9]+) 秒")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advanced, object: time)], timeout: 30), .completed)
+        app.buttons["返回目录"].tap()
+        XCTAssertTrue(category.waitForExistence(timeout: 10))
+    }
+
     private func openVideo(_ app: XCUIApplication, error: Bool = false, web: Bool = false, hls: Bool = false) {
         continueAfterFailure = false
         app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--video-ui-fixture"] + (error ? ["--video-error-fixture"] : []) + (web ? ["--video-web-fixture"] : [])

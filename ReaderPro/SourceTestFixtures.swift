@@ -256,6 +256,9 @@ struct SourceFixtureRoot: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--video-ui-fixture") {
                 store.sources = [SourceTestFixtures.video()]
+                if ProcessInfo.processInfo.arguments.contains("--video-script-fixture") {
+                    store.sources[0].exploreUrl = #"[{"title":"脚本播放","type":"button","action":"java.openVideoPlayer(source.bookSourceUrl+'/video/episode1.mp4','脚本直达视频',true)"}]"#
+                }
                 if ProcessInfo.processInfo.arguments.contains("--video-error-fixture") { store.sources[0].ruleContent.content = "@js:''" }
                 if ProcessInfo.processInfo.arguments.contains("--video-web-fixture") {
                     store.sources[0].ruleContent.content = "@js:java.startBrowser('/video/embed?ep='+(chapter.index+1),title); result='';"

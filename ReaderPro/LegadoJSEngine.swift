@@ -662,6 +662,19 @@ final class LegadoJS {
         java.setObject(chapterNumber, forKeyedSubscript: "toNumChapter" as NSString)
         let getUA: @convention(block) () -> String = { sourceUA }
         java.setObject(getUA, forKeyedSubscript: "getWebViewUA" as NSString)
+        let htmlFormat: @convention(block) (String) -> String = { SourceHTMLFormatter.format($0) }
+        java.setObject(htmlFormat, forKeyedSubscript: "htmlFormat" as NSString)
+        let mediaCapture = LegadoJSCtx.mediaCapture, mediaSource = LegadoJSCtx.ruleSource
+        let openVideo: @convention(block) (String, JSValue, JSValue) -> Void = { address, title, _ in
+            let resolved = resolveUrl(address, base: baseUrl)
+            if let mediaCapture { mediaCapture.set(resolved); return }
+            let name = title.isNull || title.isUndefined ? "视频" : title.toString() ?? "视频"
+            Task { @MainActor in
+                do { try SourceScriptVideo.open(url: resolved, title: name, base: baseUrl, source: mediaSource) }
+                catch { SourceExecutionLog.shared.add(sourceErrorMessage(error), source: sourceUrl) }
+            }
+        }
+        java.setObject(openVideo, forKeyedSubscript: "openVideoPlayer" as NSString)
         let configuration: @convention(block) (String) -> String = { kind in
             switch kind {
             case "mode": return SourceScriptConfiguration.themeMode()

@@ -2,6 +2,25 @@ import XCTest
 @testable import ReaderPro
 
 final class SourceVideoTests: XCTestCase {
+    func testScriptPlayerCapturesTheSignedURLWithoutRefetchingChapterRules() async throws {
+        var source = SourceTestFixtures.video()
+        source.ruleContent.content = "@js:throw Error('must not extract a direct player URL again')"
+        let capture = SourceMediaCapture(), address = SourceTestFixtures.base + "/video/episode1.mp4?token=a%2Bb"
+        try await source.withRules {
+            try LegadoJSCtx.$mediaCapture.withValue(capture) {
+                _ = LegadoJS.run("java.openVideoPlayer('" + address + "','脚本视频',true);'ok'", input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+                try LegadoJSCtx.failures?.check()
+            }
+        }
+        XCTAssertEqual(capture.value, address)
+        let book = SourceScriptVideo.book(url: address, title: "脚本视频", base: source.bookSourceUrl)
+        XCTAssertEqual(book.title, "脚本视频")
+        let details = try await source.fetchChapterVideoDetails(XCTUnwrap(book.chapters.first))
+        guard case .native(let request) = details.resource else { return XCTFail("Script URL must use native player") }
+        XCTAssertEqual(request.url?.absoluteString, address)
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Video"), "ReaderPro")
+    }
+
     func testVideoTypeRoutesToPlayerAndOtherTypesRemainDistinct() throws {
         let source = try JSONDecoder().decode(LegadoSource.self, from: Data(#"{"bookSourceType":4}"#.utf8))
         XCTAssertTrue(source.isVideo)

@@ -2,6 +2,12 @@ import XCTest
 @testable import ReaderPro
 
 final class ParityFoundationTests: XCTestCase {
+    func testHTMLFormatPreservesImagesAndURLRequestOptionsWithAndroidIndentation() throws {
+        let input = #"<div>第一段&nbsp;&nbsp;文字<br>第二段<span>保留&amp;实体</span><!--备注--><img src="low.jpg" data-src="https://img.test/a.jpg"><img src='https://img.test/b.jpg,{"headers":{"Referer":"https://reader.test"}}'></div>"#
+        let result = LegadoJS.run("java.htmlFormat(result)", input: input, baseUrl: "https://reader.test", sourceKey: "", sourceUrl: "https://reader.test")
+        XCTAssertEqual(result, "　　第一段 文字\n　　第二段保留&amp;实体<img src=\"https://img.test/a.jpg\"><img src=\"https://img.test/b.jpg,{\"headers\":{\"Referer\":\"https://reader.test\"}}\">")
+    }
+
     func testScriptConfigurationReadsCurrentPreferencesAndKeepsJavaMapMethodsOutOfJSON() throws {
         let defaults = UserDefaults.standard, keys = ["appThemeMode", "reader.letterSpacing", "reader.paragraphIndent"]
         let saved = keys.map { defaults.object(forKey: $0) }

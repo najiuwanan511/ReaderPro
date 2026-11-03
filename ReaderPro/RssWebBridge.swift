@@ -35,7 +35,7 @@ final class RssWebBridge: NSObject, WKScriptMessageHandlerWithReply {
           java.getThemeMode=function(){return _readerConfiguration.mode;};
           java.getThemeConfig=function(){return JSON.stringify(_readerConfiguration.theme);};
           java.getReadBookConfig=function(){return JSON.stringify(_readerConfiguration.read);};
-          ['searchBook','addBook','showPhoto','open','openUrl','startBrowser','toast','longToast','copyText'].forEach(function(name){java[name]=function(){send(name,arguments);};});
+          ['searchBook','addBook','showPhoto','open','openUrl','startBrowser','openVideoPlayer','toast','longToast','copyText'].forEach(function(name){java[name]=function(){send(name,arguments);};});
           java.run=function(code){return call('run',[code]);};window.run=java.run;
           ['ajaxAwait','connectAwait','getAwait','headAwait','postAwait','webViewAwait','webViewGetSourceAwait','downloadFileAwait','readTxtFileAwait','importScriptAwait','getStringAwait','decryptStrAwait','encryptBase64Await','encryptHexAwait','createSignHexAwait'].forEach(function(name){
             java[name]=function(){return call(name,arguments);};window[name]=java[name];
@@ -52,6 +52,12 @@ final class RssWebBridge: NSObject, WKScriptMessageHandlerWithReply {
         }
         let first = args.first ?? ""
         switch command {
+        case "openVideoPlayer":
+            do {
+                try SourceScriptVideo.open(url: first, title: args.dropFirst().first ?? "视频", base: message.frameInfo.request.url?.absoluteString ?? source.sourceUrl, source: source.ruleSource)
+                replyHandler(NSNull(), nil)
+            } catch { replyHandler(nil, sourceErrorMessage(error)) }
+            return
         case "_put":
             if args.count == 2 { LegadoJS.putPersistentValue(first, value: args[1], source: source.sourceUrl) }
             replyHandler(NSNull(), nil); return
