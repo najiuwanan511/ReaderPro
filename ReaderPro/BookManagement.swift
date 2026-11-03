@@ -94,9 +94,15 @@ struct ShelfGroupsView: View {
         task = Task {
             defer { running = false }
             var added = 0
+            var notified: [LegadoSource] = []
+            var stopped = false
             for (index, book) in books.enumerated() {
-                guard !Task.isCancelled else { message = "已停止刷新"; return }
+                guard !Task.isCancelled else { stopped = true; break }
                 guard let source = store.sourceForBook(book) else { continue }
+                if source.eventListener && !notified.contains(where: { $0.bookSourceUrl == source.bookSourceUrl }) {
+                    notified.append(source)
+                    await Task.detached { await source.callSourceEvent("startShelfRefresh") }.value
+                }
                 message = "正在刷新 \(index + 1)/\(books.count)：\(book.title)"
                 let worker = Task.detached { try await withTimeout(60) { try await source.fetchChapters(book: book.sourceBook) } }
                 do {
@@ -108,7 +114,8 @@ struct ShelfGroupsView: View {
                     store.books[i] = current.refreshingDirectory(chapters); store.saveBooks()
                 } catch { if !Task.isCancelled { failures += (failures.isEmpty ? "" : "\n") + book.title + "：" + sourceErrorMessage(error) } }
             }
-            message = "刷新完成，新增 \(added) 章" + (failures.isEmpty ? "" : "，部分书籍刷新失败")
+            for source in notified { await Task.detached { await source.callSourceEvent("endShelfRefresh") }.value }
+            message = stopped || Task.isCancelled ? "已停止刷新" : "刷新完成，新增 \(added) 章" + (failures.isEmpty ? "" : "，部分书籍刷新失败")
         }
     }
     func cancel() { task?.cancel() }

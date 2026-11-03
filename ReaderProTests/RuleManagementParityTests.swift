@@ -374,6 +374,20 @@ final class RuleManagementParityTests: XCTestCase {
         XCTAssertEqual(result.value, "clickCustomButton|小说|作者|第一章|第一章|https://actions.test/chapter/1")
     }
 
+    func testInteractiveCallbacksReceiveLongClickInputAndNullAbsentContext() async throws {
+        var source = LegadoSource(); source.bookSourceUrl = "https://events.test"; source.eventListener = true
+        source.ruleContent = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"callBackJs":"[event,result,chapter===null,isLongClick].join('|')"}"#.utf8))
+        let book = SourceBook(title: "小说", author: "作者", url: "https://events.test/book")
+        let callback = try await source.performBookEvent("longClickAuthor", book: book, input: "作者", longClick: true)
+        XCTAssertEqual(callback?.value, "longClickAuthor|作者|true|true")
+        source.ruleContent = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"callBackJs":"[event,book===null,chapter===null,result===null].join('|')"}"#.utf8))
+        let refresh = try await source.sourceEventResult("startShelfRefresh")
+        XCTAssertEqual(refresh, "startShelfRefresh|true|true|true")
+        source.eventListener = false
+        let disabled = try await source.performBookEvent("clickAuthor", book: book, input: "作者")
+        XCTAssertNil(disabled)
+    }
+
     func testCustomTxtTocRegexSplitsUnicodeAndAppliesCaptureReplacement() throws {
         let rule = try JSONDecoder().decode(TxtTocRule.self, from: Data(#"{"name":"标题规则","rule":"^【(.*?)】$","replacement":"$1"}"#.utf8))
         let chapters = splitTxtChapters("前言内容\n【开篇😀】\n甲内容\n【结尾】\n乙内容", bookTitle: "测试", rules: [rule])

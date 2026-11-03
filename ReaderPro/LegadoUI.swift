@@ -89,6 +89,12 @@ struct SourceBookDetailView: View {
     @State private var editingBook: LocalBook?
     @State private var downloadURLs: [String] = []
     @State private var downloadingFile = false
+    @State private var actionRunning = false
+    @State private var actionMessage = ""
+    @State private var actionBrowser: SourceLoginBrowser?
+    @State private var browserStatus = ""
+    @State private var detailSearch: ReaderSelectedText?
+    @State private var shareBook: ReaderSelectedText?
 
     private var choices: [SourceBook] { [result] + alternatives.filter { $0.id != result.id } }
     private var selected: SourceBook { choices[min(sourceIndex, choices.count - 1)] }
@@ -171,6 +177,15 @@ struct SourceBookDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("编辑书籍信息 / 变量") { editingBook = makeBook() }.disabled(loading)
+                        Button("重新加载目录") { Task { await load() } }.disabled(loading)
+                        Button("分享书籍") { bookEvent("clickShareBook", input: shareText) { shareBook = ReaderSelectedText(text: shareText, offset: 0) } }
+                        Button("复制书籍地址") { copyAddress(displayBook.url, event: "clickCopyBookUrl") }
+                        Button("复制目录地址") { copyAddress(displayBook.tocUrl ?? displayBook.url, event: "clickCopyTocUrl") }
+                        if let existingBook {
+                            Button("清除本书缓存", role: .destructive) {
+                                bookEvent("clickClearCache") { store.clearChapterCache(bookID: existingBook.id); actionMessage = "本书缓存已清除" }
+                            }
+                        }
                         if let source {
                             if source.hasLogin { NavigationLink("登录 / 接口设置") { SourceLoginView(source: source) } }
                             if source.customButton { NavigationLink("书源自定义按钮") { SourceCustomActionView(source: source, book: displayBook) } }
@@ -186,6 +201,19 @@ struct SourceBookDetailView: View {
             }
             .task(id: selected.id) { await load() }
             .sheet(item: $editingBook) { book in NavigationStack { BookInfoEditorView(store: store, book: book) } }
+            .sheet(item: $detailSearch) { query in NavigationStack { SourceView(store: store, initialKeyword: query.text) } }
+            .sheet(item: $shareBook) { ReaderShareSheet(text: $0.text) }
+            .sheet(item: $actionBrowser) { page in
+                if let source {
+                    NavigationStack {
+                        SourceLoginWebPage(source: source, page: page, revision: 0, status: $browserStatus)
+                            .navigationTitle("书源网页").toolbar { Button("关闭") { actionBrowser = nil } }
+                    }
+                }
+            }
+            .alert("书源操作", isPresented: Binding(get: { !actionMessage.isEmpty }, set: { if !$0 { actionMessage = "" } })) {
+                Button("确定") { actionMessage = "" }
+            } message: { Text(actionMessage) }
         }
         // Present above the detail container. A pushed reader inside a sheet
         // inherits its top gap and the detail screen's bottom action inset.
@@ -215,9 +243,48 @@ struct SourceBookDetailView: View {
                     .shadow(color: .black.opacity(0.25), radius: 8, y: 4).padding(.bottom, 20)
             }.frame(height: 204).clipped()
             VStack(spacing: 8) {
-                Text(displayBook.title).font(.system(size: 21, weight: .semibold)).multilineTextAlignment(.center)
-                Text(displayBook.author.isEmpty ? "作者未知" : displayBook.author).font(.subheadline).foregroundStyle(.secondary)
+                SourceEventButton(action: { searchBookInfo(author: false, longClick: $0) }) {
+                    Text(displayBook.title).font(.system(size: 21, weight: .semibold)).multilineTextAlignment(.center)
+                }.accessibilityIdentifier("detailBookName")
+                SourceEventButton(action: { searchBookInfo(author: true, longClick: $0) }) {
+                    Text(displayBook.author.isEmpty ? "作者未知" : displayBook.author).font(.subheadline).foregroundStyle(.secondary)
+                }.disabled(displayBook.author.isEmpty).accessibilityIdentifier("detailBookAuthor")
             }.frame(maxWidth: .infinity).padding(.horizontal, 24).padding(.bottom, 20)
+        }
+    }
+
+    private var shareText: String {
+        let book = displayBook
+        let fields = ["name": book.title, "author": book.author, "bookUrl": book.url, "tocUrl": book.tocUrl ?? book.url,
+                      "origin": book.sourceUrl, "originName": book.sourceName, "coverUrl": book.cover, "intro": book.intro]
+        return book.url + "#" + ((try? JSONSerialization.data(withJSONObject: fields)).map { String(decoding: $0, as: UTF8.self) } ?? "{}")
+    }
+    private func searchBookInfo(author: Bool, longClick: Bool) {
+        let text = author ? displayBook.author : displayBook.title
+        bookEvent((longClick ? "longClick" : "click") + (author ? "Author" : "BookName"), input: text, longClick: longClick) {
+            detailSearch = ReaderSelectedText(text: text, offset: 0)
+        }
+    }
+    private func copyAddress(_ address: String, event: String) {
+        bookEvent(event, input: address) { UIPasteboard.general.string = address; actionMessage = "已复制" }
+    }
+    private func bookEvent(_ event: String, input: String? = nil, longClick: Bool = false, fallback: @escaping () -> Void) {
+        guard !actionRunning else { return }
+        guard let source else { fallback(); return }
+        actionRunning = true; let target = selected.id, book = displayBook
+        Task {
+            defer { actionRunning = false }
+            do {
+                let result = try await source.performBookEvent(event, book: book, input: input, longClick: longClick)
+                guard selected.id == target else { return }
+                if let result {
+                    if let text = result.copyText { UIPasteboard.general.string = text }
+                    actionBrowser = result.browser
+                    if result.browser == nil { actionMessage = result.message }
+                    if sourceRuleBoolean(result.value) { return }
+                }
+                fallback()
+            } catch { actionMessage = sourceErrorMessage(error) }
         }
     }
 

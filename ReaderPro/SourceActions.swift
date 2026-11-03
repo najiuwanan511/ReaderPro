@@ -38,14 +38,14 @@ struct SourceActionResult {
 }
 
 extension LegadoSource {
-    func performBookAction(script: String, book: SourceBook, chapter: BookChapter? = nil, event: String = "", input: String = "", longClick: Bool = false) async throws -> SourceActionResult {
+    func performBookAction(script: String, book: SourceBook, chapter: BookChapter? = nil, event: String = "", input: String? = nil, longClick: Bool = false) async throws -> SourceActionResult {
         try await withTimeout(60) {
             try await self.withRules(key: book.title, book: book) {
                 let login = SourceLoginContext(SourceLoginInfo.map(self.bookSourceUrl)); login.isLongClick = longClick
                 return try LegadoJSCtx.$chapter.withValue(chapter) {
                     try LegadoJSCtx.$loginContext.withValue(login) {
-                        let wrapped = "var event=" + sourceJSONString(event) + ";\n" + sourceScriptBody(script)
-                        let output = LegadoJS.run(wrapped, input: input, baseUrl: chapter?.url ?? book.url,
+                        let wrapped = "var event=" + sourceJSONString(event) + ";\n" + (input == nil ? "result=null;\n" : "") + (chapter == nil ? "chapter=null;\n" : "") + sourceScriptBody(script)
+                        let output = LegadoJS.run(wrapped, input: input ?? "", baseUrl: chapter?.url ?? book.url,
                                                   sourceKey: book.title, sourceUrl: self.bookSourceUrl, book: LegadoJSCtx.book)
                         try LegadoJSCtx.failures?.check()
                         return SourceActionResult(value: output, browser: login.browser, message: login.message, copyText: login.copyText)
@@ -54,10 +54,41 @@ extension LegadoSource {
             }
         }
     }
-    func callBookEvent(_ event: String, book: LocalBook, chapter: BookChapter? = nil, input: String = "") async {
+    func callBookEvent(_ event: String, book: LocalBook, chapter: BookChapter? = nil, input: String? = nil) async {
         guard eventListener, let script = ruleContent.androidValue("callBackJs"), !script.isEmpty else { return }
         do { _ = try await performBookAction(script: script, book: book.sourceBook, chapter: chapter, event: event, input: input) }
         catch { SourceExecutionLog.shared.add("事件 \(event)：" + sourceErrorMessage(error), source: bookSourceUrl) }
+    }
+    func performBookEvent(_ event: String, book: SourceBook, input: String? = nil, longClick: Bool = false) async throws -> SourceActionResult? {
+        guard eventListener, let script = ruleContent.androidValue("callBackJs"), !script.isEmpty else { return nil }
+        return try await performBookAction(script: script, book: book, event: event, input: input, longClick: longClick)
+    }
+    func sourceEventResult(_ event: String) async throws -> String {
+        guard eventListener, let script = ruleContent.androidValue("callBackJs"), !script.isEmpty else { return "" }
+        return try await withTimeout(30) {
+            try await self.withRules {
+                let output = LegadoJS.run("var event=" + sourceJSONString(event) + ";book=null;chapter=null;result=null;\n" + sourceScriptBody(script), input: "", baseUrl: self.bookSourceUrl, sourceKey: "", sourceUrl: self.bookSourceUrl)
+                try LegadoJSCtx.failures?.check(); return output
+            }
+        }
+    }
+    func callSourceEvent(_ event: String) async {
+        do { _ = try await sourceEventResult(event) }
+        catch { SourceExecutionLog.shared.add("事件 \(event)：" + sourceErrorMessage(error), source: bookSourceUrl) }
+    }
+}
+
+struct SourceEventButton<Label: View>: View {
+    let action: (Bool) -> Void
+    let label: Label
+    init(action: @escaping (Bool) -> Void, @ViewBuilder label: () -> Label) { self.action = action; self.label = label() }
+    var body: some View {
+        label.contentShape(Rectangle())
+            .gesture(LongPressGesture(minimumDuration: 0.5).exclusively(before: TapGesture()).onEnded { value in
+                switch value { case .first: action(true); case .second: action(false) }
+            })
+            .accessibilityAddTraits(.isButton).accessibilityAction { action(false) }
+            .accessibilityAction(named: "长按") { action(true) }
     }
 }
 
@@ -78,21 +109,30 @@ struct SourceCustomActionView: View {
             if let chapter { Text(chapter.displayTitle) }
             if running { ProgressView("正在执行…") }
             if !message.isEmpty { Text(message).font(.footnote).textSelection(.enabled) }
-            Button(payment ? "购买 / 解锁章节" : "执行自定义操作") { if payment { confirmPayment = true } else { execute() } }.disabled(running)
+            if payment { Button("购买 / 解锁章节") { confirmPayment = true }.disabled(running) }
+            else {
+                SourceEventButton(action: { execute(longClick: $0) }) { Text("执行自定义操作").foregroundStyle(.tint) }.disabled(running)
+            }
             NavigationLink("查看书源日志") { SourceLogView(source: source.bookSourceUrl) }
         }.navigationTitle(payment ? "章节购买" : "书源自定义按钮")
         .confirmationDialog("确认执行该书源的购买操作？", isPresented: $confirmPayment, titleVisibility: .visible) {
             Button("确认购买") { execute() }; Button("取消", role: .cancel) {}
         }
-        .sheet(item: $browser) { target in NavigationStack { BrowserView(initialURL: target.url) } }
+        .sheet(item: $browser) { target in
+            NavigationStack {
+                SourceLoginWebPage(source: source, page: target, revision: 0, status: $message)
+                    .navigationTitle("书源网页").toolbar { Button("关闭") { browser = nil } }
+            }
+        }
     }
-    private func execute() {
+    private func execute(longClick: Bool = false) {
+        guard !running else { return }
         let script = source.ruleContent.androidValue(payment ? "payAction" : "callBackJs") ?? ""
         guard !script.isEmpty else { message = "书源未提供此操作规则"; return }
         running = true
         Task {
             do {
-                let result = try await source.performBookAction(script: script, book: book, chapter: chapter, event: payment ? "" : "clickCustomButton")
+                let result = try await source.performBookAction(script: script, book: book, chapter: chapter, event: payment ? "" : (longClick ? "longClickCustomButton" : "clickCustomButton"), longClick: longClick)
                 message = result.message.isEmpty ? result.value : result.message
                 if let copy = result.copyText { UIPasteboard.general.string = copy; message = "已复制" }
                 browser = result.browser
