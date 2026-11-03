@@ -18,6 +18,7 @@ import UIKit
     private var resourcePattern: NSRegularExpression?
     private var navigationPattern: NSRegularExpression?
     private var initialURL = ""
+    private var loadingPhase = "准备网页"
     private var capturesURL: Bool { resourcePattern != nil || navigationPattern != nil }
 
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0,
@@ -62,15 +63,17 @@ import UIKit
                 loader.timer = Task {
                     try? await Task.sleep(nanoseconds: UInt64(max(0.1, timeout) * 1_000_000_000))
                     guard !Task.isCancelled else { return }
-                    loader.finish(.failure(SourceFailure(stage: "网页脚本", message: "WebView 加载或脚本等待超时", url: request.url?.absoluteString ?? "")))
+                    loader.finish(.failure(SourceFailure(stage: "网页脚本", message: "WebView 加载或脚本等待超时（" + loader.loadingPhase + "）", url: request.url?.absoluteString ?? "")))
                 }
                 Task {
                     do { try await SourceWebDataStore.preventLocalBypass(config, request: request) }
                     catch { loader.finish(.failure(error)); return }
-                    for cookie in loader.cookiesEnabled ? (HTTPCookieStorage.shared.cookies ?? []) : [] {
+                    for cookie in loader.cookiesEnabled ? SourceWebDataStore.cookies(for: request, sourceURL: LegadoJSCtx.ruleSource?.bookSourceUrl) : [] {
+                        guard loader.continuation != nil, !Task.isCancelled else { return }
                         await config.websiteDataStore.httpCookieStore.setCookie(cookie)
                     }
                     guard loader.continuation != nil else { return }
+                    loader.loadingPhase = "等待页面加载"
                     if let html, !html.isEmpty { web.loadHTMLString(html, baseURL: request.url) }
                     else {
                         var configured = request
@@ -85,6 +88,7 @@ import UIKit
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        loadingPhase = "等待网页脚本结果"
         guard !startedPolling else { return }; startedPolling = true
         polling = Task {
             // Give asynchronous page scripts a chance to populate the DOM.

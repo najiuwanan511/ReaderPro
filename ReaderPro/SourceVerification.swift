@@ -123,7 +123,7 @@ private struct VerificationWebPage: UIViewRepresentable {
         Task {
             do { try await SourceWebDataStore.preventLocalBypass(configuration, request: session.request) }
             catch { session.finish(.failure(error)); return }
-            for cookie in (session.source?.enabledCookieJar ?? true) ? (HTTPCookieStorage.shared.cookies ?? []) : [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+            for cookie in (session.source?.enabledCookieJar ?? true) ? SourceWebDataStore.cookies(for: session.request, sourceURL: session.source?.bookSourceUrl) : [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
             guard session.continuation != nil else { return }
             if let html = session.html, !html.isEmpty { web.loadHTMLString(html, baseURL: session.request.url) }
             else { web.load(session.request) }

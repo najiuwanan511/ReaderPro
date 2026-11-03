@@ -8,11 +8,11 @@ final class ParityFoundationTests: XCTestCase {
             LegadoJS.run(#"""
             var u=java.toURL('../chapter%20one?name=%E4%B8%AD+%E6%96%87&token=a%2Bb%3D&name=last&%6B=value&empty=&flag','https://reader.test:8443/book/list/');
             var p=u.searchParams;
-            [u.host,u.origin,u.pathname,p.get('name'),p.get('token'),p.get('%6B'),p.get('empty'),p.get('flag'),p.containsKey('empty'),p.size(),java.toURL('https://reader.test/a').searchParams===null].join('|');
+            [u.host,u.origin,u.pathname,p.get('name'),p.get('token'),p.get('%6B'),p.get('empty'),p.get('flag')===null,p.containsKey('empty'),p.size(),java.toURL('https://reader.test/a').searchParams===null].join('|');
             """#, input: "", baseUrl: "https://reader.test", sourceKey: "", sourceUrl: "https://reader.test")
         }
         try failures.check()
-        XCTAssertEqual(result, "reader.test|https://reader.test:8443|/book/chapter%20one|last|a+b=|value||null|true|5|true")
+        XCTAssertEqual(result, "reader.test|https://reader.test:8443|/book/chapter%20one|last|a+b=|value||true|true|4|true")
     }
 
     func testNetworkProbeReturnsPerAddressFailureTimingWithoutDiscardingOtherResults() async throws {

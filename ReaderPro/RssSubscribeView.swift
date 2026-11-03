@@ -558,7 +558,7 @@ struct FeedHTMLView: UIViewRepresentable {
                 try SourceWebDataStore.configure(view.configuration.websiteDataStore, request: request)
                 try await SourceWebDataStore.preventLocalBypass(view.configuration, request: request)
                 if source?.enabledCookieJar != false {
-                    for cookie in HTTPCookieStorage.shared.cookies ?? [] { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
+                    for cookie in SourceWebDataStore.cookies(for: request, sourceURL: source?.sourceUrl) { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                 }
                 if let source, let rules = FeedWebRules.contentRules(source) {
                     let list = try await WKContentRuleListStore.default().compileContentRuleList(forIdentifier: "rss-" + source.id, encodedContentRuleList: rules)

@@ -33,6 +33,17 @@ import Network
         let value = normalizedHost(host)
         return value == "localhost" || value.hasSuffix(".localhost") || value.hasPrefix("127.") || value == "::1" || deviceHosts().contains(value)
     }
+
+    static func cookies(for request: URLRequest, sourceURL: String? = nil, available: [HTTPCookie]? = nil) -> [HTTPCookie] {
+        let hosts = [request.url?.host, URL(string: sourceURL ?? "")?.host].compactMap { $0?.lowercased() }
+        // Do not issue an IPC write for every cookie from thousands of other
+        // sources before loading this page. Include every path on the current
+        // domains, so navigation to /login or /api keeps its scoped cookies.
+        return (available ?? HTTPCookieStorage.shared.cookies ?? []).filter { cookie in
+            let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+            return !domain.isEmpty && hosts.contains { $0 == domain || $0.hasSuffix("." + domain) }
+        }
+    }
     static func make(request: URLRequest, ephemeral: Bool = false) throws -> WKWebsiteDataStore {
         let proxy = try SourceProxy.configuration(for: request)
         // Never change proxy settings on a shared default store: an unrelated

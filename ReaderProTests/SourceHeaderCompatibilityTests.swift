@@ -16,6 +16,17 @@ private final class HeaderResponseProtocol: URLProtocol {
 }
 
 final class SourceHeaderCompatibilityTests: XCTestCase {
+    @MainActor func testWebCookiesIncludeSourceDomainsAndAllPathsWithoutCopyingOtherSourceAccounts() throws {
+        func cookie(_ domain: String, _ path: String = "/") throws -> HTTPCookie {
+            try XCTUnwrap(HTTPCookie(properties: [.domain: domain, .path: path, .name: "session", .value: domain + path]))
+        }
+        let available = try [cookie("reader.test"), cookie(".reader.test", "/api"), cookie("login.test"),
+                             cookie("other-reader.test"), cookie("evilreader.test"), cookie("reader.test.evil.test")]
+        let request = URLRequest(url: URL(string: "https://sub.reader.test/book")!)
+        let selected = SourceWebDataStore.cookies(for: request, sourceURL: "https://login.test", available: available)
+        XCTAssertEqual(selected.map(\.value), Array(available.prefix(3)).map(\.value))
+        XCTAssertTrue(SourceWebDataStore.cookies(for: URLRequest(url: URL(string: "about:blank")!), available: available).isEmpty)
+    }
     func testLegadoJSHeaderTagsRunLibraryAndPreserveHeaderValues() async throws {
         var source = LegadoSource()
         source.bookSourceName = "header fixture"
