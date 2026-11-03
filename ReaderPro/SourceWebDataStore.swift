@@ -69,6 +69,16 @@ import Network
     }
     static func preventLocalBypass(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {
         guard try SourceProxy.configuration(for: request) != nil else { return }
+        // iOS 17 WebKit only sends proxy configuration to its current network
+        // process; it does not retain it in session creation parameters as
+        // newer WebKit does. Creating the WebView can replace that process.
+        // Complete a cookie-store IPC first, then reapply to the live session
+        // and complete another IPC before any page/subresource is loaded.
+        _ = await configuration.websiteDataStore.httpCookieStore.allCookies()
+        try Task.checkCancellation()
+        try configure(configuration.websiteDataStore, request: request)
+        _ = await configuration.websiteDataStore.httpCookieStore.allCookies()
+        try Task.checkCancellation()
         let hosts = deviceHosts().sorted(), signature = hosts.joined(separator: ",")
         if localRules?.0 != signature {
             localRules = (signature, Task {
