@@ -373,6 +373,9 @@ struct BookshelfView: View {
 struct SourceView: View {
     @ObservedObject var store: BookStore
     var initialSourceID: String? = nil
+    var initialKeyword = ""
+    var initialScope = ""
+    @State private var initializedSearch = false
     @State private var sourceSelection: Set<String>? = nil
     @State private var showScope = false
     @State private var history = SearchHistory.values
@@ -454,7 +457,14 @@ struct SourceView: View {
             }
         }
         .navigationTitle("搜索")
-        .onAppear { if let initialSourceID { sourceSelection = [initialSourceID] } }
+        .onAppear {
+            guard !initializedSearch else { return }; initializedSearch = true
+            if let initialSourceID { sourceSelection = [initialSourceID] }
+            else if !initialScope.isEmpty {
+                sourceSelection = Set(store.enabledSources.filter { $0.bookSourceUrl == initialScope || ExploreSources.groupNames($0.bookSourceGroup).contains(initialScope) }.map(\.id))
+            }
+            if !initialKeyword.isEmpty { key = initialKeyword; search() }
+        }
         .sheet(isPresented: $showScope) { SearchScopePicker(sources: store.enabledSources, selection: $sourceSelection) }
         .onChange(of: importModel.message) { _, message in if !message.isEmpty { importText = "" } }
         .readerNavigationStyle()

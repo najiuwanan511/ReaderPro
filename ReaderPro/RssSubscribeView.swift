@@ -426,6 +426,8 @@ struct FeedArticleView: View {
     @State private var showLogin = false
     @State private var showEditor = false
     @State private var showBrowser = false
+    @State private var webAction: RssWebAction?
+    @State private var webMessage = ""
     private var saved: SavedRssArticle {
         var copy = article
         if !content.isEmpty { copy.content = content }
@@ -436,7 +438,12 @@ struct FeedArticleView: View {
         Group {
             if loading { ProgressView("正在加载正文…") }
             else if !error.isEmpty { VStack { Text(error).font(.footnote); Button("重试") { retry += 1 } }.padding() }
-            else { FeedHTMLView(html: content.isEmpty ? article.link : content, baseURL: article.link, type: activeSource.type, source: activeSource) }
+            else {
+                VStack(spacing: 0) {
+                    if !webMessage.isEmpty { Text(webMessage).font(.footnote).padding(8).frame(maxWidth: .infinity).background(AppTheme.surfaceMuted) }
+                    FeedHTMLView(html: content.isEmpty ? article.link : content, baseURL: article.link, type: activeSource.type, source: activeSource, onAction: handleWebAction)
+                }
+            }
         }
         .navigationTitle(article.title).navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -457,6 +464,16 @@ struct FeedArticleView: View {
         .sheet(isPresented: $showLogin, onDismiss: { retry += 1 }) { SourceLoginView(source: activeSource.ruleSource) }
         .sheet(isPresented: $showEditor, onDismiss: { retry += 1 }) { NavigationStack { RssSourceEditorView(store: store, source: activeSource) } }
         .sheet(isPresented: $showBrowser) { NavigationStack { BrowserView(initialURL: article.link) } }
+        .sheet(item: $webAction) { action in
+            NavigationStack {
+                switch action.command {
+                case "searchBook": SourceView(store: store, initialKeyword: action.value, initialScope: action.scope)
+                case "addBook": ShelfTransferView(store: store, initialText: action.value)
+                case "login": SourceLoginView(source: activeSource.ruleSource)
+                default: BrowserView(initialURL: action.value)
+                }
+            }
+        }
         .onDisappear { speech.stop() }
         .task(id: retry) {
             loading = true; error = ""
@@ -473,6 +490,21 @@ struct FeedArticleView: View {
             }
         }
     }
+    private func handleWebAction(_ action: RssWebAction) {
+        switch action.command {
+        case "toast", "longToast": webMessage = action.value
+        case "copyText": UIPasteboard.general.string = action.value; webMessage = "已复制"
+        case "open":
+            if action.value == "login" { webAction = RssWebAction(command: "login", value: "") }
+            else if action.value == "search" { webAction = RssWebAction(command: "searchBook", value: action.scope) }
+            else if isSourceURL(action.scope) { webAction = RssWebAction(command: "openUrl", value: action.scope) }
+            else { webMessage = "当前网页打开操作缺少有效网址：" + action.value }
+        case "searchBook", "addBook": webAction = action
+        default:
+            let address = resolveUrl(action.value, base: article.link)
+            if isSourceURL(address) { webAction = RssWebAction(command: action.command, value: address) }
+        }
+    }
 }
 
 struct FeedHTMLView: UIViewRepresentable {
@@ -480,11 +512,16 @@ struct FeedHTMLView: UIViewRepresentable {
     let baseURL: String
     let type: Int
     var source: RssSource? = nil
+    var onAction: ((RssWebAction) -> Void)? = nil
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration(); config.allowsInlineMediaPlayback = true
         config.defaultWebpagePreferences.allowsContentJavaScript = source?.enableJs ?? true
         if source?.enabledCookieJar == false { config.websiteDataStore = .nonPersistent() }
+        if let source, source.enableJs, !source.preloadJs.isEmpty {
+            let bridge = RssWebBridge(source: source, onAction: onAction ?? { _ in })
+            bridge.install(config); context.coordinator.bridge = bridge
+        }
         if let source, source.enableJs {
             for (script, time) in [(source.preloadJs, WKUserScriptInjectionTime.atDocumentStart),
                                    (source.injectJs, .atDocumentEnd),
@@ -555,12 +592,14 @@ struct FeedHTMLView: UIViewRepresentable {
         view.loadHTMLString(rendered, baseURL: source?.loadWithBaseUrl == false ? nil : URL(string: baseURL))
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
-        coordinator.task?.cancel(); view.stopLoading(); view.navigationDelegate = nil
+        coordinator.task?.cancel(); coordinator.bridge?.cancel(); view.stopLoading(); view.navigationDelegate = nil
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
     }
     final class Coordinator: NSObject, WKNavigationDelegate {
         var source: RssSource?
         var identity = ""
         var task: Task<Void, Never>?
+        var bridge: RssWebBridge?
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard source?.enabledCookieJar != false else { return }
             Task { @MainActor in

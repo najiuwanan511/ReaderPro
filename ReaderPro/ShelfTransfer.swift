@@ -170,6 +170,7 @@ enum ShelfTransfer {
 
 struct ShelfTransferView: View {
     @ObservedObject var store: BookStore
+    var initialText = ""
     @StateObject private var model = ShelfTransferModel()
     @State private var isList = false
     @State private var text = ""
@@ -207,6 +208,7 @@ struct ShelfTransferView: View {
                 if let exportURL { ShareLink("分享书架清单", item: exportURL) }
             }
         }.navigationTitle("添加网址 / 书架清单").onDisappear { model.cancel() }
+        .onAppear { if text.isEmpty { text = initialText } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.json, .plainText, .data]) { result in
             do {
                 let url = try result.get(), access = url.startAccessingSecurityScopedResource()

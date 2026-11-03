@@ -1,7 +1,37 @@
 import XCTest
+import WebKit
 @testable import ReaderPro
 
 final class MediaAndRssParityTests: XCTestCase {
+    @MainActor func testRssWebPageRunsAsyncRulesSharesVariablesAndOpensBookSearch() async throws {
+        var source = RssSource(); source.sourceName = "网页桥样例"; source.sourceUrl = "http://127.0.0.1:8765/rss-bridge-" + UUID().uuidString
+        source.preloadJs = "// enable native bridge"
+        let finished = expectation(description: "Web source invokes book search after real rule and HTTP requests")
+        var received: RssWebAction?
+        let bridge = RssWebBridge(source: source) { action in received = action; finished.fulfill() }
+        let configuration = WKWebViewConfiguration(); bridge.install(configuration)
+        let web = WKWebView(frame: .zero, configuration: configuration)
+        defer {
+            bridge.cancel(); web.stopLoading(); configuration.userContentController.removeScriptMessageHandler(forName: "readerRss", contentWorld: .page)
+        }
+        let html = #"""
+        <html><body><script>
+        (async function(){try{
+          source.put('web-test','保存变量');
+          var saved=await run("java.get('web-test')");
+          var json=await ajaxAwait('http://127.0.0.1:8765/parity/search?page=1');
+          if(saved!=='保存变量'||JSON.parse(json).books[0].title!=='分页小说1')throw Error('bridge values mismatch');
+          java.searchBook('分页小说1','样例分组');
+        }catch(e){java.toast('失败:'+String(e));}})();
+        </script></body></html>
+        """#
+        web.loadHTMLString(html, baseURL: URL(string: source.sourceUrl))
+        await fulfillment(of: [finished], timeout: 30)
+        XCTAssertEqual(received?.command, "searchBook", received?.value ?? "No bridge response")
+        XCTAssertEqual(received?.value, "分页小说1"); XCTAssertEqual(received?.scope, "样例分组")
+        XCTAssertEqual(LegadoJS.persistentValues(source: source.sourceUrl)["web-test"], "保存变量")
+    }
+
     func testImageDecodeAcceptsSignedAndroidBytesAndRejectsInvalidOutput() async throws {
         var source = LegadoSource(); source.bookSourceUrl = "https://image-decode.test"
         source.coverDecodeJs = "result.map(function(n){return n>127?n-256:n;})"

@@ -8,6 +8,36 @@ private actor SpeechPrefetchTestState {
 }
 
 final class RuleManagementParityTests: XCTestCase {
+    @MainActor func testPurchaseRefreshPreservesPositionAndInvalidatesOnlyPurchasedText() async throws {
+        let store = BookStore(), oldBooks = store.books, oldSources = store.sources
+        defer { store.books = oldBooks; store.sources = oldSources; store.save() }
+        var source = LegadoSource(); source.bookSourceUrl = "http://127.0.0.1:8765"; source.bookSourceName = "购买刷新样例"
+        source.ruleToc = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"chapterList":"$.chapters[*]","chapterName":"$.title","chapterUrl":"$.url","isVolume":"$.volume","isVip":"$.vip","isPay":"$.paid"}"#.utf8))
+        store.sources.append(source)
+        var book = LocalBook(title: "付费书", sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl, fileName: "purchase.web", kind: "web")
+        book.bookUrl = source.bookSourceUrl + "/parity/book/1"; book.tocUrl = source.bookSourceUrl + "/parity/toc"
+        book.chapters = try await source.fetchChapters(book: book.sourceBook)
+        book.chapters[1].text = "旧试读内容"; book.chapters[2].text = "已下载下一章"; book.chapterIndex = 1; book.charOffset = 25
+        store.updateBook(book)
+        try await store.refreshPurchasedChapter(bookID: book.id, chapterURL: book.chapters[1].url)
+        let refreshed = try XCTUnwrap(store.books.first { $0.id == book.id })
+        XCTAssertTrue(refreshed.chapters[1].text.hasPrefix("__URL__")); XCTAssertEqual(refreshed.chapters[2].text, "已下载下一章")
+        XCTAssertEqual(refreshed.chapterIndex, 1); XCTAssertEqual(refreshed.charOffset, 25); XCTAssertTrue(refreshed.chapters[2].isPay)
+    }
+
+    @MainActor func testMangaCacheClearRemovesBookIDDirectoryAndParsedImageList() throws {
+        let store = BookStore(), original = store.books
+        var book = LocalBook(title: "漫画缓存样例", fileName: "comic.web", kind: "comic")
+        book.chapters = [BookChapter(title: "第一话", text: "", imageUrls: ["https://cache.test/old.jpg"], url: "https://cache.test/chapter/1")]
+        let directory = BookStore.filesDir.appendingPathComponent(book.id).appendingPathComponent("mangaCache")
+        defer { store.books = original; store.saveBooks(); try? FileManager.default.removeItem(at: directory.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try Data([1,2,3]).write(to: directory.appendingPathComponent("cached.img"))
+        store.updateBook(book); store.clearChapterCache(bookID: book.id)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        XCTAssertTrue(store.books.first { $0.id == book.id }?.chapters.first?.imageUrls.isEmpty == true)
+    }
+
     func testRemoteLibraryBrowsesDownloadsUploadsAndDeletesWithAuthentication() async throws {
         let client = try RemoteLibraryClient(address: "http://127.0.0.1:8765/remote-library/", username: "reader", password: "secret")
         let entries = try await client.list(client.root)

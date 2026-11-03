@@ -64,6 +64,22 @@ final class LegadoJS {
         store[LegadoJSCtx.sourceUrl, default: [:]][key] = value
     }
 
+    static func persistentValues(source: String) -> [String: String] {
+        storeLock.lock(); defer { storeLock.unlock() }
+        let identity = source.isEmpty ? "global" : source
+        let key = "ReaderPro.sourceValues." + SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        if store[identity] == nil { store[identity] = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:] }
+        return store[identity] ?? [:]
+    }
+    static func putPersistentValue(_ key: String, value: String, source: String) {
+        _ = persistentValues(source: source)
+        storeLock.lock(); defer { storeLock.unlock() }
+        let identity = source.isEmpty ? "global" : source
+        let storage = "ReaderPro.sourceValues." + SHA256.hash(data: Data(identity.utf8)).map { String(format: "%02x", $0) }.joined()
+        store[identity, default: [:]][key] = value
+        UserDefaults.standard.set(store[identity], forKey: storage)
+    }
+
     // 执行一段 JS 规则。input 是规则输入（result 初始值），返回执行后 result 的字符串值。
     static func run(_ js: String, input: String, baseUrl: String,
                     sourceKey: String, sourceUrl: String,
