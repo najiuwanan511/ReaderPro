@@ -3,7 +3,6 @@ import JavaScriptCore
 import CryptoKit
 import CoreFoundation
 import SWCompression
-import Unrar
 
 enum SourceFiles {
     static var root: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SourceFiles", isDirectory: true) }
@@ -64,16 +63,7 @@ enum SourceFiles {
             return try extractEntries(entries.filter { $0.info.type == .regular }.map { ($0.info.name, $0.data ?? Data()) })
         }
         if data.starts(with: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]) {
-            let rar = try Unrar.Archive(fileURL: archive), entries = try rar.entries()
-            guard entries.count <= 10000, entries.allSatisfy({ $0.uncompressedSize <= 64 * 1024 * 1024 && $0.redirectionType == 0 }),
-                  entries.reduce(UInt64(0), { $0 + $1.uncompressedSize }) <= 256 * 1024 * 1024 else {
-                throw SourceFailure(stage: "脚本解压", message: "压缩包包含链接或超过解压大小限制")
-            }
-            let names = entries.filter { !$0.directory }
-            return try extractEntries(names.map { entry in
-                try Task.checkCancellation()
-                return (entry.fileName, try rar.extract(entry))
-            })
+            return try extractEntries(SourceRar.entries(archive))
         }
         let entries = readZipEntries(data)
         guard !entries.isEmpty else { throw SourceFailure(stage: "脚本解压", message: "不是可读取的 ZIP 文件") }
