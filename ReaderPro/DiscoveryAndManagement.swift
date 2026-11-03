@@ -247,9 +247,16 @@ struct SourceManagementView: View {
         .sheet(isPresented: $showNetwork) {
             NavigationStack {
                 VStack(alignment: .leading, spacing: 12) {
-                    TextField("https://… 书源或订阅源链接", text: $networkURL)
-                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .accessibilityIdentifier("sourceNetworkImportURL")
+                    HStack {
+                        TextField("https://… 书源或订阅源链接", text: $networkURL)
+                            .textFieldStyle(.roundedBorder).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .accessibilityIdentifier("sourceNetworkImportURL")
+                        if !networkURL.isEmpty {
+                            Button { networkURL = "" } label: { Image(systemName: "xmark.circle.fill") }
+                                .accessibilityLabel("清空链接").accessibilityIdentifier("clearSourceImportURL")
+                                .disabled(importModel.running)
+                        }
+                    }
                     Button(importModel.running ? "导入中…" : "拉取并导入") { importModel.start(networkURL, store: store) }
                         .disabled(importModel.running || networkURL.isEmpty)
                     SourceImportStatusView(model: importModel)

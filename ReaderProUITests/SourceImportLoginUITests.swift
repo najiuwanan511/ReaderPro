@@ -67,9 +67,9 @@ final class SourceImportLoginUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["sourceImportProgress"].exists)
         app.buttons["cancelSourceImport"].tap()
         XCTAssertTrue(app.staticTexts["已取消导入"].waitForExistence(timeout: 5))
-        field.tap()
-        let text = field.value as? String ?? ""
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count) + "http://127.0.0.1:8765/packs/large")
+        app.buttons["clearSourceImportURL"].tap()
+        field.tap(); field.typeText("http://127.0.0.1:8765/packs/large")
+        XCTAssertEqual(field.value as? String, "http://127.0.0.1:8765/packs/large")
         app.buttons["拉取并导入"].tap()
         let result = app.staticTexts["sourceNetworkImportResult"]
         XCTAssertTrue(result.waitForExistence(timeout: 20)); XCTAssertTrue(result.label.contains("1500"))

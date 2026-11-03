@@ -39,13 +39,14 @@ jobs:
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE" -b
-          # Exercise the new multi-sheet editor before the longer full suite.
-          # The full regression below still includes this same test.
+          # Exercise changed import/login flows and the multi-sheet editor first.
+          # The full regression below still includes these tests.
           xcodebuild test \
             -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" \
             -parallel-testing-enabled NO \
             -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
+            -only-testing:ReaderProUITests/SourceImportLoginUITests \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 600 \
             -resultBundlePath build/ReplacementEditorRegression.xcresult \
