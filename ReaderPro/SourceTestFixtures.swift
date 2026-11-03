@@ -239,7 +239,9 @@ struct SourceFixtureRoot: View {
                   {title:'频道',type:'select',chars:['小说','其他'],default:'小说',action:'infoMap.save();java.refreshExplore()'},
                   {title:'更新',type:'button',viewName:"'刷新参数'",action:"java.longToast('发现参数已更新');infoMap.put('更新次数',String(Number(infoMap.get('更新次数')||0)+1));infoMap.save();java.refreshExplore()"},
                   {title:'打开'+channel,url:channel==='小说'?'/library/categories/fiction':'/library/categories/alternate',style:{layout_wrapBefore:true}},
-                  {title:'更新次数'+(infoMap.get('更新次数')||'0')}
+                  {title:'更新次数'+(infoMap.get('更新次数')||'0')},
+                  {title:'ERROR:分类说明',url:'请先登录并在接口设置中选择线路。'},
+                  {title:'空名称',viewName:"String()"}
                 ]
                 """#
                 _ = ExploreInfo.bridge(source.bookSourceUrl, "clear", "[]")

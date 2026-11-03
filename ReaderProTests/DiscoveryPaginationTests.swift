@@ -141,6 +141,24 @@ final class DiscoveryPaginationTests: XCTestCase {
         XCTAssertTrue(result[0].displayError?.contains("broken display name") == true)
     }
 
+    func testAndroidDiagnosticCategoryIsNotARequestAndEmptyDynamicNamesShowNull() async throws {
+        let diagnostic = ExploreCategory(title: "ERROR:需要登录", url: "请先登录并选择接口")
+        XCTAssertEqual(diagnostic.diagnosticMessage, "请先登录并选择接口")
+        XCTAssertFalse(diagnostic.canNavigate)
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://explore-diagnostic.test"
+        source.exploreUrl = #"[{title:'空名称',viewName:"String()"},{title:'ERROR:说明',url:'这是一条书源提示'},{title:'正常分类',url:'/working'}]"#
+        let categories = try await source.resolvedExploreCategories()
+        XCTAssertEqual(categories[0].displayTitle, "null")
+        XCTAssertEqual(categories.filter(\.canNavigate).map(\.title), ["正常分类"])
+        do {
+            _ = try await source.discover(category: diagnostic)
+            XCTFail("Diagnostic text must never become an HTTP request")
+        } catch {
+            XCTAssertTrue(sourceErrorMessage(error).contains("没有书籍列表地址"))
+        }
+    }
+
     func testDiscoverySourceGroupsOrderAndIndependentEnableSwitch() throws {
         var first = LegadoSource(); first.id = "a"; first.bookSourceName = "源甲"; first.exploreUrl = "/list"
         first.enabled = false; first.enabledExplore = true; first.customOrder = 3; first.bookSourceGroup = "小说, 测试"

@@ -1,6 +1,25 @@
 import XCTest
 
 final class DiscoveryPaginationUITests: XCTestCase {
+    func testDiscoveryDiagnosticShowsExplanationAndKeepsCategoriesUsable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--discovery-controls-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["回归测试书源"]
+        XCTAssertTrue(source.waitForExistence(timeout: 15)); source.tap()
+        let diagnostic = app.buttons["explore-diagnostic-7"]
+        XCTAssertTrue(diagnostic.waitForExistence(timeout: 15)); diagnostic.tap()
+        XCTAssertTrue(app.alerts["ERROR"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.alerts.staticTexts["请先登录并在接口设置中选择线路。"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "发现书源诊断说明"; shot.lifetime = .keepAlways; add(shot)
+        app.alerts.buttons["确定"].tap()
+        XCTAssertTrue(app.staticTexts["null"].exists)
+        app.buttons["打开小说"].tap()
+        XCTAssertTrue(app.staticTexts["测试小说"].waitForExistence(timeout: 30))
+    }
+
     func testDiscoveryScriptToastShowsSourceAndAllowsNavigation() {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -197,6 +197,7 @@ private struct ExploreCategoryControl: View {
     @State private var value: String
     @State private var actionRequest = 0
     @State private var running = false
+    @State private var showDiagnostic = false
 
     init(source: LegadoSource, category: ExploreCategory, index: Int, onTapCategory: @escaping (ExploreCategory) -> Void,
          onRefresh: @escaping () -> Void, onError: @escaping (String) -> Void) {
@@ -214,6 +215,9 @@ private struct ExploreCategoryControl: View {
     }
     var body: some View {
         control.font(.system(size: 14)).foregroundStyle(.primary)
+            .alert("ERROR", isPresented: $showDiagnostic) {
+                Button("确定", role: .cancel) { }
+            } message: { Text(category.diagnosticMessage ?? "") }
             .task(id: actionRequest) {
                 guard actionRequest > 0 else { return }
                 do {
@@ -263,7 +267,10 @@ private struct ExploreCategoryControl: View {
             Button { if !running { actionRequest += 1 } } label: { pill(name) }
                 .buttonStyle(.plain).accessibilityIdentifier("explore-button-\(index)")
         default:
-            if category.canNavigate {
+            if category.diagnosticMessage != nil {
+                Button { showDiagnostic = true } label: { pill(name) }
+                    .buttonStyle(.plain).accessibilityIdentifier("explore-diagnostic-\(index)")
+            } else if category.canNavigate {
                 Button { onTapCategory(category) } label: { pill(name) }
                     .buttonStyle(.plain).accessibilityIdentifier("explore-category-\(index)")
             } else {

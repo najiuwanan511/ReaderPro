@@ -34,7 +34,8 @@ struct ExploreCategory: Identifiable, Equatable {
     var style = ExploreStyle()
     var displayTitle: String? = nil
     var displayError: String? = nil
-    var canNavigate: Bool { type == "url" && !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    var diagnosticMessage: String? { type == "url" && title.hasPrefix("ERROR:") ? url : nil }
+    var canNavigate: Bool { type == "url" && diagnosticMessage == nil && !url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     var choices: [String] { chars ?? ["chars", "is null"] }
 
     static func parse(_ text: String) -> [ExploreCategory] {
@@ -166,7 +167,8 @@ extension LegadoSource {
                             // A bad display-name script must not discard the
                             // source's otherwise usable category URLs.
                             let failures = RuleFailures()
-                            categories[index].displayTitle = LegadoJSCtx.$failures.withValue(failures) { self.runExploreScript(name) }
+                            let title = LegadoJSCtx.$failures.withValue(failures) { self.runExploreScript(name) }
+                            categories[index].displayTitle = title.isEmpty ? "null" : title
                             do { try failures.check() }
                             catch {
                                 try Task.checkCancellation()
