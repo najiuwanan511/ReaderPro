@@ -6,6 +6,7 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - App.swift
+      - ProbeProxy.m
       - ../../ReaderPro/SourceWebProxy.m
       - ../../ReaderPro/SourceWebProxy.h
     info:

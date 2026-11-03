@@ -15,7 +15,7 @@ on:
 jobs:
   transport-probe:
     runs-on: ${{ inputs.runner || 'macos-15' }}
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Prepare isolated WebKit host and iOS 17
@@ -47,5 +47,6 @@ jobs:
           name: ios17-webkit-probe
           path: |
             build/webkit-probe.log
+            build/runtime-download.log
             build/fixture-server.log
             build/WebKitProbe.xcresult
