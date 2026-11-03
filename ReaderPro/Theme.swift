@@ -5,11 +5,11 @@ import UIKit
 // 主色 + 卡片色，深浅色模式自动适配。所有页面统一从这里取色，视觉才不会散。
 enum AppTheme {
     // ReaderPro 默认强调色；原项目主题可配置，布局独立于配色。
-    static let accent = Color(uiColor: UIColor { trait in
+    static var accent: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.accentHex", fallback: 0xE53935)) }; return Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.94, green: 0.33, blue: 0.33, alpha: 1)  // #EF5353
             : UIColor(red: 0.90, green: 0.22, blue: 0.21, alpha: 1)  // #E53935
-    })
+    }) }
     // 深主色（标题、强调）
     static let accentDeep = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
@@ -29,11 +29,11 @@ enum AppTheme {
             : UIColor.white
     })
     // 页面背景（深色：深藏青）
-    static let background = Color(uiColor: UIColor { trait in
+    static var background: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.backgroundHex", fallback: 0xF5F5FA)) }; return Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1)
             : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
-    })
+    }) }
     // Neutral surfaces used by the rebuilt pages. Keeping these separate from
     // the reader theme lets the library UI stay consistent in light/dark mode.
     static let surface = Color(uiColor: UIColor { trait in
@@ -246,6 +246,8 @@ struct ShelfGridCell: View {
     var titleBelow = false
     var source: LegadoSource? = nil
     @State private var image: UIImage?
+    @AppStorage("ui.coverCorner") private var corner = 3.0
+    @AppStorage("ui.coverAspect") private var aspect = 0.72
 
     var body: some View {
         VStack(spacing: 6) {
@@ -261,7 +263,7 @@ struct ShelfGridCell: View {
     private var cover: some View {
         ZStack(alignment: .bottomLeading) {
             Color.clear
-                .aspectRatio(0.72, contentMode: .fit)
+                .aspectRatio(aspect, contentMode: .fit)
                 .overlay {
                     if let image { Image(uiImage: image).resizable().scaledToFill() }
                     else { ShelfCoverView(title: title) }
@@ -283,7 +285,7 @@ struct ShelfGridCell: View {
                     .padding(.bottom, 6)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
         .overlay(alignment: .topTrailing) {
             if selecting {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")

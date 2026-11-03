@@ -156,6 +156,24 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/parity/'):
             status = 200
             query = parse_qs(parsed.query)
+            if path == '/parity/tts':
+                if query.get('text', [''])[0] != '你好世界' or query.get('speed', [''])[0] != '12':
+                    self.send_error(400, 'incorrect TTS template expansion')
+                    return
+                import io, wave
+                output = io.BytesIO()
+                with wave.open(output, 'wb') as audio:
+                    audio.setnchannels(1)
+                    audio.setsampwidth(2)
+                    audio.setframerate(8000)
+                    audio.writeframes(b'\x00\x00' * 800)
+                data = output.getvalue()
+                self.send_response(200)
+                self.send_header('Content-Type', 'audio/wav')
+                self.send_header('Content-Length', str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
             if path == '/parity/ajax':
                 batch = query.get('batch', [''])[0]
                 with bridge_stress_lock:

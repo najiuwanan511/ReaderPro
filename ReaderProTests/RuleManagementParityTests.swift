@@ -3,6 +3,15 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    func testHttpTtsExpandsSpeakTextAndSpeedIntoActualAudioRequest() async throws {
+        let json = #"{"id":100,"name":"测试朗读","url":"http://127.0.0.1:8765/parity/tts?text={{speakText}}&speed={{speakSpeed}}","contentType":"audio/wav","loginUi":[{"name":"接口","type":"text"}]}"#
+        let engine = try JSONDecoder().decode(HttpTTS.self, from: Data(json.utf8))
+        XCTAssertTrue(engine.loginUi.contains("接口"))
+        let data = try await engine.audio(text: "你好世界", speed: 12)
+        XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "RIFF")
+        XCTAssertGreaterThan(data.count, 1000)
+    }
+
     func testDirectoryRefreshPreservesRawCacheAndPositionWhenChaptersAreInserted() {
         var book = LocalBook(title: "测试书", fileName: "refresh.web", kind: "web")
         book.bookUrl = "https://refresh.test/book"; book.tocUrl = "https://refresh.test/toc"

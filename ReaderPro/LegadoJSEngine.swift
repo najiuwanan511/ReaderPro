@@ -117,6 +117,8 @@ final class LegadoJS {
         ctx.setObject(baseUrl, forKeyedSubscript: "baseUrl" as NSString)
         ctx.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
         ctx.setObject(page, forKeyedSubscript: "page" as NSString)
+        ctx.setObject(LegadoJSCtx.speakText, forKeyedSubscript: "speakText" as NSString)
+        ctx.setObject(LegadoJSCtx.speakSpeed, forKeyedSubscript: "speakSpeed" as NSString)
         ctx.setObject(sourceUrl, forKeyedSubscript: "sourceUrl" as NSString)
         ctx.setObject(LegadoJSCtx.strictContentHTTP, forKeyedSubscript: "_strictContentHTTP" as NSString)
         let geturl: @convention(block) () -> String = { baseUrl }

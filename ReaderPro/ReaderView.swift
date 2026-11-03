@@ -84,6 +84,10 @@ private final class ReaderScrollProgress {
     @AppStorage("reader.justifyText") private var justifyText = true
     @AppStorage("reader.letterSpacing") private var letterSpacing = 0.0
     @AppStorage("reader.paragraphIndent") private var paragraphIndent = 0.0
+    @AppStorage("reader.customText") private var customText = "3A3A3A"
+    @AppStorage("reader.customBackground") private var customBackground = "F5F1E8"
+    @AppStorage("reader.backgroundImage") private var backgroundImage = ""
+    @AppStorage("reader.backgroundOpacity") private var backgroundOpacity = 0.35
 
     // 仿真翻页跳转令牌（目录/书签/换章时强制重建 pageCurl）
     @State private var jumpToken = 0
@@ -119,7 +123,7 @@ private final class ReaderScrollProgress {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)"
     }
 
     var body: some View {
@@ -158,7 +162,12 @@ private final class ReaderScrollProgress {
                 if store.pageTurn == 1 || store.pageTurn == 4 { jumpToken += 1 }
             }
         }
-        .background(Color(uiColor: theme.background).ignoresSafeArea())
+        .background {
+            ZStack {
+                Color(uiColor: theme.background)
+                if let image = ReaderAssets.backgroundImage { Image(uiImage: image).resizable().scaledToFill().opacity(backgroundOpacity) }
+            }.ignoresSafeArea().clipped()
+        }
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .statusBarHidden(hideStatusBar && !showMenu)
@@ -220,6 +229,7 @@ private final class ReaderScrollProgress {
         }
         .onChange(of: book?.useReplaceRule) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
         .onChange(of: store.replaceRules) { _, _ in rebuild(size: lastSize, keepOffset: currentCharOffset()); jumpToken += 1 }
+        .onChange(of: speech.error) { _, value in if !value.isEmpty { errorText = value } }
         .sheet(isPresented: $showDownloadAll) { downloadSheet }
         .alert("加载失败", isPresented: .constant(!errorText.isEmpty)) {
             Button("重试") { errorText = ""; loadChapterIfNeeded() }
@@ -1029,6 +1039,7 @@ private final class ReaderScrollProgress {
                             ForEach(allFonts) { font in Text(font.display).tag(font.name) }
                         }.labelsHidden().onChange(of: store.fontName) { _, _ in store.save() }
                     }
+                    NavigationLink("导入字体 / 背景图片 / 自定义配色") { ReaderAppearanceView(store: store) }
                     styleSlider("字号", value: $store.fontSize, range: 12...45)
                     styleSlider("字距", value: $letterSpacing, range: 0...8)
                     styleSlider("行距", value: $store.lineSpacing, range: 0...24)

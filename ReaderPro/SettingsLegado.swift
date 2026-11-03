@@ -152,8 +152,8 @@ struct ThemeSettingsView: View {
             }
 
             Section {
-                SettingRow(icon: "paintpalette", iconTint: .indigo, title: "自定义配色", summary: "主色 / 强调色 / 背景色（本版暂未实现）")
-                SettingRow(icon: "rectangle.stack", iconTint: .gray, title: "封面设置", summary: "封面样式（本版暂未实现）")
+                NavigationLink { InterfaceAppearanceView(store: store) } label: { SettingRow(icon: "paintpalette", iconTint: .indigo, title: "配色与封面", summary: "主色、背景色、封面比例和圆角") }
+                NavigationLink { ReaderAppearanceView(store: store) } label: { SettingRow(icon: "textformat", iconTint: .gray, title: "字体与背景", summary: "字体文件、背景图片、自定义阅读配色") }
             } header: { SettingSectionHeader(title: "配色") }
         }
         .navigationTitle("主题设置")
@@ -207,6 +207,7 @@ struct ReadSettingsView: View {
             } header: { SettingSectionHeader(title: "翻页") }
 
             Section {
+                NavigationLink("朗读引擎 / 在线 TTS") { SpeechEngineSettingsView() }
                 VStack(spacing: 2) {
                     HStack { Text("朗读语速").foregroundStyle(.primary); Spacer(); Text("\(Int(store.ttsRate * 100))%").foregroundStyle(.secondary) }
                     Slider(value: $store.ttsRate, in: 0.2...1.0, step: 0.05) { _ in store.save() }

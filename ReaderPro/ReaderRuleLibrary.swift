@@ -69,10 +69,12 @@ final class ReaderRuleLibrary: ObservableObject {
     private let defaults: UserDefaults
     @Published var txtRules: [TxtTocRule] { didSet { persist(txtRules, key: "reader.txtRules") } }
     @Published var dictionaries: [DictRule] { didSet { persist(dictionaries, key: "reader.dictionaries") } }
+    @Published var httpTts: [HttpTTS] { didSet { persist(httpTts, key: "reader.httpTts") } }
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         txtRules = defaults.data(forKey: "reader.txtRules").flatMap { try? JSONDecoder().decode([TxtTocRule].self, from: $0) } ?? []
         dictionaries = defaults.data(forKey: "reader.dictionaries").flatMap { try? JSONDecoder().decode([DictRule].self, from: $0) } ?? []
+        httpTts = defaults.data(forKey: "reader.httpTts").flatMap { try? JSONDecoder().decode([HttpTTS].self, from: $0) } ?? []
     }
     private func persist<T: Encodable>(_ value: T, key: String) { defaults.set(try? JSONEncoder().encode(value), forKey: key) }
 }
@@ -146,7 +148,9 @@ struct ReaderRuleLibraryView<Rule: ManagedReaderRule>: View {
         do {
             let text = importText.trimmingCharacters(in: .whitespacesAndNewlines)
             let data = isSourceURL(text) ? try await fetchBytes(text) : Data(text.utf8)
-            let items = (try? JSONDecoder().decode([Rule].self, from: data)) ?? [try JSONDecoder().decode(Rule.self, from: data)]
+            let items: [Rule]
+            if let array = try? JSONDecoder().decode([Rule].self, from: data) { items = array }
+            else { items = [try JSONDecoder().decode(Rule.self, from: data)] }
             for item in items { try item.validate() }
             for item in items {
                 if let i = rules.firstIndex(where: { $0.id == item.id }) { rules[i] = item } else { rules.append(item) }

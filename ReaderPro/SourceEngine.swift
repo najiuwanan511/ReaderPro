@@ -231,6 +231,12 @@ extension KeyedDecodingContainer {
         if let n = try? decode(Int.self, forKey: key) { return "\(n)" }
         if let n = try? decode(Double.self, forKey: key) { return "\(n)" }
         if let b = try? decode(Bool.self, forKey: key) { return b ? "true" : "false" }
+        if let value = try? decode(SourceJSONValue.self, forKey: key) {
+            switch value {
+            case .object, .array: return (try? JSONEncoder().encode(value)).map { String(decoding: $0, as: UTF8.self) } ?? ""
+            default: break
+            }
+        }
         return ""
     }
     func tolerantBool(_ key: Key, defaultValue: Bool) -> Bool {

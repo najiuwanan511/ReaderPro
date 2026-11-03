@@ -34,6 +34,9 @@ let readerThemes: [ReaderTheme] = [
 ]
 
 func readerTheme(at index: Int) -> ReaderTheme {
+    if index == 100 {
+        return ReaderTheme(id: 100, name: "自定义", background: .storedColor("reader.customBackground", fallback: 0xF5F1E8), text: .storedColor("reader.customText", fallback: 0x3A3A3A), secondary: .secondaryLabel)
+    }
     let i = max(0, min(index, readerThemes.count - 1))
     return readerThemes[i]
 }
@@ -362,13 +365,18 @@ final class ReaderScrollBoundaryProbe: UIView {
 
 // MARK: - 朗读控制器（AVSpeechSynthesizer，逐段续读）
 
-final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
+final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDelegate, AVAudioPlayerDelegate {
     @Published var isSpeaking = false
+    @Published var error = ""
     private let synth = AVSpeechSynthesizer()
     private var queue: [String] = []
     private var rate: Float = 0.5
     private var pitch: Float = 1.0
     private var onDone: (() -> Void)?
+    private var currentUtterance: AVSpeechUtterance?
+    private var httpTask: Task<Void, Never>?
+    private var audioPlayer: AVAudioPlayer?
+    private var audioCompletion: CheckedContinuation<Void, Error>?
 
     override init() {
         super.init()
@@ -376,6 +384,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     }
 
     func speak(segments: [String], rate: Float, pitch: Float, onDone: @escaping () -> Void = {}) {
+        stop(); error = ""
         queue = segments.filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         self.rate = rate
         self.pitch = pitch
@@ -386,7 +395,39 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
             onDone()
             return
         }
-        next()
+        let id = UserDefaults.standard.string(forKey: "speech.engineID") ?? "system"
+        if id != "system", let engine = ReaderRuleLibrary.shared.httpTts.first(where: { $0.enabled && String($0.id) == id }) {
+            let texts = queue; queue = []; isSpeaking = true
+            httpTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
+                    try AVAudioSession.sharedInstance().setActive(true)
+                    for segment in texts {
+                        var rest = segment[...]
+                        while !rest.isEmpty {
+                            try Task.checkCancellation()
+                            let part = String(rest.prefix(400)); rest = rest.dropFirst(part.count)
+                            let worker = Task.detached { try await engine.audio(text: part, speed: max(1, Int(rate * 20))) }
+                            let data = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                            try Task.checkCancellation()
+                            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                                do {
+                                    let player = try AVAudioPlayer(data: data); player.delegate = self
+                                    self.audioPlayer = player; self.audioCompletion = continuation
+                                    guard player.play() else { self.audioCompletion = nil; continuation.resume(throwing: SourceFailure(stage: "在线朗读", message: "系统不能播放接口返回的音频")); return }
+                                } catch { continuation.resume(throwing: error) }
+                            }
+                        }
+                    }
+                    self.isSpeaking = false; self.audioPlayer = nil; self.httpTask = nil; onDone()
+                } catch {
+                    if !Task.isCancelled { self.error = sourceErrorMessage(error); self.isSpeaking = false }
+                }
+            }
+        } else if id != "system" {
+            isSpeaking = false; error = "选中的在线朗读引擎已删除或停用，请重新选择引擎"
+        } else { next() }
     }
 
     private func next() {
@@ -401,21 +442,39 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         u.rate = rate
         u.pitchMultiplier = pitch
         isSpeaking = true
+        currentUtterance = u
         synth.speak(u)
     }
 
     func stop() {
+        httpTask?.cancel(); httpTask = nil
+        audioPlayer?.stop(); audioPlayer = nil
+        audioCompletion?.resume(throwing: CancellationError()); audioCompletion = nil
         queue.removeAll()
+        currentUtterance = nil
         synth.stopSpeaking(at: .immediate)
         isSpeaking = false
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        DispatchQueue.main.async { [weak self] in self?.next() }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.currentUtterance === utterance else { return }
+            self.currentUtterance = nil; self.next()
+        }
     }
 
     func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        DispatchQueue.main.async { [weak self] in self?.isSpeaking = false }
+        // stop() owns cancellation state; a late delegate callback must not
+        // overwrite a newly started system or HTTP utterance.
+    }
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        guard player === audioPlayer, let continuation = audioCompletion else { return }
+        audioCompletion = nil
+        if flag { continuation.resume() } else { continuation.resume(throwing: SourceFailure(stage: "在线朗读", message: "音频播放中断")) }
+    }
+    func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+        guard player === audioPlayer, let continuation = audioCompletion else { return }
+        audioCompletion = nil; continuation.resume(throwing: error ?? URLError(.cannotDecodeContentData))
     }
 }
 
@@ -455,7 +514,7 @@ func availableFonts() -> [FontOption] {
     return list
 }
 
-let allFonts: [FontOption] = availableFonts()
+var allFonts: [FontOption] { availableFonts() }
 
 final class PageHostController: UIViewController {
     var index: Int = 0
@@ -494,6 +553,13 @@ final class PageHostController: UIViewController {
             textView = tv
         }
         view.backgroundColor = background
+        if let image = ReaderAssets.backgroundImage {
+            let imageView = (view.viewWithTag(9103) as? UIImageView) ?? UIImageView(frame: view.bounds)
+            imageView.tag = 9103; imageView.image = image; imageView.contentMode = .scaleAspectFill; imageView.clipsToBounds = true
+            imageView.alpha = UserDefaults.standard.object(forKey: "reader.backgroundOpacity") as? Double ?? 0.35
+            imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            if imageView.superview == nil { view.insertSubview(imageView, at: 0) }
+        } else { view.viewWithTag(9103)?.removeFromSuperview() }
         textView?.textContainer.size = size
         (textView as? ReaderSelectableTextView)?.chapterOffset = chapterOffset
         textView?.attributedText = attributed
