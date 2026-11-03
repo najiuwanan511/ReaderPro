@@ -214,7 +214,7 @@ final class RuleManagementParityTests: XCTestCase {
         XCTAssertEqual(try SourceFont(correct).outlines[0x1f600], font.outlines[0xe001])
         XCTAssertThrowsError(try SourceFont(Data(wrong.prefix(30))))
         let result = await Task.detached {
-            LegadoJS.run("var wrong=java.queryTTF('\(wrong.base64EncodedString())'),correct=java.queryTTF('\(correct.base64EncodedString())');[java.replaceFont('\\ue001 X',wrong,correct),java.replaceFont('\\ue001 X',wrong,correct,true)].join('|')", input: "", baseUrl: "https://font.test", sourceKey: "", sourceUrl: "https://font.test")
+            LegadoJS.run("var wrong=java.queryBase64TTF('\(wrong.base64EncodedString())'),correct=java.queryTTF('\(correct.base64EncodedString())');[java.replaceFont('\\ue001 X',wrong,correct),java.replaceFont('\\ue001 X',wrong,correct,true)].join('|')", input: "", baseUrl: "https://font.test", sourceKey: "", sourceUrl: "https://font.test")
         }.value
         XCTAssertEqual(result, "😀 X|😀 ")
     }

@@ -565,6 +565,20 @@ final class LegadoJS {
         java.getTxtInFolder=function(path){return java._file('folder',String(path),'','');};
         java.getZipStringContent=function(url,path,charset){return java._file('zipText',String(url),String(path),charset||'');};
         java.getZipByteArrayContent=function(url,path){var a=JSON.parse(java._file('zipBytes',String(url),String(path),''));return a==null?null:_array(a);};
+        java.getRarStringContent=java.get7zStringContent=function(url,path,charset){return java._file('archiveText',String(url),String(path),charset||'');};
+        java.getRarByteArrayContent=java.get7zByteArrayContent=function(url,path){var a=JSON.parse(java._file('archiveBytes',String(url),String(path),''));return a==null?null:_array(a);};
+        java.getFile=function(path){
+          path=String(path);function stat(){return JSON.parse(java._file('stat',path,'',''));}
+          return {path:path,absolutePath:path,getPath:function(){return path;},getAbsolutePath:function(){return path;},
+            getName:function(){return stat().name;},exists:function(){return stat().exists;},isFile:function(){return stat().file;},
+            isDirectory:function(){return stat().directory;},length:function(){return stat().length;},
+            delete:function(){return java.deleteFile(path);},toString:function(){return path;}};
+        };
+        java.cacheFile=function(url,saveTime){
+          url=String(url);var key=java.md5Encode16(url),path=cache.get(key);
+          if(!path||!java.getFile(path).exists()){path=java.downloadFile(url);cache.put(key,path,Number(saveTime)||0);}
+          return java.readTxtFile(path);
+        };
         """#)
         let digest: @convention(block) (JSValue, String) -> String = { text, algorithm in
             let data = SourceCrypto.bytes(text)

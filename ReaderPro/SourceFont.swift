@@ -193,6 +193,7 @@ final class SourceFont {
         java.setObject(query, forKeyedSubscript: "_queryTTF" as NSString)
         context.evaluateScript(#"""
         java.queryTTF=function(data,useCache){return java._queryTTF(data,useCache!==false);};
+        java.queryBase64TTF=function(data){return java._queryTTF(data,true);};
         java.replaceFont=function(text,errorFont,correctFont,filter){
           if(errorFont==null||correctFont==null)return String(text);
           return Array.from(String(text)).map(function(c){var code=c.codePointAt(0);if(errorFont.isBlankUnicode(code))return c;

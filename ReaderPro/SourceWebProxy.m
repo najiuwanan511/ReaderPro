@@ -13,7 +13,10 @@ BOOL RPSetWebProxy(WKWebsiteDataStore *store, NSString *host, uint16_t port,
                                     : nw_proxy_config_create_http_connect(endpoint, NULL);
     if (!proxy) return NO;
     nw_proxy_config_clear_excluded_domains(proxy);
-    nw_proxy_config_add_match_domain(proxy, "");
+    // No match-domain restriction means the proxy applies to every host,
+    // including IP literals. An empty suffix is a hostname matching rule and
+    // can leave numeric destinations outside the configured proxy.
+    nw_proxy_config_clear_match_domains(proxy);
     nw_proxy_config_set_failover_allowed(proxy, false);
     if (username) {
         nw_proxy_config_set_username_and_password(proxy, username.UTF8String,

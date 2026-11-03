@@ -102,6 +102,16 @@ enum SourceFiles {
         } catch { try? FileManager.default.removeItem(at: target); throw error }
         return path
     }
+    static func archiveEntry(_ data: Data, path: String) throws -> Data? {
+        let archive = try write(data, address: UUID().uuidString + ".archive")
+        defer { try? FileManager.default.removeItem(at: file(archive)) }
+        let folder = try unzip(archive), root = try file(folder)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let target = root.appendingPathComponent(path.replacingOccurrences(of: "\\", with: "/")).standardizedFileURL
+        guard target.path.hasPrefix(root.path + "/") else { throw SourceFailure(stage: "脚本解压", message: "条目路径越界") }
+        guard FileManager.default.fileExists(atPath: target.path) else { return nil }
+        return try Data(contentsOf: target)
+    }
     static func install(_ java: JSValue, base: String) {
         let operation: @convention(block) (String, String, String, String) -> String = { action, first, second, charset in
             do {
@@ -119,6 +129,16 @@ enum SourceFiles {
                     let url = try file(first)
                     guard FileManager.default.fileExists(atPath: url.path) else { return "false" }
                     try FileManager.default.removeItem(at: url); return "true"
+                case "stat":
+                    let url = try file(first)
+                    let info = try? url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey])
+                    return String(decoding: try JSONSerialization.data(withJSONObject: ["exists": info != nil,
+                        "file": info?.isRegularFile == true, "directory": info?.isDirectory == true,
+                        "length": info?.fileSize ?? 0, "name": url.lastPathComponent]), as: UTF8.self)
+                case "archiveText", "archiveBytes":
+                    guard let data = try archiveEntry(bytes(first, base: base), path: second) else { return action == "archiveBytes" ? "null" : "" }
+                    if action == "archiveText" { return try text(data, charset: charset) }
+                    return String(decoding: try JSONEncoder().encode(data.map { Int(Int8(bitPattern: $0)) }), as: UTF8.self)
                 case "unzip": return try unzip(first)
                 case "folder":
                     let folder = try file(first)
