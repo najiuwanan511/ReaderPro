@@ -200,7 +200,8 @@ struct VideoPlayerView: View {
 
     init(book: LocalBook, source: LegadoSource? = nil, store: BookStore? = nil) {
         self.book = book; self.source = source; self.store = store
-        _episodeIndex = State(initialValue: min(max(0, book.chapterIndex), max(0, book.chapters.count - 1)))
+        let initial = min(max(0, book.chapterIndex), max(0, book.chapters.count - 1))
+        _episodeIndex = State(initialValue: book.chapters.readableIndex(from: initial) ?? book.chapters.readableIndex(from: initial, direction: -1) ?? 0)
     }
     private var chapters: [BookChapter] {
         book.chapters.isEmpty ? book.videoUrls.enumerated().map { BookChapter(title: "第 \($0.offset + 1) 集", text: "__URL__" + $0.element) } : book.chapters
@@ -236,8 +237,8 @@ struct VideoPlayerView: View {
                     Text("已播放 \(Int(model.currentTime)) 秒").font(.caption).monospacedDigit().accessibilityIdentifier("videoPlaybackTime")
                     Spacer()
                     Button("重新加载") { retry += 1 }.accessibilityIdentifier("videoRetry")
-                    Button("下一集") { if episodeIndex + 1 < chapters.count { episodeIndex += 1 } }
-                        .disabled(episodeIndex + 1 >= chapters.count).accessibilityIdentifier("videoNextEpisode")
+                    Button("下一集") { if let next = chapters.readableIndex(from: episodeIndex + 1) { episodeIndex = next } }
+                        .disabled(chapters.readableIndex(from: episodeIndex + 1) == nil).accessibilityIdentifier("videoNextEpisode")
                 }
             }.padding(16)
             List {
@@ -245,11 +246,11 @@ struct VideoPlayerView: View {
                     ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
                         Button { episodeIndex = index } label: {
                             HStack {
-                                Text(chapter.title).foregroundStyle(index == episodeIndex ? AppTheme.accent : .primary)
+                                Text(chapter.displayTitle).foregroundStyle(index == episodeIndex ? AppTheme.accent : .primary)
                                 Spacer()
                                 if index == episodeIndex { Image(systemName: "play.fill").foregroundStyle(AppTheme.accent) }
                             }
-                        }.accessibilityIdentifier("video-episode-\(index)")
+                        }.disabled(chapter.isVolume).accessibilityIdentifier("video-episode-\(index)")
                     }
                 }
             }.listStyle(.plain)
@@ -299,7 +300,7 @@ struct VideoPlayerView: View {
         var chapter = chapters[index]
         chapter.ruleIndex = index
         if chapter.ruleBook == nil { chapter.ruleBook = .init(bookUrl: chapter.url ?? "", name: book.title, author: book.author) }
-        model.onEnded = { if episodeIndex + 1 < chapters.count { episodeIndex += 1 } }
+        model.onEnded = { if let next = chapters.readableIndex(from: episodeIndex + 1) { episodeIndex = next } }
         if let store {
             var saved = store.books.first(where: { $0.id == book.id }) ?? book
             saved.kind = "video"; saved.chapterIndex = index; saved.lastRead = Date()

@@ -44,6 +44,7 @@ private final class ReaderScrollProgress {
     @State private var pages: [NSRange] = []
     @State private var pageIndex = 0
     @State private var attributed: NSAttributedString = NSAttributedString(string: "")
+    @State private var speechAfterLoad = false
     @State private var pageSize: CGSize = .zero
     @State private var lastSize: CGSize = .zero
 
@@ -529,9 +530,10 @@ private final class ReaderScrollProgress {
         }
     }
 
-    func openChapter(_ i: Int, atStart: Bool = true, atEnd: Bool = false) {
+    func openChapter(_ i: Int, atStart: Bool = true, atEnd: Bool = false, continuingSpeech: Bool = false) {
         guard let b = book, !b.chapters.isEmpty else { return }
         guard let readable = b.chapters.readableIndex(from: i, direction: i < chapterIndex ? -1 : 1) else { return }
+        speech.stop(); speechAfterLoad = continuingSpeech
         chapterIndex = readable
         chapterLanding = atEnd ? .end : .start
         scrollProgress.offset = 0
@@ -550,6 +552,7 @@ private final class ReaderScrollProgress {
             if atEnd { scrollProgress.offset = pages.last?.location ?? 0 }
             saveProgress(page: pageIndex)
             store.chapterCache.preload(bookID: bookId, after: chapterIndex)
+            resumeSpeechIfNeeded()
         }
         jumpToken += 1
     }
@@ -722,6 +725,7 @@ private final class ReaderScrollProgress {
                 saveProgress(page: pageIndex)
                 jumpToken += 1
                 store.chapterCache.preload(bookID: bookId, after: idx)
+                resumeSpeechIfNeeded()
             } catch {
                 guard !Task.isCancelled, chapterLoadToken == token else { return }
                 errorText = sourceErrorMessage(error)
@@ -768,19 +772,33 @@ private final class ReaderScrollProgress {
 
     func toggleSpeech() {
         if speech.isSpeaking {
+            speechAfterLoad = false
             speech.stop()
             return
         }
         guard let currentChapter = chapter else { return }
         var segments: [String] = []
         if store.pageTurn == 2 {
-            segments = paragraphs(currentChapter)
+            if attributed.length > 0 {
+                let start = min(max(currentCharOffset(), 0), attributed.length)
+                segments = [attributed.attributedSubstring(from: NSRange(location: start, length: attributed.length - start)).string]
+            } else { segments = paragraphs(currentChapter) }
         } else {
             for i in min(max(pageIndex, 0), pages.count)..<pages.count {
                 segments.append(attributed.attributedSubstring(from: pages[i]).string)
             }
         }
-        speech.speak(segments: segments, rate: Float(store.ttsRate), pitch: Float(store.ttsPitch))
+        let speakingChapter = chapterIndex
+        speech.speak(segments: segments, rate: Float(store.ttsRate), pitch: Float(store.ttsPitch)) {
+            guard chapterIndex == speakingChapter, let b = book,
+                  let next = b.chapters.readableIndex(from: speakingChapter + 1) else { return }
+            openChapter(next, continuingSpeech: true)
+        }
+    }
+
+    func resumeSpeechIfNeeded() {
+        guard speechAfterLoad else { return }
+        speechAfterLoad = false; toggleSpeech()
     }
 
     func paragraphs(_ c: BookChapter) -> [String] {

@@ -3,6 +3,61 @@ import UIKit
 @testable import ReaderPro
 
 final class RuleManagementParityTests: XCTestCase {
+    private func fontFixture(code: Int) -> Data {
+        func number(_ value: Int, _ width: Int) -> Data {
+            Data((0..<width).reversed().map { UInt8(truncatingIfNeeded: value >> ($0 * 8)) })
+        }
+        var head = Data(repeating: 0, count: 54); head[51] = 1
+        let glyph = number(1,2) + Data(repeating: 0, count: 8) + number(1,2) + number(0,2) + Data([1,1]) + number(10,2) + number(20,2) + number(30,2) + number(40,2)
+        let cmap = number(0,2) + number(1,2) + number(3,2) + number(10,2) + number(12,4)
+            + number(12,2) + number(0,2) + number(28,4) + number(0,4) + number(1,4) + number(code,4) + number(code,4) + number(1,4)
+        let tables: [(String,Data)] = [("head",head),("maxp",number(0x10000,4)+number(2,2)),("loca",number(0,4)+number(0,4)+number(glyph.count,4)),("glyf",glyph),("cmap",cmap)]
+        var output = number(0x10000,4) + number(tables.count,2) + Data(repeating:0,count:6)
+        var payload = Data(), offset = 12 + tables.count * 16
+        for (name, data) in tables {
+            output += Data(name.utf8) + number(0,4) + number(offset,4) + number(data.count,4)
+            payload += data; offset += data.count
+        }
+        return output + payload
+    }
+
+    func testTrueTypeFontReplacementMatchesContoursAcrossRemappedUnicodeAndFiltersUnknowns() async throws {
+        let wrong = fontFixture(code: 0xe001), correct = fontFixture(code: 0x1f600)
+        let font = try SourceFont(wrong)
+        XCTAssertEqual(font.ids[0xe001], 1); XCTAssertEqual(font.outlines[0xe001], "10,30|20,40")
+        XCTAssertEqual(try SourceFont(correct).outlines[0x1f600], font.outlines[0xe001])
+        XCTAssertThrowsError(try SourceFont(Data(wrong.prefix(30))))
+        let result = await Task.detached {
+            LegadoJS.run("var wrong=java.queryTTF('\(wrong.base64EncodedString())'),correct=java.queryTTF('\(correct.base64EncodedString())');[java.replaceFont('\\ue001 X',wrong,correct),java.replaceFont('\\ue001 X',wrong,correct,true)].join('|')", input: "", baseUrl: "https://font.test", sourceKey: "", sourceUrl: "https://font.test")
+        }.value
+        XCTAssertEqual(result, "😀 X|😀 ")
+    }
+
+    func testScriptFileDownloadUnzipAndImportScriptUseSameSandbox() async throws {
+        let archive = writeStoredZip([(name: "nested/library.js", data: Data("var localLibrary='可执行';".utf8)), (name: "chapter.txt", data: Data("测试正文".utf8))])
+        let hex = archive.map { String(format: "%02x", $0) }.joined()
+        var source = LegadoSource(); source.bookSourceUrl = "https://file-bridge.test"
+        let output = try await source.withRules {
+            let script = "var archive=java.downloadFile('\(hex)','https://files.test/pack.zip,{\"type\":\"zip\"}');var folder=java.unzipFile(archive);eval(java.importScript(folder+'/nested/library.js'));var text=java.readTxtFile(folder+'/chapter.txt');var bytes=java.getZipByteArrayContent('\(hex)','chapter.txt');java.deleteFile(folder);java.deleteFile(archive);[localLibrary,text,bytes.length].join('|')"
+            let value = LegadoJS.run(script, input: "", baseUrl: source.bookSourceUrl, sourceKey: "", sourceUrl: source.bookSourceUrl)
+            try LegadoJSCtx.failures?.check(); return value
+        }
+        XCTAssertEqual(output, "可执行|测试正文|12")
+    }
+
+    func testArchiveTraversalAndMalformedDeflateAreRejected() throws {
+        XCTAssertThrowsError(try SourceFiles.file("../../outside.txt"))
+        let archive = writeStoredZip([(name: "../../outside.txt", data: Data([1]))])
+        let path = try SourceFiles.write(archive, address: "https://files.test/traversal.zip")
+        defer { if let file = try? SourceFiles.file(path) { try? FileManager.default.removeItem(at: file) } }
+        XCTAssertThrowsError(try SourceFiles.unzip(path))
+        XCTAssertNil(inflate(Data([0xff, 0xff, 0xff])))
+        // Raw DEFLATE: one fixed-Huffman block containing "hello".
+        let deflate = Data([0xcb,0x48,0xcd,0xc9,0xc9,0x07,0x00])
+        XCTAssertEqual(inflate(deflate, limit: 5), Data("hello".utf8))
+        XCTAssertNil(inflate(deflate, limit: 4))
+    }
+
     func testFileSourceDownloadRuleImportsReadableOfflineChapters() async throws {
         let source = try JSONDecoder().decode(LegadoSource.self, from: Data(#"{"bookSourceName":"文件源","bookSourceUrl":"http://127.0.0.1:8765","bookSourceType":3,"ruleBookInfo":{"downloadUrls":"$.downloads[*]"}}"#.utf8))
         let book = SourceBook(title: "文件小说", author: "作者", url: "http://127.0.0.1:8765/parity/file-info")

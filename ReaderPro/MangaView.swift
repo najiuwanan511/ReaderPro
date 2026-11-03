@@ -97,6 +97,14 @@ struct MangaView: View {
     @State private var zoom: CGFloat = 1.0
     @State private var loadingChapter = false
     @State private var loadError = ""
+    @State private var chapterTask: Task<Void, Never>?
+    @State private var prefetchTask: Task<Void, Never>?
+    @State private var loadToken = UUID()
+    @AppStorage("manga.brightness") private var imageBrightness = 0.0
+    @AppStorage("manga.contrast") private var imageContrast = 1.0
+    @AppStorage("manga.saturation") private var imageSaturation = 1.0
+    @AppStorage("manga.showFooter") private var showFooter = true
+    @State private var showImageSettings = false
 
     var book: LocalBook? { store.books.first { $0.id == bookId } }
     var isOnline: Bool { book?.kind == "comic" }
@@ -138,7 +146,8 @@ struct MangaView: View {
         .onAppear {
             if let b = book {
                 if isOnline {
-                    chapter = min(b.chapterIndex, max(0, b.chapters.count - 1))
+                    let proposed = min(max(0, b.chapterIndex), max(0, b.chapters.count - 1))
+                    chapter = b.chapters.readableIndex(from: proposed) ?? b.chapters.readableIndex(from: proposed, direction: -1) ?? 0
                     page = b.paragraphIndex
                     loadChapterImages(b)
                 } else {
@@ -146,7 +155,21 @@ struct MangaView: View {
                 }
             }
         }
-        .onDisappear { saveProgress() }
+        .onDisappear { saveProgress(); chapterTask?.cancel(); prefetchTask?.cancel(); loadToken = UUID() }
+        .toolbar { Button { showImageSettings = true } label: { Image(systemName: "slider.horizontal.3") }.accessibilityLabel("漫画设置") }
+        .sheet(isPresented: $showImageSettings) {
+            NavigationStack {
+                Form {
+                    Toggle("显示页脚", isOn: $showFooter)
+                    Section("图片") {
+                        Text("亮度"); Slider(value: $imageBrightness, in: -0.5...0.5)
+                        Text("对比度"); Slider(value: $imageContrast, in: 0.5...2)
+                        Text("饱和度"); Slider(value: $imageSaturation, in: 0...2)
+                        Button("还原图片设置") { imageBrightness = 0; imageContrast = 1; imageSaturation = 1 }
+                    }
+                }.navigationTitle("漫画设置").toolbar { Button("完成") { showImageSettings = false } }
+            }
+        }
     }
 
     @ViewBuilder
@@ -154,13 +177,13 @@ struct MangaView: View {
         VStack(spacing: 4) {
             HStack {
                 Button { changeChapter(-1) } label: { Image(systemName: "chevron.left") }
-                    .disabled(chapter <= 0)
+                    .disabled(b.chapters.readableIndex(from: chapter - 1, direction: -1) == nil)
                 Spacer()
                 Text(b.chapters.isEmpty ? "无章节" : "\(chapter + 1)/\(b.chapters.count)  \(b.chapters[chapter].title)")
                     .font(.caption).lineLimit(1)
                 Spacer()
                 Button { changeChapter(1) } label: { Image(systemName: "chevron.right") }
-                    .disabled(chapter >= b.chapters.count - 1)
+                    .disabled(b.chapters.readableIndex(from: chapter + 1) == nil)
             }
             if loadingChapter {
                 ProgressView().controlSize(.small)
@@ -190,28 +213,37 @@ struct MangaView: View {
         } else if stripMode {
             ScrollView {
                 VStack(spacing: 0) {
-                    ForEach(displayImages.indices, id: \.self) { i in
-                        MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
+                    ForEach(Array(displayImages.enumerated()), id: \.offset) { _, address in
+                        MangaPageImage(isRemote: isOnline, ref: address, bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
+                            .brightness(imageBrightness).contrast(imageContrast).saturation(imageSaturation)
                     }
+                    if isOnline, b.chapters.readableIndex(from: chapter + 1) != nil { Button("下一章") { changeChapter(1) }.padding() }
                 }
             }
         } else {
             TabView(selection: $page) {
-                ForEach(displayImages.indices, id: \.self) { i in
-                    MangaPageImage(isRemote: isOnline, ref: displayImages[i], bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
+                if isOnline, b.chapters.readableIndex(from: chapter - 1, direction: -1) != nil { Text("上一章").tag(-1) }
+                ForEach(Array(displayImages.enumerated()), id: \.offset) { i, address in
+                    MangaPageImage(isRemote: isOnline, ref: address, bookId: b.id, enhanced: enhanced, source: store.sourceForBook(b))
+                        .brightness(imageBrightness).contrast(imageContrast).saturation(imageSaturation)
                         .scaleEffect(zoom)
                         .gesture(MagnificationGesture().onChanged { zoom = max(1.0, min(4.0, $0)) })
                         .tag(i)
                 }
+                if isOnline, b.chapters.readableIndex(from: chapter + 1) != nil { Text("下一章").tag(pageCount) }
             }
             .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .onChange(of: page) { _, value in
+                if value < 0 { changeChapter(-1) }
+                else if value >= pageCount, pageCount > 0 { changeChapter(1) }
+            }
         }
     }
 
     @ViewBuilder
     func controls(_ b: LocalBook) -> some View {
         HStack {
-            Text(pageCount == 0 ? "0 / 0" : "\(page + 1) / \(pageCount)").font(.caption)
+            if showFooter { Text(pageCount == 0 ? "0 / 0" : "\(page + 1) / \(pageCount)").font(.caption) }
             Spacer()
             Button(enhanced ? "原图" : "增强") { enhanced.toggle() }
             Button(stripMode ? "单页模式" : "条漫模式") { stripMode.toggle() }
@@ -220,20 +252,24 @@ struct MangaView: View {
     }
 
     func loadChapterImages(_ b: LocalBook) {
-        guard isOnline, chapter < b.chapters.count else { return }
+        chapterTask?.cancel(); prefetchTask?.cancel(); loadToken = UUID(); loadingChapter = false; loadError = ""
+        let token = loadToken
+        guard isOnline, b.chapters.indices.contains(chapter) else { return }
         let ch = b.chapters[chapter]
         if !ch.imageUrls.isEmpty {
             page = min(page, max(0, ch.imageUrls.count - 1))
+            prefetch(after: chapter)
             return
         }
         guard let src = store.sourceForBook(b) else { loadError = "书源已删除，无法拉取"; return }
         loadingChapter = true; loadError = ""
         let chIndex = chapter
-        let nextURL = b.chapters.indices.contains(chIndex + 1) ? b.chapters[chIndex + 1].url : nil
-        Task {
+        let nextURL = b.chapters.readableIndex(from: chIndex + 1).flatMap { b.chapters[$0].url }
+        chapterTask = Task {
             do {
                 let imgs = try await src.fetchChapterImages(ch, nextChapterUrl: nextURL)
                 await MainActor.run {
+                    guard !Task.isCancelled, loadToken == token else { return }
                     if var nb = store.books.first(where: { $0.id == bookId }), chIndex < nb.chapters.count {
                         nb.chapters[chIndex].imageUrls = imgs
                         store.updateBook(nb)
@@ -241,9 +277,11 @@ struct MangaView: View {
                     loadingChapter = false
                     if chIndex == chapter { page = 0 }
                     if imgs.isEmpty { loadError = "这一章没拉到图片（规则不匹配或该站拒绝）" }
+                    else { prefetch(after: chIndex) }
                 }
             } catch {
                 await MainActor.run {
+                    guard !Task.isCancelled, loadToken == token else { return }
                     loadingChapter = false
                     loadError = "拉取失败：\(sourceErrorMessage(error))"
                 }
@@ -253,10 +291,37 @@ struct MangaView: View {
 
     func changeChapter(_ delta: Int) {
         guard let b = book, isOnline else { return }
-        let nc = chapter + delta
-        guard nc >= 0 && nc < b.chapters.count else { return }
+        guard let nc = b.chapters.readableIndex(from: chapter + delta, direction: delta) else { return }
+        saveProgress()
         chapter = nc; page = 0; zoom = 1.0
         loadChapterImages(b)
+    }
+
+    func prefetch(after index: Int) {
+        prefetchTask?.cancel()
+        let count = min(50, max(0, UserDefaults.standard.object(forKey: "reader.preloadCount") as? Int ?? 3))
+        guard count > 0, let current = book, let source = store.sourceForBook(current) else { return }
+        let targets = Array(current.chapters.indices.dropFirst(index + 1).filter { !current.chapters[$0].isVolume }.prefix(count))
+        prefetchTask = Task {
+            for target in targets {
+                guard !Task.isCancelled, let latest = book, latest.chapters.indices.contains(target), store.sourceForBook(latest) == source else { return }
+                let original = latest.chapters[target]
+                do {
+                    let next = latest.chapters.readableIndex(from: target + 1).flatMap { latest.chapters[$0].url }
+                    let urls = original.imageUrls.isEmpty ? try await source.fetchChapterImages(original, nextChapterUrl: next) : original.imageUrls
+                    guard !Task.isCancelled else { return }
+                    if var saved = book, saved.chapters.indices.contains(target), saved.chapters[target].id == original.id {
+                        saved.chapters[target].imageUrls = urls; store.updateBook(saved)
+                    }
+                    for url in urls {
+                        guard !Task.isCancelled else { return }
+                        _ = await MangaImageStore.shared.image(for: url, bookId: bookId, source: source)
+                    }
+                } catch {
+                    if !Task.isCancelled { SourceExecutionLog.shared.add("漫画预缓存：" + sourceErrorMessage(error), source: source.bookSourceUrl) }
+                }
+            }
+        }
     }
 
     func runOcr() {

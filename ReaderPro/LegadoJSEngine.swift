@@ -472,7 +472,7 @@ final class LegadoJS {
         """#)
         if let loginContext {
             ctx.setObject(loginContext.isLongClick, forKeyedSubscript: "isLongClick" as NSString)
-            ctx.evaluateScript("result = _loginMap(result)")
+            ctx.evaluateScript("if(result !== null && typeof result === 'object' && !Array.isArray(result)) result = _loginMap(result)")
             let update: @convention(block) (JSValue) -> Void = { value in
                 if value.isNull || value.isUndefined { loginContext.resetDefaults = true; return }
                 if let fields = value.toDictionary() as? [String: Any] {
@@ -513,6 +513,19 @@ final class LegadoJS {
         if loginContext == nil { java.setObject(refreshExplore, forKeyedSubscript: "refreshExplore" as NSString) }
         ctx.evaluateScript(Self.exploreInfoScript)
         SourceCrypto.install(java, context: ctx)
+        SourceFiles.install(java, base: baseUrl)
+        SourceFont.install(java, context: ctx, base: baseUrl)
+        ctx.evaluateScript(#"""
+        java.downloadFile=function(content,url){return java._file('download',String(content),url==null?'':String(url),'');};
+        java.readTxtFile=function(path,charset){return java._file('read',String(path),'',charset||'');};
+        java.readFile=function(path){return _array(JSON.parse(java._file('readBytes',String(path),'','')));};
+        java.deleteFile=function(path){return java._file('delete',String(path),'','')==='true';};
+        java.unzipFile=function(path){return java._file('unzip',String(path),'','');};
+        java.unArchiveFile=java.unzipFile;
+        java.getTxtInFolder=function(path){return java._file('folder',String(path),'','');};
+        java.getZipStringContent=function(url,path,charset){return java._file('zipText',String(url),String(path),charset||'');};
+        java.getZipByteArrayContent=function(url,path){var a=JSON.parse(java._file('zipBytes',String(url),String(path),''));return a==null?null:_array(a);};
+        """#)
         let digest: @convention(block) (JSValue, String) -> String = { text, algorithm in
             let data = SourceCrypto.bytes(text)
             let bytes: [UInt8]

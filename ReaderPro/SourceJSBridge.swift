@@ -64,6 +64,9 @@ enum SourceJSBridge {
             }
             return script
         }
+        if let cached = try? SourceFiles.file(value), FileManager.default.fileExists(atPath: cached.path) {
+            return decodeTextData(try Data(contentsOf: cached))
+        }
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath().standardizedFileURL
         let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let file = (value.hasPrefix("/") ? URL(fileURLWithPath: value) : documents.appendingPathComponent(value))
@@ -87,7 +90,7 @@ enum SourceJSBridge {
 
     static func request(_ address: String, base: String, headers: [String: String],
                         method: String = "", body: String = "", timeout: Double = 20,
-                        followRedirects: Bool = true, cancelled: () -> Bool = { Task.isCancelled }) throws -> [String: Any] {
+                        followRedirects: Bool = true, binary: Bool = false, cancelled: () -> Bool = { Task.isCancelled }) throws -> [String: Any] {
         guard !Thread.isMainThread else { throw SourceFailure(stage: "脚本兼容性", message: "网络脚本必须在后台书源任务中执行") }
         if let inline = try SourceHTTP.inlinePage(address) {
             return ["text": inline.text, "url": inline.url, "status": 200, "headers": [String: String]()]
@@ -134,7 +137,7 @@ enum SourceJSBridge {
         let (data, response) = result
         let http = response as? HTTPURLResponse
         let fields = (http?.allHeaderFields ?? [:]).reduce(into: [String: String]()) { $0[String(describing: $1.key).lowercased()] = String(describing: $1.value) }
-        let text = (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()
+        let text = !binary && (options["type"] as? String ?? "").isEmpty ? SourceHTTP.decode(data, response: response) : data.map { String(format: "%02x", $0) }.joined()
         return ["text": text, "url": response.url?.absoluteString ?? address,
                 "status": http?.statusCode ?? 0, "headers": fields]
     }

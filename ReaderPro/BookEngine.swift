@@ -204,7 +204,10 @@ struct Huffman {
         for len in 1..<16 {
             code |= r.bits(1)
             let count = counts[len]
-            if code - first < count { return symbols[index + (code - first)] }
+            if code >= first, code - first < count {
+                let position = index + code - first
+                return symbols.indices.contains(position) ? symbols[position] : -1
+            }
             index += count; first += count; first <<= 1; code <<= 1
         }
         return -1
@@ -216,10 +219,11 @@ let lengthExtra = [0,0,0,0,0,0,0,0,1,1,1,1,2,2,2,2,3,3,3,3,4,4,4,4,5,5,5,5,0]
 let distBase = [1,2,3,4,5,7,9,13,17,25,33,49,65,97,129,193,257,385,513,769,1025,1537,2049,3073,4097,6145,8193,12289,16385,24577]
 let distExtra = [0,0,0,0,1,1,2,2,3,3,4,4,5,5,6,6,7,7,8,8,9,9,10,10,11,11,12,12,13,13]
 
-func inflate(_ input: Data) -> Data? {
+func inflate(_ input: Data, limit: Int = 256 * 1024 * 1024) -> Data? {
     var r = BitReader(data: input)
     var out = Data()
     while true {
+        guard !Task.isCancelled, r.bitPos + 3 <= input.count * 8, out.count <= limit else { return nil }
         let bfinal = r.bits(1)
         let btype = r.bits(2)
         if btype == 0 {
@@ -228,7 +232,7 @@ func inflate(_ input: Data) -> Data? {
             guard p + 4 <= input.count else { return nil }
             let len = Int(input[p]) | (Int(input[p + 1]) << 8)
             let start = p + 4
-            guard start + len <= input.count else { return nil }
+            guard start + len <= input.count, out.count + len <= limit else { return nil }
             out.append(input[start..<(start + len)]); r.bitPos = (start + len) * 8
         } else if btype == 1 || btype == 2 {
             var litHuff: Huffman
@@ -257,23 +261,27 @@ func inflate(_ input: Data) -> Data? {
                     else if sym == 16 {
                         guard i > 0 else { return nil }
                         let rep = r.bits(2) + 3
+                        guard i + rep <= lens.count else { return nil }
                         for _ in 0..<rep where i < lens.count { lens[i] = lens[i - 1]; i += 1 }
                     } else if sym == 17 {
-                        let rep = r.bits(3) + 3; i += rep
+                        let rep = r.bits(3) + 3; guard i + rep <= lens.count else { return nil }; i += rep
                     } else if sym == 18 {
-                        let rep = r.bits(7) + 11; i += rep
+                        let rep = r.bits(7) + 11; guard i + rep <= lens.count else { return nil }; i += rep
                     } else { return nil }
                 }
                 litHuff = Huffman(lengths: Array(lens[0..<hlit]))
                 distHuff = Huffman(lengths: Array(lens[hlit..<(hlit + hdist)]))
             }
             while true {
+                guard !Task.isCancelled, r.bitPos < input.count * 8, out.count <= limit else { return nil }
                 let sym = litHuff.decode(&r)
+                guard (0...285).contains(sym) else { return nil }
                 if sym == 256 { break }
-                if sym < 256 { out.append(UInt8(sym)); continue }
+                if sym < 256 { guard out.count < limit else { return nil }; out.append(UInt8(sym)); continue }
                 if sym < 0 || sym > 285 { return nil }
                 let li = sym - 257
                 let length = lengthBase[li] + r.bits(lengthExtra[li])
+                guard out.count + length <= limit else { return nil }
                 let dsym = distHuff.decode(&r)
                 if dsym < 0 || dsym >= 30 { return nil }
                 let dist = distBase[dsym] + r.bits(distExtra[dsym])
@@ -331,7 +339,7 @@ func extractZipEntry(_ data: Data, _ entry: ZipEntry) -> Data? {
     guard start + entry.compressedSize <= data.count else { return nil }
     let raw = data[start..<(start + entry.compressedSize)]
     if entry.method == 0 { return Data(raw) }
-    if entry.method == 8 { return inflate(Data(raw)) }
+    if entry.method == 8 { return inflate(Data(raw), limit: max(1, entry.uncompressedSize)) }
     return nil
 }
 
