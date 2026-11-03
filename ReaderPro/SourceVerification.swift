@@ -18,7 +18,10 @@ import WebKit
         defer { active = false }
         let session = VerificationSession(request: request, html: html, source: source, image: image)
         let controller = UIHostingController(rootView: VerificationView(session: session, title: title))
-        controller.modalPresentationStyle = .fullScreen
+        // Keep the requesting screen in the view hierarchy. A .fullScreen
+        // presentation calls its onDisappear handlers, which cancel search,
+        // chapter loading or source switching while the rule awaits this UI.
+        controller.modalPresentationStyle = .overFullScreen
         session.dismiss = { controller.dismiss(animated: true) }
         return try await withTaskCancellationHandler {
             try Task.checkCancellation()

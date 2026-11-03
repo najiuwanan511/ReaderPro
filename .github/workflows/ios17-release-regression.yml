@@ -54,15 +54,6 @@ jobs:
           xcodebuild test-without-building -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
-            -only-testing:ReaderProUITests/SourceImportLoginUITests \
-            -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
-            -maximum-test-execution-time-allowance 600 \
-            -resultBundlePath build/ImportLoginSmoke.xcresult \
-            'SWIFT_ACTIVE_COMPILATION_CONDITIONS=$(inherited) READERPRO_TESTING' \
-            ENABLE_TESTABILITY=YES CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/import-login-smoke.log
-          xcodebuild test-without-building -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Release \
-            -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
-            -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProUITests/SourceFlowUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \

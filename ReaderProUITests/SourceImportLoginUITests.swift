@@ -12,9 +12,30 @@ final class SourceImportLoginUITests: XCTestCase {
         let link = app.webViews.links["确认登录测试账号"]
         XCTAssertTrue(link.waitForExistence(timeout: 20)); link.tap()
         XCTAssertTrue(app.webViews.staticTexts["网页登录完成"].waitForExistence(timeout: 10))
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "搜索规则等待可见验证"; shot.lifetime = .keepAlways; add(shot)
         app.buttons["验证完成"].tap()
         XCTAssertTrue(app.staticTexts["已登录可搜索小说"].waitForExistence(timeout: 30))
         XCTAssertEqual(app.state, .runningForeground)
+    }
+
+    func testCancellingVisibleVerificationAllowsAnotherSearch() {
+        continueAfterFailure = false; executionTimeAllowance = 300
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--source-web-login-fixture", "--source-verification-fixture"]
+        app.launch(); app.tabBars.buttons["搜索"].tap()
+        let field = app.textFields["bookSearch"]
+        XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("登录")
+        app.buttons["submitBookSearch"].tap()
+        XCTAssertTrue(app.webViews.links["确认登录测试账号"].waitForExistence(timeout: 20))
+        app.navigationBars.buttons["取消"].tap()
+        XCTAssertTrue(app.buttons["submitBookSearch"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["cancelBookSearch"].waitForNonExistence(timeout: 10))
+        app.buttons["submitBookSearch"].tap()
+        let link = app.webViews.links["确认登录测试账号"]
+        XCTAssertTrue(link.waitForExistence(timeout: 20)); link.tap()
+        XCTAssertTrue(app.webViews.staticTexts["网页登录完成"].waitForExistence(timeout: 10))
+        app.buttons["验证完成"].tap()
+        XCTAssertTrue(app.staticTexts["已登录可搜索小说"].waitForExistence(timeout: 30))
     }
 
     func testDiscoveryLongPressLoginSwitchesInterfaceAndKeepsSelection() {
