@@ -489,7 +489,8 @@ private final class ReaderScrollProgress {
 
     func openChapter(_ i: Int, atStart: Bool = true, atEnd: Bool = false) {
         guard let b = book, !b.chapters.isEmpty else { return }
-        chapterIndex = max(0, min(i, b.chapters.count - 1))
+        guard let readable = b.chapters.readableIndex(from: i, direction: i < chapterIndex ? -1 : 1) else { return }
+        chapterIndex = readable
         chapterLanding = atEnd ? .end : .start
         scrollProgress.offset = 0
         pageIndex = 0
@@ -575,7 +576,7 @@ private final class ReaderScrollProgress {
     func onAppear(size: CGSize) {
         guard let b = book else { return }
         let restored = restoredReadingPosition(b)
-        chapterIndex = restored.chapter
+        chapterIndex = b.chapters.readableIndex(from: restored.chapter) ?? b.chapters.readableIndex(from: restored.chapter, direction: -1) ?? 0
         chapterLanding = .offset(restored.offset)
         scrollProgress.offset = restored.offset
         initialBrightness = UIScreen.main.brightness
@@ -1057,7 +1058,7 @@ private final class ReaderScrollProgress {
                         openChapter(entry.offset, atStart: true)
                     } label: {
                         HStack {
-                            Text(store.purify(entry.element.title, book: book, title: true))
+                            Text(store.purify(entry.element.displayTitle, book: book, title: true))
                                 .foregroundColor(entry.offset == chapterIndex ? Color.accentColor : .primary)
                             Spacer()
                             if entry.offset == chapterIndex { Image(systemName: "checkmark") }

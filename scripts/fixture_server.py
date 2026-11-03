@@ -153,6 +153,29 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return
         path = parsed.path
+        if path.startswith('/parity/'):
+            status = 200
+            if path == '/parity/protected':
+                status, payload = 401, {"error": "login required"}
+            elif path == '/parity/toc':
+                payload = {"chapters": [
+                    {"title": "第一卷", "url": "", "volume": True},
+                    {"title": "第一章", "url": "/parity/chapter/1", "vip": True, "paid": False},
+                    {"title": "第二章", "url": "/parity/chapter/2", "vip": True, "paid": True}]}
+            elif path.startswith('/parity/search'):
+                page = int(parse_qs(parsed.query).get('page', ['1'])[0])
+                if path == '/parity/search-repeat': page = 1
+                payload = {"books": [{"title": "分页小说" + str(page), "author": "作者", "url": "/parity/book/" + str(page)}] if page <= 2 else []}
+            else:
+                status, payload = 404, {"error": "unknown parity fixture"}
+            data = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json; charset=utf-8')
+            self.send_header('X-Parity', 'response-header')
+            self.send_header('Content-Length', str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
         if path == '/packs/import-slow':
             # A stalled download must leave the elapsed timer and cancel
             # button usable; its late response must never mutate the store.

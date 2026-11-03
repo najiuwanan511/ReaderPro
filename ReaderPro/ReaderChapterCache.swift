@@ -32,7 +32,7 @@ import Foundation
         let key = [bookID, book.sourceUrl, book.sourceName, chapter.id, chapter.url ?? ""].joined(separator: "\u{1f}")
         if let request = requests[key] { return try await request.task.value }
         let token = UUID(), fetch = self.fetch
-        let next = book.chapters.indices.contains(index + 1) ? book.chapters[index + 1].url : nil
+        let next = book.chapters.readableIndex(from: index + 1).flatMap { book.chapters[$0].url }
         let task = Task { @MainActor [weak self] () async throws -> String in
             let text = try await fetch(source, chapter, next)
             try Task.checkCancellation()
@@ -64,10 +64,10 @@ import Foundation
         preloadTasks[bookID]?.cancel()
         guard let book = store?.books.first(where: { $0.id == bookID }),
               book.kind == "web", book.chapters.indices.contains(index), count > 0 else { return }
-        let end = min(book.chapters.count, index + count + 1)
-        guard index + 1 < end else { return }
+        let upcoming = Array(book.chapters.indices.dropFirst(index + 1).filter { !book.chapters[$0].isVolume }.prefix(count))
+        guard !upcoming.isEmpty else { return }
         preloadTasks[bookID] = Task { @MainActor [weak self] in
-            for next in (index + 1)..<end {
+            for next in upcoming {
                 guard !Task.isCancelled, let self else { return }
                 // A failed prefetch must not obscure the chapter being read;
                 // opening that chapter will retry and show its actual error.

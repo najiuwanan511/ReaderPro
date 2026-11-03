@@ -9,6 +9,8 @@ struct DiscoveryView: View {
     @State private var selectedGroup: String?
     @State private var expandedSourceID: String?
     @State private var exploreTarget: ExploreTarget?
+    @State private var editingSource: LegadoSource?
+    @State private var searchingSource: LegadoSource?
 
     private var sources: [LegadoSource] { ExploreSources.filter(store.sources, query: searchText, group: selectedGroup) }
     private var groups: [String] { ExploreSources.groups(store.sources) }
@@ -19,7 +21,7 @@ struct DiscoveryView: View {
                 LazyVStack(spacing: 0) {
                     if sources.isEmpty { emptyState }
                     ForEach(sources) { source in
-                        SourceExploreCard(source: source, expanded: Binding(
+                        SourceExploreCard(store: store, source: source, onEdit: { editingSource = source }, onSearch: { searchingSource = source }, expanded: Binding(
                             get: { expandedSourceID == source.id },
                             set: { expandedSourceID = $0 ? source.id : nil }
                         )) { category in
@@ -28,6 +30,8 @@ struct DiscoveryView: View {
                     }
                 }.padding(.bottom, 12)
             }
+            .sheet(item: $editingSource) { source in NavigationStack { SourceDetailView(store: store, source: source) } }
+            .sheet(item: $searchingSource) { source in NavigationStack { SourceView(store: store, initialSourceID: source.id) } }
             .accessibilityIdentifier("discoverySourceScroll")
             .background(AppTheme.surface)
             .navigationTitle(selectedGroup ?? "发现")
@@ -95,7 +99,10 @@ struct ExploreTarget: Identifiable, Hashable {
 }
 
 struct SourceExploreCard: View {
+    @ObservedObject var store: BookStore
     let source: LegadoSource
+    var onEdit: () -> Void
+    var onSearch: () -> Void
     @Binding var expanded: Bool
     let onTapCategory: (ExploreCategory) -> Void
     @State private var categories: [ExploreCategory] = []
@@ -124,7 +131,16 @@ struct SourceExploreCard: View {
                 .accessibilityValue(expanded ? "已展开" : "已折叠")
                 .contextMenu {
                     if source.hasLogin { Button("登录") { showLogin = true } }
+                    Button("编辑书源") { onEdit() }
+                    Button("搜索此书源") { onSearch() }
+                    Button("置顶") {
+                        if let index = store.sources.firstIndex(where: { $0.id == source.id }) {
+                            store.sources[index].customOrder = (store.sources.map(\.customOrder).min() ?? 0) - 1
+                            store.save()
+                        }
+                    }
                     Button("刷新发现分类") { retry += 1; expanded = true }
+                    Button("删除书源", role: .destructive) { store.sources.removeAll { $0.id == source.id }; store.save() }
                 }
             if expanded { categoryContent }
         }

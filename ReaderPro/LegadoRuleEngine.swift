@@ -8,6 +8,7 @@ enum LegadoJSCtx {
     @TaskLocal static var deadline: Date?
     @TaskLocal static var sourceUrl: String = ""
     @TaskLocal static var key: String = ""
+    @TaskLocal static var page: Int = 1
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
     @TaskLocal static var chapter: BookChapter?
     @TaskLocal static var library = ""
@@ -1420,13 +1421,15 @@ extension LegadoSource {
         return books
     }
 
-    func search(key: String) async throws -> [SourceBook] {
-        try await withRules(key: key) { try await searchImpl(key: key) }
+    func search(key: String, page: Int = 1) async throws -> [SourceBook] {
+        try await LegadoJSCtx.$page.withValue(max(1, page)) {
+            try await withRules(key: key) { try await searchImpl(key: key) }
+        }
     }
     func searchForDiscovery(key: String) async throws -> [SourceBook] { try await search(key: key) }
     private func searchImpl(key: String) async throws -> [SourceBook] {
         guard !searchUrl.isEmpty else { throw SourceFailure(stage: "搜索", message: "书源未配置搜索地址") }
-        let response = try await loadPage(searchUrl, key: key, stage: "搜索")
+        let response = try await loadPage(searchUrl, key: key, page: LegadoJSCtx.page, stage: "搜索")
         let books = try parseBooks(response, rule: ruleSearch, stage: "搜索")
         // The site determines its own search semantics (aliases, author, fuzzy
         // matching). Never substitute a random navigation-link fallback.
@@ -1487,7 +1490,8 @@ extension LegadoSource {
         guard !ruleToc.chapterList.isEmpty, !ruleToc.chapterName.isEmpty, !ruleToc.chapterUrl.isEmpty else {
             throw SourceFailure(stage: "目录", message: "缺少章节列表、章节名或章节地址规则")
         }
-        let detailed = book.tocUrl == nil ? try await fetchBookInfoImpl(book: book) : book
+        let prepared = try preparedDirectoryBook(book)
+        let detailed = prepared.tocUrl == nil ? try await fetchBookInfoImpl(book: prepared) : prepared
         let initial = detailed.tocUrl ?? detailed.url
         var pending = [initial]; var queued: Set<String> = [initial]; var cursor = 0
         var visited = Set<String>(); var seen = Set<String>(); var chapters: [BookChapter] = []
@@ -1505,11 +1509,18 @@ extension LegadoSource {
             var matched = 0
             for item in items {
                 let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
-                let address = resolveUrl(applyRuleFirst(item, ruleToc.chapterUrl, base: response.url), base: response.url)
-                guard !name.isEmpty, isSourceURL(address) else { continue }
+                let volume = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVolume") ?? "", base: response.url))
+                let rawAddress = applyRuleFirst(item, ruleToc.chapterUrl, base: response.url)
+                let address = rawAddress.isEmpty && volume ? "" : resolveUrl(rawAddress, base: response.url)
+                guard !name.isEmpty, volume || isSourceURL(address) else { continue }
                 matched += 1
-                if seen.insert(address).inserted {
-                    var chapter = BookChapter(id: address, title: name, text: "__URL__" + address, url: address)
+                let identity = volume ? "volume:\(response.url):\(matched):\(name)" : address
+                if seen.insert(identity).inserted {
+                    var chapter = BookChapter(id: identity, title: name, text: volume ? "" : "__URL__" + address, url: volume && address.isEmpty ? nil : address)
+                    chapter.isVolume = volume
+                    chapter.isVip = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVip") ?? "", base: response.url))
+                    chapter.isPay = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isPay") ?? "", base: response.url))
+                    chapter.updateTime = applyRuleFirst(item, ruleToc.androidValue("updateTime") ?? "", base: response.url)
                     chapter.ruleBook = .init(bookUrl: detailed.url, name: detailed.title, author: detailed.author,
                                              tocUrl: detailed.tocUrl ?? detailed.url, coverUrl: detailed.cover)
                     chapter.ruleIndex = chapters.count
@@ -1525,7 +1536,7 @@ extension LegadoSource {
         }
         if ruleToc.chapterList.hasPrefix("-") { chapters.reverse() }
         for index in chapters.indices { chapters[index].ruleIndex = index }
-        return chapters
+        return try formattedChapterTitles(chapters, book: detailed)
     }
 
     func fetchChapterContent(_ chapter: BookChapter, nextChapterUrl: String? = nil) async throws -> String {
@@ -1551,12 +1562,13 @@ extension LegadoSource {
                     response = SourcePage(text: "", url: SourceHTTP.options(next).url)
                 }
                 if response.url != SourceHTTP.options(next).url, !visited.insert(response.url).inserted { continue }
-                let raw = applyContentRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")
+                let rendered = try await chapterWebPage(response)
+                let raw = applyContentRule(rendered.text, ruleContent.content, base: rendered.url).joined(separator: "\n")
                 let part = stripText(raw, preserveNewlines: true).trimmingCharacters(in: .whitespacesAndNewlines)
                 try LegadoJSCtx.failures?.check()
                 guard !part.isEmpty else { throw SourceFailure(stage: "正文解析", message: "正文规则未匹配到内容，请检查规则、登录状态或验证码", url: response.url) }
                 parts.append(part)
-                let links = applyContentNextPageRule(response.text, ruleContent.nextContentUrl, base: response.url)
+                let links = applyContentNextPageRule(rendered.text, ruleContent.nextContentUrl, base: rendered.url)
                 try LegadoJSCtx.failures?.check()
                 pages.appendLinks(links, base: response.url)
             }
@@ -1580,7 +1592,8 @@ extension LegadoSource {
                 guard visited.insert(next).inserted else { continue }
                 guard loadedPages < 100 else { throw SourceFailure(stage: "漫画分页", message: "超过 100 页保护限制", url: next) }
                 loadedPages += 1
-                let response = try await loadPage(next, stage: "漫画正文")
+                let loaded = try await loadPage(next, stage: "漫画正文")
+                let response = try await chapterWebPage(loaded)
                 if response.url != SourceHTTP.options(next).url, !visited.insert(response.url).inserted { continue }
                 let rule = ruleContent.imageUrl.isEmpty ? ruleContent.content : ruleContent.imageUrl
                 let extracted = applyContentRule(response.text, rule, base: response.url)

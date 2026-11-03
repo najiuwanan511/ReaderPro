@@ -12,11 +12,17 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
     var url: String? = nil
     var ruleBook: LegadoJS.BookCtx? = nil
     var ruleIndex: Int? = nil
+    var isVolume = false
+    var isVip = false
+    var isPay = false
+    var updateTime = ""
+    var subContent = ""
+    var displayTitle: String { title + (isVip ? (isPay ? " · VIP 已购" : " · VIP") : "") }
     init(id: String = UUID().uuidString, title: String, text: String, imageUrls: [String] = [], url: String? = nil) {
         self.id = id; self.title = title; self.text = text; self.imageUrls = imageUrls; self.url = url
     }
     var isComic: Bool { !imageUrls.isEmpty }
-    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls, url, ruleBook, ruleIndex }
+    enum CodingKeys: String, CodingKey { case id, title, text, imageUrls, url, ruleBook, ruleIndex, isVolume, isVip, isPay, updateTime, subContent }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
@@ -26,11 +32,18 @@ struct BookChapter: Identifiable, Codable, Equatable, Hashable {
         url = (try? c.decode(String.self, forKey: .url)) ?? (text.hasPrefix("__URL__") ? String(text.dropFirst(7)) : nil)
         ruleBook = try? c.decode(LegadoJS.BookCtx.self, forKey: .ruleBook)
         ruleIndex = try? c.decode(Int.self, forKey: .ruleIndex)
+        isVolume = (try? c.decode(Bool.self, forKey: .isVolume)) ?? false
+        isVip = (try? c.decode(Bool.self, forKey: .isVip)) ?? false
+        isPay = (try? c.decode(Bool.self, forKey: .isPay)) ?? false
+        updateTime = (try? c.decode(String.self, forKey: .updateTime)) ?? ""
+        subContent = (try? c.decode(String.self, forKey: .subContent)) ?? ""
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id); try c.encode(title, forKey: .title); try c.encode(text, forKey: .text); try c.encode(imageUrls, forKey: .imageUrls); try c.encodeIfPresent(url, forKey: .url)
         try c.encodeIfPresent(ruleBook, forKey: .ruleBook); try c.encodeIfPresent(ruleIndex, forKey: .ruleIndex)
+        try c.encode(isVolume, forKey: .isVolume); try c.encode(isVip, forKey: .isVip); try c.encode(isPay, forKey: .isPay)
+        try c.encode(updateTime, forKey: .updateTime); try c.encode(subContent, forKey: .subContent)
     }
 }
 

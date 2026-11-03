@@ -137,7 +137,7 @@ struct SourceBookDetailView: View {
                     ForEach(chapterEntries, id: \.offset) { entry in
                         Button { openChapter(entry.offset, expectedChapterID: entry.element.id) } label: {
                             HStack {
-                                Text(entry.element.title).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(2)
+                                Text(entry.element.displayTitle).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(2)
                                 Spacer()
                                 if existingBook?.chapterIndex == entry.offset { Image(systemName: "bookmark.fill").font(.caption).foregroundStyle(AppTheme.accent) }
                             }.padding(.horizontal, 16).padding(.vertical, 14).frame(maxWidth: .infinity, alignment: .leading)
@@ -225,18 +225,20 @@ struct SourceBookDetailView: View {
         let oldChapters = book.chapters
         book.chapters = chapters.map { chapter in
             guard let url = chapter.url, let old = oldChapters.first(where: { $0.url == url }) else { return chapter }
-            if !old.text.isEmpty && !old.text.hasPrefix("__URL__") { return old }
-            if !old.imageUrls.isEmpty { return old }
-            return chapter
+            var updated = chapter
+            if !old.text.isEmpty && !old.text.hasPrefix("__URL__") { updated.text = old.text }
+            if !old.imageUrls.isEmpty { updated.imageUrls = old.imageUrls }
+            return updated
         }
-        book.chapterIndex = max(0, min(book.chapterIndex, chapters.count - 1))
+        let bounded = max(0, min(book.chapterIndex, chapters.count - 1))
+        book.chapterIndex = chapters.readableIndex(from: bounded) ?? chapters.readableIndex(from: bounded, direction: -1) ?? 0
         return book
     }
 
     private func openChapter(_ index: Int?, expectedChapterID: String? = nil) {
         guard !chapters.isEmpty else { return }
         if let index {
-            guard chapters.indices.contains(index),
+            guard chapters.indices.contains(index), !chapters[index].isVolume,
                   expectedChapterID == nil || chapters[index].id == expectedChapterID else { return }
         }
         var book = makeBook()

@@ -32,6 +32,8 @@ func sourceErrorMessage(_ error: Error) -> String {
 struct SourcePage {
     let text: String
     let url: String
+    var status: Int = 200
+    var headers: [String: String] = [:]
 }
 
 enum SourceHTTP {
@@ -205,12 +207,12 @@ enum SourceHTTP {
         return SourcePage(text: text, url: parsed.url)
     }
 
-    static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false) async throws -> SourcePage {
+    static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false, allowHTTPError: Bool = false) async throws -> SourcePage {
         try Task.checkCancellation()
         do {
             let (data, response) = try await SourceTLS.data(for: request)
             let address = response.url?.absoluteString ?? request.url?.absoluteString ?? ""
-            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode), !allowHTTPError {
                 let hint: String
                 switch http.statusCode {
                 case 300..<400 where (try? SourceProxy.configuration(for: request)) != nil:
@@ -223,8 +225,13 @@ enum SourceHTTP {
                 }
                 throw SourceFailure(stage: stage, message: "HTTP \(http.statusCode)：\(hint)", url: address)
             }
-            guard !data.isEmpty else { throw SourceFailure(stage: stage, message: "服务器返回空内容", url: address) }
-            return SourcePage(text: hexEncoded ? data.map { String(format: "%02x", $0) }.joined() : decode(data, response: response), url: address)
+            guard !data.isEmpty || allowHTTPError else { throw SourceFailure(stage: stage, message: "服务器返回空内容", url: address) }
+            let http = response as? HTTPURLResponse
+            let headers = (http?.allHeaderFields ?? [:]).reduce(into: [String: String]()) {
+                $0[String(describing: $1.key).lowercased()] = String(describing: $1.value)
+            }
+            return SourcePage(text: hexEncoded ? data.map { String(format: "%02x", $0) }.joined() : decode(data, response: response), url: address,
+                              status: http?.statusCode ?? 200, headers: headers)
         } catch let failure as SourceFailure { throw failure }
         catch {
             if Task.isCancelled { throw CancellationError() }
@@ -271,12 +278,15 @@ extension LegadoSource {
 
     func loadPage(_ address: String, base: String? = nil, key: String = "", page: Int = 1, stage: String) async throws -> SourcePage {
         let expanded = SourceHTTP.expand(address, base: base ?? bookSourceUrl, key: key, page: page)
-        if let inline = try SourceHTTP.inlinePage(expanded) { return inline }
+        if let inline = try SourceHTTP.inlinePage(expanded) { return try checkedLoginResponse(inline, stage: stage) }
         let req = try SourceHTTP.request(expanded, base: base ?? bookSourceUrl, headers: requestHeaders, key: key, page: page, alreadyExpanded: true, sourceTemplate: address)
         let options = SourceHTTP.options(expanded).options
         if options["webView"] as? Bool == true || !(options["webJs"] as? String ?? "").isEmpty {
-            return try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20), delay: SourceHTTP.webViewDelay(options))
+            let response = try await SourceWebLoader.load(req, script: options["webJs"] as? String ?? "", timeout: min(20, LegadoJSCtx.deadline?.timeIntervalSinceNow ?? 20), delay: SourceHTTP.webViewDelay(options))
+            return try checkedLoginResponse(response, stage: stage)
         }
-        return try await SourceHTTP.load(req, stage: stage, hexEncoded: !(options["type"] as? String ?? "").isEmpty)
+        let response = try await SourceHTTP.load(req, stage: stage, hexEncoded: !(options["type"] as? String ?? "").isEmpty,
+                                                 allowHTTPError: !loginCheckJs.isEmpty)
+        return try checkedLoginResponse(response, stage: stage)
     }
 }

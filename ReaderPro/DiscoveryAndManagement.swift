@@ -231,7 +231,7 @@ struct SourceManagementView: View {
             Button("好", role: .cancel) {}
         } message: { Text(fileImportMessage) }
         .sheet(item: $selectedSource) { src in
-            NavigationStack { SourceDetailView(source: src) }
+            NavigationStack { SourceDetailView(store: store, source: src) }
         }
         .sheet(isPresented: $showPaste) {
             NavigationStack {
@@ -398,7 +398,9 @@ class QRScannerController: UIViewController, AVCaptureMetadataOutputObjectsDeleg
 // MARK: - 书源详情（查看规则 + 测试搜索）
 
 struct SourceDetailView: View {
-    let source: LegadoSource
+    @ObservedObject var store: BookStore
+    @State var source: LegadoSource
+    @State private var editorError = ""
     @State private var testKey = ""
     @State private var testResults: [SourceBook] = []
     @State private var testing = false
@@ -476,7 +478,17 @@ struct SourceDetailView: View {
             NavigationStack { BrowserView(initialURL: source.bookSourceUrl) }
         }
         .sheet(isPresented: $showEditor) {
-            NavigationStack { CodeEditorView(title: source.bookSourceName, code: $sourceJSON) }
+            NavigationStack {
+                CodeEditorView(title: source.bookSourceName, code: $sourceJSON, onSave: {
+                    do {
+                        source = try store.saveEditedSource(sourceJSON, replacing: source.id)
+                        showEditor = false
+                    } catch { editorError = sourceErrorMessage(error) }
+                })
+                .alert("保存书源失败", isPresented: Binding(get: { !editorError.isEmpty }, set: { if !$0 { editorError = "" } })) {
+                    Button("确定") { editorError = "" }
+                } message: { Text(editorError) }
+            }
         }
     }
 

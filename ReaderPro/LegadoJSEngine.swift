@@ -68,9 +68,10 @@ final class LegadoJS {
     static func run(_ js: String, input: String, baseUrl: String,
                     sourceKey: String, sourceUrl: String,
                     loginInfo: [String: String] = [:], header: [String: String] = [:],
-                    book: BookCtx? = nil, page: Int = 1, originalContent: String? = nil,
+                    book: BookCtx? = nil, page: Int? = nil, originalContent: String? = nil,
                     structuredResult: Any? = nil, expandTemplates: Bool = true,
-                    urlContext: SourceJSURLContext? = nil) -> String {
+                    urlContext: SourceJSURLContext? = nil, response: SourcePage? = nil) -> String {
+        let page = page ?? LegadoJSCtx.page
         if Task.isCancelled || (LegadoJSCtx.deadline.map { $0 <= Date() } ?? false) {
             LegadoJSCtx.failures?.add(Task.isCancelled ? "书源脚本已取消" : "书源脚本执行超时")
             return ""
@@ -82,7 +83,7 @@ final class LegadoJS {
             runInPool(js, input: input, baseUrl: baseUrl, sourceKey: sourceKey, sourceUrl: sourceUrl,
                       loginInfo: loginInfo, header: header, book: book, page: page,
                       originalContent: originalContent, structuredResult: structuredResult,
-                      expandTemplates: expandTemplates, urlContext: urlContext)
+                      expandTemplates: expandTemplates, urlContext: urlContext, response: response)
         }
     }
 
@@ -91,7 +92,7 @@ final class LegadoJS {
                                   loginInfo: [String: String], header: [String: String],
                                   book: BookCtx?, page: Int, originalContent: String?,
                                   structuredResult: Any?, expandTemplates: Bool,
-                                  urlContext: SourceJSURLContext?) -> String {
+                                  urlContext: SourceJSURLContext?, response: SourcePage?) -> String {
         let script = SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
                                               page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
@@ -422,10 +423,14 @@ final class LegadoJS {
             ctx.setObject(LegadoJSCtx.chapter?.title ?? "", forKeyedSubscript: "title" as NSString)
         }
         let chapter = LegadoJSCtx.chapter
+        ctx.setObject(chapter?.title ?? "", forKeyedSubscript: "title" as NSString)
         let chapterObj = JSValue(newObjectIn: ctx)!
         chapterObj.setObject(chapter?.title ?? "", forKeyedSubscript: "title" as NSString)
         chapterObj.setObject(chapter?.url ?? baseUrl, forKeyedSubscript: "url" as NSString)
         chapterObj.setObject(chapter?.ruleIndex ?? 0, forKeyedSubscript: "index" as NSString)
+        chapterObj.setObject(chapter?.isVolume ?? false, forKeyedSubscript: "isVolume" as NSString)
+        chapterObj.setObject(chapter?.isVip ?? false, forKeyedSubscript: "isVip" as NSString)
+        chapterObj.setObject(chapter?.isPay ?? false, forKeyedSubscript: "isPay" as NSString)
         ctx.setObject(chapterObj, forKeyedSubscript: "chapter" as NSString)
 
         ctx.evaluateScript(Self.compatibilityScript)
@@ -544,6 +549,16 @@ final class LegadoJS {
         java.setObject(getUA, forKeyedSubscript: "getWebViewUA" as NSString)
         ctx.evaluateScript(Self.javaStringScript)
         ctx.evaluateScript(SourceJava.script)
+        if let response {
+            let payload: [String: Any] = ["text": response.text, "url": response.url, "status": response.status, "headers": response.headers]
+            if let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) {
+                ctx.setObject(false, forKeyedSubscript: "_strictContentHTTP" as NSString)
+                let value = ctx.objectForKeyedSubscript("_response")?.call(withArguments: [json])
+                // StrResponse exposes url as a field in Android login checks.
+                value?.setObject(response.url, forKeyedSubscript: "url" as NSString)
+                ctx.setObject(value, forKeyedSubscript: "result" as NSString)
+            }
+        }
 
         // ---- 执行 ----
         // 关键修复：JS 规则大量用「最后一行是表达式」的方式返回结果，
@@ -597,6 +612,22 @@ final class LegadoJS {
         if let urlContext, let updated = java.objectForKeyedSubscript("url"), !updated.isUndefined, !updated.isNull {
             urlContext.url = updated.toString() ?? urlContext.url
             if let ret { urlContext.returnedValue = !ret.isUndefined && !ret.isNull }
+        }
+        if response != nil {
+            let value = ret?.isUndefined == false ? ret : ctx.objectForKeyedSubscript("result")
+            guard let value, value.isObject, value.hasProperty("body"),
+                  let body = value.invokeMethod("body", withArguments: [])?.toString(),
+                  let status = value.invokeMethod("code", withArguments: [])?.toInt32() else {
+                LegadoJSCtx.failures?.add("loginCheckJs 必须返回响应对象，例如 result 或 java.connect(url)")
+                return ""
+            }
+            let address: String
+            if let url = value.objectForKeyedSubscript("url"), url.isString { address = url.toString() ?? baseUrl }
+            else { address = value.invokeMethod("url", withArguments: [])?.toString() ?? baseUrl }
+            let headers = value.invokeMethod("headers", withArguments: [])?.toDictionary() as? [String: String] ?? [:]
+            guard exception.isEmpty else { LegadoJSCtx.failures?.add(exception); return "" }
+            let payload: [String: Any] = ["text": body, "url": address, "status": Int(status), "headers": headers]
+            return (try? JSONSerialization.data(withJSONObject: payload)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
         }
         func string(_ value: JSValue?) -> String? {
             guard let value, !value.isNull, !value.isUndefined else { return nil }

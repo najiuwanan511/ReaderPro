@@ -197,7 +197,7 @@ struct ReaderSourceCandidate: Identifiable {
             .sheet(item: $directory) { row in
                 NavigationStack {
                     List(Array((row.chapters ?? []).enumerated()), id: \.element.id) { index, chapter in
-                        Button(chapter.title) { directory = nil; select(row, index) }
+                        Button(chapter.displayTitle) { directory = nil; select(row, index) }.disabled(chapter.isVolume)
                             .accessibilityIdentifier("sourceDirectoryChapter-\(index)")
                     }
                     .navigationTitle("\(row.book.sourceName)目录")

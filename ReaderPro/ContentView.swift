@@ -390,6 +390,13 @@ struct BookshelfView: View {
 
 struct SourceView: View {
     @ObservedObject var store: BookStore
+    var initialSourceID: String? = nil
+    @State private var sourceSelection: Set<String>? = nil
+    @State private var showScope = false
+    @State private var history = SearchHistory.values
+    private var searchableSources: [LegadoSource] {
+        store.enabledSources.filter { sourceSelection?.contains($0.id) ?? true }
+    }
     @State private var key = ""
     @FocusState private var searchFocused: Bool
     @StateObject private var searchState = SourceSearchController()
@@ -418,7 +425,7 @@ struct SourceView: View {
                 .accessibilityIdentifier("submitBookSearch")
             }.padding(.horizontal)
             HStack(spacing: 8) {
-                Label("\(store.enabledSources.count) 个启用源", systemImage: "checkmark.seal.fill")
+                Button { showScope = true } label: { Label("搜索范围：\(searchableSources.count) 个源", systemImage: "line.3.horizontal.decrease.circle") }
                 Text("·")
                 Text("\(store.sources.count) 个已导入")
                 Spacer()
@@ -441,11 +448,21 @@ struct SourceView: View {
             if !searchState.errors.isEmpty {
                 Button("查看 \(searchState.errors.count) 个书源的错误原因") { showSearchErrors = true }.font(.caption)
             }
-            List(searchState.results) { r in
-                Button {
-                    selectedResult = r
-                } label: {
-                    SourceBookRow(book: r)
+            List {
+                if searchState.keyword.isEmpty && !history.isEmpty {
+                    Section {
+                        ForEach(history, id: \.self) { term in
+                            Button { key = term; search() } label: { Label(term, systemImage: "clock") }
+                        }
+                        Button("清空搜索历史", role: .destructive) { SearchHistory.clear(); history = [] }
+                    } header: { Text("搜索历史") }
+                }
+                ForEach(searchState.results) { r in
+                    Button { selectedResult = r } label: { SourceBookRow(book: r) }
+                }
+                if searchState.hasMore && !searchState.searching {
+                    Button(searchState.errors.isEmpty ? "加载下一页" : "继续搜索 / 重试失败书源") { searchState.loadMore() }
+                        .accessibilityIdentifier("loadMoreSearch")
                 }
             }
             .listStyle(.plain)
@@ -455,6 +472,8 @@ struct SourceView: View {
             }
         }
         .navigationTitle("搜索")
+        .onAppear { if let initialSourceID { sourceSelection = [initialSourceID] } }
+        .sheet(isPresented: $showScope) { SearchScopePicker(sources: store.enabledSources, selection: $sourceSelection) }
         .onChange(of: importModel.message) { _, message in if !message.isEmpty { importText = "" } }
         .readerNavigationStyle()
         .background(AppTheme.background.ignoresSafeArea())
@@ -493,7 +512,8 @@ struct SourceView: View {
     }
     func search() {
         searchFocused = false
-        searchState.start(store.enabledSources, key: key)
+        SearchHistory.record(key); history = SearchHistory.values
+        searchState.start(searchableSources, key: key)
     }
     func importSource() { importModel.start(importText, store: store) }
 

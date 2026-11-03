@@ -1,0 +1,45 @@
+name: Legado parity regression
+on:
+  push:
+    branches: [fix/legado-parity]
+  workflow_dispatch:
+jobs:
+  regression:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare deterministic fixtures and simulator
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.4.app/Contents/Developer
+          brew install xcodegen
+          xcodegen generate
+          mkdir -p build
+          python3 scripts/fixture_server.py > build/fixture-server.log 2>&1 &
+          for i in {1..20}; do
+            if curl --fail --silent http://127.0.0.1:8765/health; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8765/health
+      - name: Test rule lifecycle and search pagination
+        run: |
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
+          xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
+            -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
+            -only-testing:ReaderProTests/ParityFoundationTests \
+            -only-testing:ReaderProTests/SourceEngineTests \
+            -only-testing:ReaderProTests/SourceRuleObjectTests \
+            -only-testing:ReaderProTests/DiscoveryPaginationTests \
+            -only-testing:ReaderProTests/JSImportAndResponseTests \
+            -only-testing:ReaderProTests/ReaderContentPipelineTests \
+            -resultBundlePath build/ParityRegression.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/parity-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parity-regression-evidence
+          path: |
+            build/ParityRegression.xcresult
+            build/parity-tests.log
+            build/fixture-server.log
