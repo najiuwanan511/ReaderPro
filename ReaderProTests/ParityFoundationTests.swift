@@ -2,6 +2,40 @@ import XCTest
 @testable import ReaderPro
 
 final class ParityFoundationTests: XCTestCase {
+    func testScriptConfigurationReadsCurrentPreferencesAndKeepsJavaMapMethodsOutOfJSON() throws {
+        let defaults = UserDefaults.standard, keys = ["appThemeMode", "reader.letterSpacing", "reader.paragraphIndent"]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        let store = BookStore()
+        defer {
+            for (index, key) in keys.enumerated() {
+                if let value = saved[index] { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+            SourceScriptConfiguration.updateReading(BookStore())
+        }
+        defaults.set("dark", forKey: keys[0]); defaults.set(1.5, forKey: keys[1]); defaults.set(2.0, forKey: keys[2])
+        store.fontSize = 26; store.pageTurn = 4; store.pagePaddingH = 24
+        SourceScriptConfiguration.updateReading(store)
+        let failures = RuleFailures()
+        let result = LegadoJSCtx.$failures.withValue(failures) {
+            LegadoJS.run(#"""
+            var c=java.getReadBookConfigMap(),t=java.getThemeConfigMap();
+            if(JSON.stringify(c)!==java.getReadBookConfig())throw Error('Map methods leaked into JSON');
+            if(!t.get('isNightTheme')||!t.get('backgroundColor').startsWith('#'))throw Error('wrong theme');
+            if(c.get('absent')!==null||c.containsKey('get')||c.keySet().size()!==c.size()||c.entrySet().size()!==c.size())throw Error('Map mismatch');
+            [java.getThemeMode(),c.get('textSize'),c.get('pageAnim'),c.get('paddingRight'),c.get('letterSpacing'),c.get('paragraphIndent')].join('|');
+            """#, input: "", baseUrl: "https://config.test", sourceKey: "", sourceUrl: "https://config.test")
+        }
+        try failures.check()
+        XCTAssertEqual(result, "2|26|2|24|1.5|　　")
+        defaults.set("light", forKey: keys[0])
+        XCTAssertEqual(SourceScriptConfiguration.themeMode(), "1")
+        XCTAssertEqual(SourceScriptConfiguration.themeConfig()["isNightTheme"] as? Bool, false)
+        defaults.set("system", forKey: keys[0]); SourceScriptConfiguration.updateAppearance(dark: true)
+        XCTAssertEqual(SourceScriptConfiguration.themeMode(), "0")
+        XCTAssertEqual(SourceScriptConfiguration.themeConfig()["isNightTheme"] as? Bool, true)
+        SourceScriptConfiguration.updateAppearance(dark: false)
+    }
+
     func testURLBridgePreservesAndroidRelativePathsAndFormQuerySemantics() throws {
         let failures = RuleFailures()
         let result = LegadoJSCtx.$failures.withValue(failures) {

@@ -20,7 +20,11 @@ final class RssWebBridge: NSObject, WKScriptMessageHandlerWithReply {
     var script: String {
         let values = (try? JSONEncoder().encode(LegadoJS.persistentValues(source: source.sourceUrl))).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
         let metadata = (try? JSONEncoder().encode(source)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-        return "var _readerRssValues=" + values + ";var source=" + metadata + ";\n" + #"""
+        let configuration = SourceScriptConfiguration.json([
+            "read": SourceScriptConfiguration.readConfig(), "theme": SourceScriptConfiguration.themeConfig(),
+            "mode": SourceScriptConfiguration.themeMode()
+        ])
+        return "var _readerRssValues=" + values + ";var source=" + metadata + ";var _readerConfiguration=" + configuration + ";\n" + #"""
         (function(){
           function call(command,args){return window.webkit.messageHandlers.readerRss.postMessage({command:command,args:Array.from(args||[]).map(function(v){return v==null?'':String(v);})});}
           function send(command,args){call(command,args).catch(function(e){console.error(String(e));});}
@@ -28,6 +32,9 @@ final class RssWebBridge: NSObject, WKScriptMessageHandlerWithReply {
           function put(key,value){key=String(key);value=String(value);_readerRssValues[key]=value;send('_put',[key,value]);return value;}
           source.get=get;source.put=put;source.getKey=function(){return source.sourceUrl;};source.getTag=function(){return source.sourceName;};
           var java=window.java||{};window.java=java;java.get=get;java.put=put;
+          java.getThemeMode=function(){return _readerConfiguration.mode;};
+          java.getThemeConfig=function(){return JSON.stringify(_readerConfiguration.theme);};
+          java.getReadBookConfig=function(){return JSON.stringify(_readerConfiguration.read);};
           ['searchBook','addBook','showPhoto','open','openUrl','startBrowser','toast','longToast','copyText'].forEach(function(name){java[name]=function(){send(name,arguments);};});
           java.run=function(code){return call('run',[code]);};window.run=java.run;
           ['ajaxAwait','connectAwait','getAwait','headAwait','postAwait','webViewAwait','webViewGetSourceAwait','downloadFileAwait','readTxtFileAwait','importScriptAwait','getStringAwait','decryptStrAwait','encryptBase64Await','encryptHexAwait','createSignHexAwait'].forEach(function(name){

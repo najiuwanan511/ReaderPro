@@ -590,10 +590,12 @@ class BookStore: ObservableObject {
         sources.removeAll { $0.bookSourceName.contains("Gutenberg") && $0.bookSourceUrl.contains("gutenberg.org") }
         if !metaExists && replaceRules.isEmpty { replaceRules = ReplaceRule.defaults }
         if metaExists && sources.count != beforeCount { save() }
+        SourceScriptConfiguration.updateReading(self)
     }
     private static let persistenceQueue = DispatchQueue(label: "ReaderPro.persistence", qos: .userInitiated)
     private func metadataSnapshot() -> Meta {
-        Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
+        SourceScriptConfiguration.updateReading(self)
+        return Meta(bookmarks: bookmarks, sources: sources, rssSources: rssSources, replaceRules: replaceRules,
                      fontSize: fontSize, lineSpacing: lineSpacing, paragraphSpacing: paragraphSpacing,
                      pagePaddingH: pagePaddingH, pagePaddingV: pagePaddingV, brightness: brightness,
                      pageTurn: pageTurn, pageTurnSpeed: pageTurnSpeed, fontName: fontName, showHeader: showHeader, showFooter: showFooter,

@@ -142,6 +142,8 @@ final class MediaAndRssParityTests: XCTestCase {
           var saved=await run("java.get('web-test')");
           var json=await ajaxAwait('http://127.0.0.1:8765/parity/search?page=1');
           if(saved!=='保存变量'||JSON.parse(json).books[0].title!=='分页小说1')throw Error('bridge values mismatch');
+          var theme=JSON.parse(java.getThemeConfig()),reading=JSON.parse(java.getReadBookConfig());
+          if(typeof theme.isNightTheme!=='boolean'||reading.textSize<=0||!['0','1','2'].includes(java.getThemeMode()))throw Error('missing page configuration');
           java.searchBook('分页小说1','样例分组');
         }catch(e){java.toast('失败:'+String(e));}})();
         </script></body></html>

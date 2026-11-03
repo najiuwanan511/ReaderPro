@@ -662,6 +662,14 @@ final class LegadoJS {
         java.setObject(chapterNumber, forKeyedSubscript: "toNumChapter" as NSString)
         let getUA: @convention(block) () -> String = { sourceUA }
         java.setObject(getUA, forKeyedSubscript: "getWebViewUA" as NSString)
+        let configuration: @convention(block) (String) -> String = { kind in
+            switch kind {
+            case "mode": return SourceScriptConfiguration.themeMode()
+            case "theme": return SourceScriptConfiguration.json(SourceScriptConfiguration.themeConfig())
+            default: return SourceScriptConfiguration.json(SourceScriptConfiguration.readConfig())
+            }
+        }
+        java.setObject(configuration, forKeyedSubscript: "_configuration" as NSString)
         ctx.evaluateScript(Self.javaStringScript)
         ctx.evaluateScript(SourceJava.script)
         if let response {
@@ -830,6 +838,22 @@ final class LegadoJS {
         return object;
     }
     java.getString = function(rule, content, isUrl) { return java._getString(String(rule), _text(content), !!isUrl); };
+    function _configMap(value) {
+        var keys=Object.keys(value);
+        return _methods(value, {
+            get:function(key){return keys.indexOf(String(key))>=0 ? this[String(key)] : null;},
+            containsKey:function(key){return keys.indexOf(String(key))>=0;},
+            size:function(){return Object.keys(this).length;},
+            keySet:function(){return _array(Object.keys(this));},
+            values:function(){var self=this;return _array(Object.keys(this).map(function(key){return self[key];}));},
+            entrySet:function(){var self=this;return _array(Object.keys(this).map(function(key){return {getKey:function(){return key;},getValue:function(){return self[key];}};}));}
+        });
+    }
+    java.getReadBookConfig=function(){return java._configuration('read');};
+    java.getReadBookConfigMap=function(){return _configMap(JSON.parse(java.getReadBookConfig()));};
+    java.getThemeMode=function(){return java._configuration('mode');};
+    java.getThemeConfig=function(){return java._configuration('theme');};
+    java.getThemeConfigMap=function(){return _configMap(JSON.parse(java.getThemeConfig()));};
     java.getStringList = function(rule, content) { return _array(JSON.parse(java._getElements(String(rule), _text(content)))); };
     function _typed(value) {
         if (typeof value !== 'string') return value;

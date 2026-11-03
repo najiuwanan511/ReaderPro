@@ -13,6 +13,7 @@ struct ReaderProApp: App {
     var body: some Scene {
         WindowGroup {
             rootView
+                .modifier(ScriptAppearanceObserver())
                 .preferredColorScheme(scheme)
                 .environmentObject(network)
         }
