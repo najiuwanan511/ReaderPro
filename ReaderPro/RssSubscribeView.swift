@@ -556,7 +556,7 @@ struct FeedHTMLView: UIViewRepresentable {
                 } else { request = URLRequest(url: URL(string: baseURL) ?? URL(string: "about:blank")!) }
                 try Task.checkCancellation()
                 try SourceWebDataStore.configure(view.configuration.websiteDataStore, request: request)
-                try await SourceWebDataStore.preventLocalBypass(view.configuration, request: request)
+                try await SourceWebDataStore.prepareProxy(view.configuration, request: request)
                 if source?.enabledCookieJar != false {
                     for cookie in SourceWebDataStore.cookies(for: request, sourceURL: source?.sourceUrl) { await view.configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
                 }

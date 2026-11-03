@@ -67,7 +67,7 @@ import Network
             throw SourceFailure(stage: "书源代理", message: "无法配置网页代理")
         }
     }
-    static func preventLocalBypass(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {
+    static func prepareProxy(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {
         guard try SourceProxy.configuration(for: request) != nil else { return }
         // iOS 17 WebKit only sends proxy configuration to its current network
         // process; it does not retain it in session creation parameters as
@@ -79,6 +79,11 @@ import Network
         try configure(configuration.websiteDataStore, request: request)
         _ = await configuration.websiteDataStore.httpCookieStore.allCookies()
         try Task.checkCancellation()
+        try await preventLocalBypass(configuration, request: request)
+    }
+
+    static func preventLocalBypass(_ configuration: WKWebViewConfiguration, request: URLRequest) async throws {
+        guard try SourceProxy.configuration(for: request) != nil else { return }
         let hosts = deviceHosts().sorted(), signature = hosts.joined(separator: ",")
         if localRules?.0 != signature {
             localRules = (signature, Task {

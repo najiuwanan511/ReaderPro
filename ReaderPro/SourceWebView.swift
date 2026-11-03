@@ -66,7 +66,7 @@ import UIKit
                     loader.finish(.failure(SourceFailure(stage: "网页脚本", message: "WebView 加载或脚本等待超时（" + loader.loadingPhase + "）", url: request.url?.absoluteString ?? "")))
                 }
                 Task {
-                    do { try await SourceWebDataStore.preventLocalBypass(config, request: request) }
+                    do { try await SourceWebDataStore.prepareProxy(config, request: request) }
                     catch { loader.finish(.failure(error)); return }
                     for cookie in loader.cookiesEnabled ? SourceWebDataStore.cookies(for: request, sourceURL: LegadoJSCtx.ruleSource?.bookSourceUrl) : [] {
                         guard loader.continuation != nil, !Task.isCancelled else { return }

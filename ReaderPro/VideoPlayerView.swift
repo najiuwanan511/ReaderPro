@@ -133,7 +133,7 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             }
             do {
                 try SourceWebDataStore.configure(config.websiteDataStore, request: request)
-                try await SourceWebDataStore.preventLocalBypass(config, request: request)
+                try await SourceWebDataStore.prepareProxy(config, request: request)
             }
             catch { onStatus(sourceErrorMessage(error)); return }
             for cookie in SourceWebDataStore.cookies(for: request) { await config.websiteDataStore.httpCookieStore.setCookie(cookie) }

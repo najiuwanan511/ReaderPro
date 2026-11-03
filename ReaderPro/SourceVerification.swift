@@ -121,7 +121,7 @@ private struct VerificationWebPage: UIViewRepresentable {
         session.web = web; web.navigationDelegate = context.coordinator
         web.customUserAgent = session.request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
         Task {
-            do { try await SourceWebDataStore.preventLocalBypass(configuration, request: session.request) }
+            do { try await SourceWebDataStore.prepareProxy(configuration, request: session.request) }
             catch { session.finish(.failure(error)); return }
             for cookie in (session.source?.enabledCookieJar ?? true) ? SourceWebDataStore.cookies(for: session.request, sourceURL: session.source?.bookSourceUrl) : [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
             guard session.continuation != nil else { return }
