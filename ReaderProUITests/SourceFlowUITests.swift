@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class SourceFlowUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -169,6 +170,7 @@ final class SourceFlowUITests: XCTestCase {
         let page = app.textViews["readerPage"]
         XCTAssertTrue(page.waitForExistence(timeout: 15))
         assertReaderUsesFullScreen(app)
+        assertReaderBackgroundCoversSafeAreas(app)
         XCTAssertTrue(page.label.contains("第1章第1段"), page.label)
         XCTAssertTrue(page.label.contains("第1章第7段"), "Must load all seven content pages before displaying the short fixture chapter")
         Thread.sleep(forTimeInterval: 1) // Wait for the presentation and TextKit drawing before visual evidence.
@@ -216,6 +218,27 @@ final class SourceFlowUITests: XCTestCase {
             !app.navigationBars["书籍详情"].isHittable
         }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [detailCovered], timeout: 5), .completed, file: file, line: line)
+    }
+
+    private func assertReaderBackgroundCoversSafeAreas(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        guard let image = app.screenshot().image.cgImage else { return XCTFail("无法读取阅读页截图", file: file, line: line) }
+        let width = image.width, height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let context = CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width * 4, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return XCTFail("无法检查阅读页背景", file: file, line: line)
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        func color(_ x: CGFloat, _ y: CGFloat) -> [Int] {
+            let index = (Int(CGFloat(height) * y) * width + Int(CGFloat(width) * x)) * 4
+            return pixels[index..<(index + 3)].map(Int.init)
+        }
+        // Compare against the blank margin beside the body, independently of
+        // the chosen reader theme. Avoid the sensor, status text and home bar.
+        let body = color(0.025, 0.5)
+        for safe in [color(0.1, 0.05), color(0.1, 0.98)] {
+            XCTAssertTrue(zip(body, safe).allSatisfy { abs($0 - $1) < 8 }, "阅读背景应铺满状态栏和底部安全区：\(body) / \(safe)", file: file, line: line)
+        }
     }
 
     func testDiscoveryKeepsDuplicateCategoriesIndependentlySelectable() {

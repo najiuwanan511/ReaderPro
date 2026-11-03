@@ -414,7 +414,11 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     @Published private(set) var isPaused = false
     @Published private(set) var paragraphIndex = 0
     @Published var error = ""
-    private let synth = AVSpeechSynthesizer()
+    // Opening a reader must not contact the system voice asset service. On
+    // iOS 17 that service can stall a cold launch even when speech is unused.
+    // HTTP speech and stop/pause must likewise avoid creating a synthesizer.
+    private var synth: AVSpeechSynthesizer?
+    var hasSystemSynthesizer: Bool { synth != nil }
     private var queue: [String] = []
     private var rate: Float = 0.5
     private var pitch: Float = 1.0
@@ -429,11 +433,6 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
     private var speechTitle = "朗读", speechAuthor = ""
     private var onParagraph: ((Int) -> Void)?
 
-    override init() {
-        super.init()
-        synth.delegate = self
-    }
-
     func speak(segments: [String], from startingIndex: Int = 0, rate: Float, pitch: Float,
                title: String = "朗读", author: String = "", onParagraph: ((Int) -> Void)? = nil,
                onDone: @escaping () -> Void = {}) {
@@ -446,7 +445,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         self.rate = rate
         self.pitch = pitch
         self.onDone = onDone
-        synth.stopSpeaking(at: .immediate)
+        synth?.stopSpeaking(at: .immediate)
         if queue.isEmpty {
             isSpeaking = false
             onDone()
@@ -521,7 +520,11 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         isSpeaking = true
         publishPlaybackState()
         currentUtterance = u
-        synth.speak(u)
+        if synth == nil {
+            synth = AVSpeechSynthesizer()
+            synth?.delegate = self
+        }
+        synth?.speak(u)
     }
 
     func stop() {
@@ -532,7 +535,7 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         audioCompletion?.resume(throwing: CancellationError()); audioCompletion = nil
         queue.removeAll()
         currentUtterance = nil
-        synth.stopSpeaking(at: .immediate)
+        synth?.stopSpeaking(at: .immediate)
         isSpeaking = false
         isPaused = false; savedSegments = []; paragraphIndex = 0
     }
@@ -542,10 +545,10 @@ final class SpeechController: NSObject, ObservableObject, AVSpeechSynthesizerDel
         if isPaused {
             isPaused = false
             if let audioPlayer { if !audioPlayer.play() { error = "无法继续播放朗读音频" } }
-            else if currentUtterance != nil { synth.continueSpeaking() }
+            else if currentUtterance != nil { synth?.continueSpeaking() }
         } else {
             isPaused = true; audioPlayer?.pause()
-            if currentUtterance != nil { synth.pauseSpeaking(at: .immediate) }
+            if currentUtterance != nil { synth?.pauseSpeaking(at: .immediate) }
         }
         publishPlaybackState()
     }

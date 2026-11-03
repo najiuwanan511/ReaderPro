@@ -9,6 +9,9 @@ final class MediaAndRssParityTests: XCTestCase {
         let defaults = UserDefaults.standard, library = ReaderRuleLibrary.shared
         let oldEngine = defaults.object(forKey: "speech.engineID"), oldList = library.httpTts
         let speech = SpeechController()
+        XCTAssertFalse(speech.hasSystemSynthesizer)
+        speech.stop(); speech.togglePause()
+        XCTAssertFalse(speech.hasSystemSynthesizer)
         defer {
             speech.stop(); library.httpTts = oldList
             if let oldEngine { defaults.set(oldEngine, forKey: "speech.engineID") }
@@ -22,6 +25,7 @@ final class MediaAndRssParityTests: XCTestCase {
         NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil,
             userInfo: [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue])
         XCTAssertTrue(speech.isPaused)
+        XCTAssertFalse(speech.hasSystemSynthesizer, "HTTP speech must not initialize system voice assets")
         try await Task.sleep(nanoseconds: 350_000_000)
         XCTAssertTrue(speech.isSpeaking, "A paused HTTP segment must wait for resume instead of completing")
         XCTAssertEqual(speech.error, "")
@@ -36,6 +40,7 @@ final class MediaAndRssParityTests: XCTestCase {
         XCTAssertFalse(speech.isSpeaking)
         XCTAssertNil(MPNowPlayingInfoCenter.default().nowPlayingInfo)
         speech.stop()
+        XCTAssertFalse(speech.hasSystemSynthesizer)
         XCTAssertFalse(MPRemoteCommandCenter.shared().nextTrackCommand.isEnabled)
     }
 

@@ -174,10 +174,15 @@ private final class ReaderScrollProgress {
             }
         }
         .background {
-            ZStack {
-                Color(uiColor: theme.background)
-                if let image = ReaderAssets.backgroundImage { Image(uiImage: image).resizable().scaledToFill().opacity(backgroundOpacity) }
-            }.ignoresSafeArea().clipped()
+            GeometryReader { background in
+                ZStack {
+                    Color(uiColor: theme.background)
+                    if let image = ReaderAssets.backgroundImage {
+                        Image(uiImage: image).resizable().scaledToFill().opacity(backgroundOpacity)
+                            .frame(width: background.size.width, height: background.size.height).clipped()
+                    }
+                }
+            }.ignoresSafeArea()
         }
         .toolbar(.hidden, for: .navigationBar)
         .background(ReaderKeyboard(enabled: keyboardPage && !showMenu && !showSearch && !showCatalog && !showSettings && !showStyle && !editingContent && !showBookmarks && !sourceAction && !showSourceChange && selectedDictionary == nil && selectedShare == nil && selectedReplacement == nil,
