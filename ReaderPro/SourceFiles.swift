@@ -2,6 +2,8 @@ import Foundation
 import JavaScriptCore
 import CryptoKit
 import CoreFoundation
+import SWCompression
+import Unrar
 
 enum SourceFiles {
     static var root: URL { FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("SourceFiles", isDirectory: true) }
@@ -44,6 +46,35 @@ enum SourceFiles {
     }
     static func unzip(_ path: String) throws -> String {
         let archive = try file(path), data = try Data(contentsOf: archive)
+        guard data.count <= 64 * 1024 * 1024 else { throw SourceFailure(stage: "脚本解压", message: "压缩包超过大小限制") }
+        if data.starts(with: [0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c]) {
+            let info = try SevenZipContainer.info(container: data)
+            guard info.count <= 10000 else { throw SourceFailure(stage: "脚本解压", message: "压缩包文件过多") }
+            var total: Int64 = 0
+            for entry in info {
+                guard entry.type == .regular || entry.type == .directory, !entry.isAnti,
+                      let size = entry.size, size >= 0, size <= 64 * 1024 * 1024 else {
+                    if entry.type == .directory { continue }
+                    throw SourceFailure(stage: "脚本解压", message: "压缩包包含不支持的条目或超大文件")
+                }
+                total += Int64(size)
+            }
+            guard total <= 256 * 1024 * 1024 else { throw SourceFailure(stage: "脚本解压", message: "压缩包超过解压大小限制") }
+            let entries = try SevenZipContainer.open(container: data)
+            return try extractEntries(entries.filter { $0.info.type == .regular }.map { ($0.info.name, $0.data ?? Data()) })
+        }
+        if data.starts(with: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07]) {
+            let rar = try Unrar.Archive(fileURL: archive), entries = try rar.entries()
+            guard entries.count <= 10000, entries.allSatisfy({ $0.uncompressedSize <= 64 * 1024 * 1024 && $0.redirectionType == 0 }),
+                  entries.reduce(UInt64(0), { $0 + $1.uncompressedSize }) <= 256 * 1024 * 1024 else {
+                throw SourceFailure(stage: "脚本解压", message: "压缩包包含链接或超过解压大小限制")
+            }
+            let names = entries.filter { !$0.directory }
+            return try extractEntries(names.map { entry in
+                try Task.checkCancellation()
+                return (entry.fileName, try rar.extract(entry))
+            })
+        }
         let entries = readZipEntries(data)
         guard !entries.isEmpty else { throw SourceFailure(stage: "脚本解压", message: "不是可读取的 ZIP 文件") }
         guard entries.count <= 10000, entries.allSatisfy({ $0.uncompressedSize >= 0 && $0.uncompressedSize <= 64 * 1024 * 1024 }),
@@ -64,6 +95,22 @@ enum SourceFiles {
             }
         } catch { try? FileManager.default.removeItem(at: target); throw error }
         return targetPath
+    }
+    private static func extractEntries(_ entries: [(String, Data)]) throws -> String {
+        let path = "/archives/" + UUID().uuidString, target = try file(path)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+        do {
+            for (name, data) in entries {
+                try Task.checkCancellation()
+                let destination = target.appendingPathComponent(name.replacingOccurrences(of: "\\", with: "/")).standardizedFileURL
+                guard !name.contains("\0"), destination.path.hasPrefix(target.path + "/") else {
+                    throw SourceFailure(stage: "脚本解压", message: "压缩包包含越界路径")
+                }
+                try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: destination, options: .atomic)
+            }
+        } catch { try? FileManager.default.removeItem(at: target); throw error }
+        return path
     }
     static func install(_ java: JSValue, base: String) {
         let operation: @convention(block) (String, String, String, String) -> String = { action, first, second, charset in

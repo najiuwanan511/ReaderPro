@@ -9,6 +9,12 @@ packages:
   SwiftSoup:
     url: https://github.com/scinfu/SwiftSoup.git
     exactVersion: 2.14.3
+  SWCompression:
+    url: https://github.com/tsolomko/SWCompression.git
+    exactVersion: 4.9.1
+  UnrarLib:
+    url: https://github.com/enefry/UnrarLib.git
+    revision: caa64a33f59a294e6fc3da9e7e3793e0987d909c
 targets:
   ReaderPro:
     type: application
@@ -19,6 +25,9 @@ targets:
     dependencies:
       - package: Kanna
       - package: SwiftSoup
+      - package: SWCompression
+      - package: UnrarLib
+        product: Unrar
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.selfuse.readerpro

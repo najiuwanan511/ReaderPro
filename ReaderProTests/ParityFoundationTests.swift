@@ -2,6 +2,26 @@ import XCTest
 @testable import ReaderPro
 
 final class ParityFoundationTests: XCTestCase {
+    func testSourceArchiveScriptsExtractRealSevenZipAndRarContents() throws {
+        for (suffix, name, expected) in [("7z", "chapter.txt", "七压缩正文"), ("rar", "README.md", "# Unrar\n\nA description of this package.\n")] {
+            let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "source-files", withExtension: suffix))
+            let path = "/archive-test-" + UUID().uuidString + "." + suffix
+            let file = try SourceFiles.file(path)
+            try FileManager.default.createDirectory(at: SourceFiles.root, withIntermediateDirectories: true)
+            try Data(contentsOf: fixture).write(to: file)
+            defer { try? FileManager.default.removeItem(at: file) }
+            let failures = RuleFailures()
+            let folder = LegadoJSCtx.$failures.withValue(failures) {
+                LegadoJS.run("java." + (suffix == "7z" ? "un7zFile" : "unrarFile") + "(result)", input: path, baseUrl: "https://archive.test", sourceKey: "", sourceUrl: "https://archive.test")
+            }
+            try failures.check()
+            let extracted = try SourceFiles.file(folder)
+            defer { try? FileManager.default.removeItem(at: extracted) }
+            XCTAssertEqual(try String(contentsOf: extracted.appendingPathComponent(name), encoding: .utf8), expected)
+            if suffix == "7z" { XCTAssertEqual(try String(contentsOf: extracted.appendingPathComponent("nested/chapter.txt"), encoding: .utf8), "嵌套正文") }
+        }
+    }
+
     private func source(_ overrides: [String: Any] = [:]) throws -> LegadoSource {
         var fields: [String: Any] = [
             "bookSourceName": "规则对照", "bookSourceUrl": "http://127.0.0.1:8765",

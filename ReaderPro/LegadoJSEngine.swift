@@ -561,7 +561,7 @@ final class LegadoJS {
         java.readFile=function(path){return _array(JSON.parse(java._file('readBytes',String(path),'','')));};
         java.deleteFile=function(path){return java._file('delete',String(path),'','')==='true';};
         java.unzipFile=function(path){return java._file('unzip',String(path),'','');};
-        java.unArchiveFile=java.unzipFile;
+        java.unArchiveFile=java.un7zFile=java.unrarFile=java.unzipFile;
         java.getTxtInFolder=function(path){return java._file('folder',String(path),'','');};
         java.getZipStringContent=function(url,path,charset){return java._file('zipText',String(url),String(path),charset||'');};
         java.getZipByteArrayContent=function(url,path){var a=JSON.parse(java._file('zipBytes',String(url),String(path),''));return a==null?null:_array(a);};
