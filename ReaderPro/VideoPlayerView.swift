@@ -63,7 +63,10 @@ final class VideoPlayerModel: ObservableObject {
                 }
             }
         }
-        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in self?.onEnded?() }
+        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
+            guard let self, self.player.currentItem === item else { return }
+            self.onEnded?()
+        }
         player.replaceCurrentItem(with: item)
         player.play()
     }
@@ -157,9 +160,16 @@ struct EpisodeWebPlayer: UIViewRepresentable {
             case .native(let original), .web(let original): request.allHTTPHeaderFields = original.allHTTPHeaderFields
             case .html(_, let base): request.setValue(base.absoluteString, forHTTPHeaderField: "Referer")
             }
-            let cookies = HTTPCookieStorage.shared.cookies(for: request.url!) ?? []
-            for (key, val) in HTTPCookie.requestHeaderFields(with: cookies) { request.setValue(val, forHTTPHeaderField: key) }
-            handedOff = true; parent.onMedia(request)
+            handedOff = true
+            Task { @MainActor in
+                if let web = message.webView {
+                    for cookie in await web.configuration.websiteDataStore.httpCookieStore.allCookies() { HTTPCookieStorage.shared.setCookie(cookie) }
+                }
+                guard !self.cancelled else { return }
+                let cookies = HTTPCookieStorage.shared.cookies(for: request.url!) ?? []
+                for (key, val) in HTTPCookie.requestHeaderFields(with: cookies) { request.setValue(val, forHTTPHeaderField: key) }
+                self.parent.onMedia(request)
+            }
         }
     }
 }

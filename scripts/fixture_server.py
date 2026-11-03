@@ -179,6 +179,15 @@ class Handler(BaseHTTPRequestHandler):
             body = 'ready'
         elif path == '/video/list':
             body = '<a class="drama" href="/video/book">测试短剧</a>'
+        elif path == '/video/public-source':
+            mime = 'application/json; charset=utf-8'
+            body = Path('scripts/fixtures/video-public-source-1330.json').read_text(encoding='utf-8')
+        elif path == '/api.php/provide/vod/':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'list': [{'vod_id': 1, 'vod_name': '测试API短剧', 'vod_director': '测试作者',
+                'vod_pic': '', 'vod_content': '测试简介', 'vod_class': '短剧', 'vod_remarks': '三集',
+                'vod_play_url': '预告$http://127.0.0.1:8765/video/trailer.mp4$$$' + '#'.join(
+                    f'第{i}集$http://127.0.0.1:8765/video/episode{i}.m3u8?sign=a%2Bb&part={i}' for i in range(1, 4))}]}, ensure_ascii=False)
         elif path == '/video/book':
             body = '<h1>测试短剧</h1>' + ''.join(
                 f'<a class="dm-ep" href="/video/play?ep={i}" title="{i}" data-ep-free="1">第{i}集</a>' for i in range(1, 4))
@@ -187,7 +196,11 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/video/empty':
             body = '<p>没有播放地址</p>'
         elif path == '/video/embed':
-            body = '<video controls playsinline src="/video/episode1.mp4"></video>'
+            episode = parse_qs(parsed.query).get('ep', ['1'])[0]
+            body = f'<iframe src="/video/iframe?ep={episode}" style="width:100%;height:100%;border:0"></iframe>'
+        elif path == '/video/iframe':
+            episode = parse_qs(parsed.query).get('ep', ['1'])[0]
+            body = f'<video controls playsinline src="/video/episode{episode}.mp4" style="width:100%;height:100%"></video>'
         elif path.startswith('/bridge-stress/'):
             parts = path.split('/')
             if len(parts) == 4 and parts[3] == 'search':

@@ -3,9 +3,9 @@ import XCTest
 // Keep these flows in the existing test class so both CI configurations run
 // them, including the iPhone 14 Pro Max / iOS 17 Release configuration.
 extension SourceFlowUITests {
-    private func openVideo(_ app: XCUIApplication, error: Bool = false) {
+    private func openVideo(_ app: XCUIApplication, error: Bool = false, web: Bool = false) {
         continueAfterFailure = false
-        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--video-ui-fixture"] + (error ? ["--video-error-fixture"] : [])
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--video-ui-fixture"] + (error ? ["--video-error-fixture"] : []) + (web ? ["--video-web-fixture"] : [])
         app.launch()
         app.tabBars.buttons["发现"].tap()
         let source = app.buttons["短剧视频测试源"]
@@ -51,5 +51,14 @@ extension SourceFlowUITests {
         app.buttons["videoRetry"].tap()
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: failed, object: status)], timeout: 15), .completed)
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "视频解析失败原因与重试"; shot.lifetime = .keepAlways; add(shot)
+    }
+
+    func testLegacyVideoRulePlaysAnEmbeddedIframeInsideTheApp() {
+        let app = XCUIApplication()
+        openVideo(app, web: true)
+        let time = app.staticTexts["videoPlaybackTime"]
+        let advanced = NSPredicate(format: "label MATCHES %@", "已播放 ([2-9]|[1-9][0-9]+) 秒")
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advanced, object: time)], timeout: 40), .completed, app.staticTexts["videoPlaybackStatus"].label)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "章节网页播放器识别并播放内嵌视频"; shot.lifetime = .keepAlways; add(shot)
     }
 }

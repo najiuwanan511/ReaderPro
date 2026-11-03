@@ -41,7 +41,18 @@ enum SourceTestFixtures {
         source.ruleExplore.name = "text"; source.ruleExplore.bookUrl = "href"
         source.ruleBookInfo.name = "h1@text"
         source.ruleToc.chapterList = "a.dm-ep"
-        source.ruleToc.chapterName = "text"; source.ruleToc.chapterUrl = "href"
+        source.ruleToc.chapterName = #"""
+        @js:(function(){
+          var html=String(result||'');
+          var freeM=html.match(/data-ep-free="(\d+)"/);
+          var titleM=html.match(/title="(\d+)/);
+          var n=titleM?titleM[1]:'';
+          var name=n?('第'+n+'集'):'';
+          if(freeM&&freeM[1]==='0')name+=' 🔒';
+          return name;
+        })()
+        """#
+        source.ruleToc.chapterUrl = "@href"
         source.ruleContent.content = #"""
         @js:(function(){
           var html=String(result||'');
@@ -215,6 +226,9 @@ struct SourceFixtureRoot: View {
             if ProcessInfo.processInfo.arguments.contains("--video-ui-fixture") {
                 store.sources = [SourceTestFixtures.video()]
                 if ProcessInfo.processInfo.arguments.contains("--video-error-fixture") { store.sources[0].ruleContent.content = "@js:''" }
+                if ProcessInfo.processInfo.arguments.contains("--video-web-fixture") {
+                    store.sources[0].ruleContent.content = "@js:java.startBrowser('/video/embed?ep='+(chapter.index+1),title); result='';"
+                }
             }
             if ProcessInfo.processInfo.arguments.contains("--discovery-scroll-fixture") {
                 store.sources = (0..<40).map { index in

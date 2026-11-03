@@ -15,20 +15,20 @@ struct DiscoveryView: View {
 
     var body: some View {
         NavigationStack {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if sources.isEmpty { emptyState }
-                        ForEach(sources) { source in
-                            SourceExploreCard(source: source, expanded: Binding(
-                                get: { expandedSourceID == source.id },
-                                set: { expandedSourceID = $0 ? source.id : nil }
-                            )) { category in
-                                exploreTarget = ExploreTarget(source: source, category: category)
-                            }.id(source.id)
-                        }
-                    }.padding(.bottom, 12)
-                }
-                .accessibilityIdentifier("discoverySourceScroll")
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if sources.isEmpty { emptyState }
+                    ForEach(sources) { source in
+                        SourceExploreCard(source: source, expanded: Binding(
+                            get: { expandedSourceID == source.id },
+                            set: { expandedSourceID = $0 ? source.id : nil }
+                        )) { category in
+                            exploreTarget = ExploreTarget(source: source, category: category)
+                        }.id(source.id)
+                    }
+                }.padding(.bottom, 12)
+            }
+            .accessibilityIdentifier("discoverySourceScroll")
             .background(AppTheme.surface)
             .navigationTitle(selectedGroup ?? "发现")
             .readerNavigationStyle()

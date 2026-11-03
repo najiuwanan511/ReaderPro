@@ -37,6 +37,35 @@ final class SourceVideoTests: XCTestCase {
         XCTAssertEqual(request.url?.absoluteString, address)
     }
 
+    func testOriginal1330JSONVideoSourceCompletesDiscoveryDirectoryAndEpisodeRules() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/video/public-source")
+        var source = try JSONDecoder().decode(LegadoSource.self, from: Data(raw.utf8))
+        XCTAssertEqual(source.bookSourceType, 4)
+        // Replace only the host. Every extraction rule is the imported rule.
+        source.bookSourceUrl = SourceTestFixtures.base
+        let books = try await source.discover(category: ExploreCategory(title: "短剧", url: "/api.php/provide/vod/?ac=detail&t=36&pg={{page}}"))
+        XCTAssertEqual(books.first?.title, "测试API短剧")
+        let detail = try await source.fetchBookInfo(book: XCTUnwrap(books.first))
+        let chapters = try await source.fetchChapters(book: detail)
+        XCTAssertEqual(chapters.map(\.title), ["第1集", "第2集", "第3集"])
+        guard case .native(let request) = try await source.fetchChapterVideo(chapters[1]) else { return XCTFail("Expected HLS chapter") }
+        XCTAssertEqual(request.url?.absoluteString, SourceTestFixtures.base + "/video/episode2.m3u8?sign=a%2Bb&part=2")
+    }
+
+    func testPromptTextAndUnsupportedManifestProduceExplicitErrors() {
+        XCTAssertThrowsError(try SourceVideoResource.make("刷新正文播放", base: SourceTestFixtures.base, headers: [:]))
+        XCTAssertThrowsError(try SourceVideoResource.make("<MPD><Period/></MPD>", base: SourceTestFixtures.base, headers: [:]))
+    }
+
+    func testVideoURLOptionsOverrideSourceHeadersWithoutDamagingSignature() throws {
+        let raw = #"https://media.test/2.m3u8?token=a%2Bb&part=2,{"headers":{"User-Agent":"Video Player","Referer":"https://player.test/episode2","X-Token":"episode2"}}"#
+        guard case .native(let request) = try SourceVideoResource.make(raw, base: "https://source.test", headers: ["Referer": "https://source.test", "User-Agent": "Source UA"]) else { return XCTFail("Expected native media") }
+        XCTAssertEqual(request.url?.absoluteString, "https://media.test/2.m3u8?token=a%2Bb&part=2")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "Video Player")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Referer"), "https://player.test/episode2")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Token"), "episode2")
+    }
+
     func testPlayerHTMLIsNotStrippedAndEmptyRulesUseChapterLink() async throws {
         let html = "<html><script>var signature='a&b';</script><iframe src='/player'></iframe></html>"
         guard case .html(let returned, _) = try SourceVideoResource.make(html, base: SourceTestFixtures.base, headers: [:]) else { return XCTFail("Expected HTML player") }

@@ -27,6 +27,9 @@ enum SourceVideoResource {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw SourceFailure(stage: "视频解析", message: "章节规则未返回播放地址，请检查登录状态或播放线路", url: base) }
         if text.hasPrefix("<") {
+            if text.range(of: "<MPD", options: .caseInsensitive) != nil {
+                throw SourceFailure(stage: "视频格式", message: "此线路返回 DASH/MPD，系统播放器不支持，请选择 m3u8 或 MP4 线路", url: base)
+            }
             // Do not run text cleanup on media HTML or signed URLs.
             let addresses = cssExtractAll(text, "video@src") + cssExtractAll(text, "video source@src")
             if let address = addresses.first(where: { !$0.isEmpty }) {
@@ -34,6 +37,11 @@ enum SourceVideoResource {
             }
             guard let url = URL(string: SourceHTTP.options(base).url) else { throw URLError(.badURL) }
             return .html(text, url)
+        }
+        let transport = SourceHTTP.options(text).url
+        guard transport.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              transport.contains("/") || transport.contains("?") else {
+            throw SourceFailure(stage: "视频解析", message: "章节规则返回了提示文本，未返回播放地址", url: base)
         }
         let address = resolveUrl(text.replacingOccurrences(of: "&amp;", with: "&"), base: base)
         guard isSourceURL(address) else { throw SourceFailure(stage: "视频解析", message: "章节规则未返回有效视频地址", url: base) }
