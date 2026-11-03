@@ -1,6 +1,35 @@
 import XCTest
 
 final class SourceImportLoginUITests: XCTestCase {
+    func testThemeLinkImportsThenAppliesFromProductionSettings() {
+        continueAfterFailure = false; executionTimeAllowance = 180
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--theme-link-ui-fixture"]
+        app.launch(); app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["source-explore-http://127.0.0.1:8765"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10)); source.tap()
+        let action = app.buttons["导入主题"]
+        XCTAssertTrue(action.waitForExistence(timeout: 10)); action.tap()
+        let confirm = app.buttons["appLinkConfirmImport"]
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15)); XCTAssertTrue(app.staticTexts["主题导入样例"].exists)
+        confirm.tap(); XCTAssertTrue(app.staticTexts["appLinkImportResult"].waitForExistence(timeout: 10))
+        app.terminate(); app.launchArguments = []; app.launch()
+        let mine = app.tabBars.buttons["我的"]
+        XCTAssertTrue(mine.waitForExistence(timeout: 20)); mine.tap()
+        let settings = app.buttons.containing(.staticText, identifier: "主题设置").firstMatch
+        if !settings.isHittable { app.swipeUp() }
+        XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()
+        let imported = app.buttons.containing(.staticText, identifier: "导入主题").firstMatch
+        if !imported.isHittable { app.swipeUp() }
+        XCTAssertTrue(imported.waitForExistence(timeout: 10)); imported.tap()
+        let theme = app.buttons.containing(.staticText, identifier: "主题导入样例").firstMatch
+        XCTAssertTrue(theme.waitForExistence(timeout: 10)); theme.tap()
+        XCTAssertTrue(app.staticTexts["浅色"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "开源阅读主题导入与应用"; shot.lifetime = .keepAlways; add(shot)
+        theme.swipeLeft(); app.buttons["删除"].tap()
+        XCTAssertFalse(app.staticTexts["主题导入样例"].exists)
+    }
+
     func testDiscoveryScriptAppLinkPreviewsThenPersistsImportedSource() {
         continueAfterFailure = false; executionTimeAllowance = 180
         let app = XCUIApplication()

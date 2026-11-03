@@ -18,12 +18,51 @@ final class RuleManagementParityTests: XCTestCase {
             ("yuedu://rsssource/importonline?src=https%3A%2F%2Ftest.invalid%2Frss", LegadoAppLink.Kind.rssSource),
             ("legado://replace/importonline?src=https%3A%2F%2Ftest.invalid%2Frules", .replaceRule),
             ("legado://import/httpTTS?src=inline", .httpTTS),
+            ("legado://import/theme?src=inline", .theme),
             ("legado://import/addToBookshelf?src=https%3A%2F%2Fbook.test%2F1", .addToBookshelf)
         ] { XCTAssertEqual(try LegadoAppLink.parse(XCTUnwrap(URL(string: url))).kind, kind) }
         XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource")!))
         XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource?src=%20")!))
         XCTAssertFalse(LegadoAppLink.accepts(URL(string: "https://import/bookSource?src=a")!))
         XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/readConfig?src=a")!))
+    }
+
+    @MainActor func testAndroidThemePreviewMergeSelectionAndReloadAreSeparate() async throws {
+        let raw = #"{"themeName":"纸色","isNightTheme":false,"primaryColor":"#FF102030","accentColor":"#FF405060","backgroundColor":"#FFF5F1E8","bottomBackground":"#FFE0D0C0","transparentNavBar":true,"backgroundImgPath":null,"backgroundImgBlur":0}"#
+        let suite = "ReaderPro.ThemeTest." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let library = LegadoThemeLibrary(defaults: defaults)
+        let preview = try LegadoLinkDocument.decode(Data(raw.utf8), kind: .theme)
+        XCTAssertEqual(preview.names, ["纸色"]); XCTAssertTrue(library.themes.isEmpty)
+        _ = try await preview.apply(store: BookStore(), themes: library)
+        XCTAssertEqual(library.themes.count, 1); XCTAssertNil(LegadoTheme.selected(dark: false, defaults: defaults))
+        var theme = try XCTUnwrap(library.themes.first)
+        try library.apply(theme)
+        XCTAssertEqual(LegadoTheme.selected(dark: false, defaults: defaults), theme)
+        XCTAssertNil(LegadoTheme.selected(dark: true, defaults: defaults))
+        XCTAssertEqual(defaults.string(forKey: "appThemeMode"), "light")
+        theme.accentColor = "#FF112233"; try library.merge([theme])
+        XCTAssertEqual(library.themes.count, 1)
+        XCTAssertEqual(LegadoThemeLibrary(defaults: defaults).themes.first?.accentColor, "#FF112233")
+        var night = theme; night.themeName = "夜色"; night.isNightTheme = true
+        try library.merge([night]); try library.apply(night)
+        XCTAssertEqual(LegadoTheme.selected(dark: true, defaults: defaults), night)
+        XCTAssertEqual(LegadoTheme.selected(dark: false, defaults: defaults)?.themeName, "纸色")
+        try library.remove(night)
+        XCTAssertNil(LegadoTheme.selected(dark: true, defaults: defaults))
+        XCTAssertEqual(LegadoThemeLibrary(defaults: defaults).themes.count, 1)
+        XCTAssertEqual(try LegadoLinkDocument.decode(Data(raw.utf8), kind: .automatic).names, ["纸色"])
+    }
+
+    func testAndroidThemeColorsRetainARGBAndRejectMalformedDocuments() throws {
+        let color = try XCTUnwrap(LegadoTheme.color("#80112233"))
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        XCTAssertTrue(color.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+        XCTAssertEqual(red, 17.0 / 255, accuracy: 0.0001); XCTAssertEqual(alpha, 128.0 / 255, accuracy: 0.0001)
+        XCTAssertNotNil(LegadoTheme.color("white")); XCTAssertNil(LegadoTheme.color("#xyz"))
+        XCTAssertThrowsError(try LegadoTheme.decode(Data("[]".utf8)))
+        XCTAssertThrowsError(try LegadoTheme.decode(Data(#"{"themeName":"错误","accentColor":"#123456"}"#.utf8)))
     }
 
     func testAppLinkImportPreviewKeepsRequestedSourceType() throws {

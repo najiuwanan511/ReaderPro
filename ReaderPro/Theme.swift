@@ -5,17 +5,17 @@ import UIKit
 // 主色 + 卡片色，深浅色模式自动适配。所有页面统一从这里取色，视觉才不会散。
 enum AppTheme {
     // ReaderPro 默认强调色；原项目主题可配置，布局独立于配色。
-    static var accent: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.accentHex", fallback: 0xE53935)) }; return Color(uiColor: UIColor { trait in
+    static var accent: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.accentHex", fallback: 0xE53935)) }; return LegadoTheme.dynamicColor(\.accentColor, fallback: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.94, green: 0.33, blue: 0.33, alpha: 1)  // #EF5353
             : UIColor(red: 0.90, green: 0.22, blue: 0.21, alpha: 1)  // #E53935
     }) }
     // 深主色（标题、强调）
-    static let accentDeep = Color(uiColor: UIColor { trait in
+    static var accentDeep: Color { LegadoTheme.dynamicColor(\.primaryColor, fallback: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.96, green: 0.55, blue: 0.55, alpha: 1)
             : UIColor(red: 0.78, green: 0.16, blue: 0.15, alpha: 1)  // #C62828
-    })
+    }) }
     // 浅主色（标签底色）
     static let accentSoft = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
@@ -29,18 +29,18 @@ enum AppTheme {
             : UIColor.white
     })
     // 页面背景（深色：深藏青）
-    static var background: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.backgroundHex", fallback: 0xF5F5FA)) }; return Color(uiColor: UIColor { trait in
+    static var background: Color { if UserDefaults.standard.bool(forKey: "ui.customColors") { return Color(uiColor: .storedColor("ui.backgroundHex", fallback: 0xF5F5FA)) }; return LegadoTheme.dynamicColor(\.backgroundColor, fallback: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.06, green: 0.08, blue: 0.12, alpha: 1)
             : UIColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
     }) }
     // Neutral surfaces used by the rebuilt pages. Keeping these separate from
     // the reader theme lets the library UI stay consistent in light/dark mode.
-    static let surface = Color(uiColor: UIColor { trait in
+    static var surface: Color { LegadoTheme.dynamicColor(\.bottomBackground, fallback: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.11, green: 0.13, blue: 0.17, alpha: 1)
             : UIColor.white
-    })
+    }) }
     static let surfaceMuted = Color(uiColor: UIColor { trait in
         trait.userInterfaceStyle == .dark
             ? UIColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 1)

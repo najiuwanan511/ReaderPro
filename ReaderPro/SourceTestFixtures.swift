@@ -229,6 +229,11 @@ struct SourceFixtureRoot: View {
                 link.queryItems = [URLQueryItem(name: "src", value: #"{"bookSourceName":"一键导入测试源","bookSourceUrl":"https://app-link.test","exploreUrl":"分类::/list"}"#)]
                 source.exploreUrl = "[{\"title\":\"一键导入\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
             }
+            if ProcessInfo.processInfo.arguments.contains("--theme-link-ui-fixture") {
+                var link = URLComponents(string: "legado://import/theme")!
+                link.queryItems = [URLQueryItem(name: "src", value: #"{"themeName":"主题导入样例","isNightTheme":false,"primaryColor":"#3949AB","accentColor":"#00897B","backgroundColor":"#F4F1E8","bottomBackground":"#E8E2D3","transparentNavBar":false,"backgroundImgPath":null,"backgroundImgBlur":0}"#)]
+                source.exploreUrl = "[{\"title\":\"导入主题\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
+            }
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {
                 source.exploreUrl = "重复分类::/library/categories/fiction\n重复分类::/library/categories/fiction\n重复分类::/library/categories/alternate"
             }

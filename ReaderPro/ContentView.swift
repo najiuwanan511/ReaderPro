@@ -4,6 +4,7 @@ import AVFoundation
 
 struct ContentView: View {
     @StateObject private var store = BookStore()
+    @ObservedObject private var importedThemes = LegadoThemeLibrary.shared
     @EnvironmentObject private var network: NetworkBootstrap
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ui.showDiscovery") private var showDiscovery = true
@@ -33,6 +34,7 @@ struct ContentView: View {
         .overlay(alignment: .top) { networkBanner }
         .task(id: scenePhase) { if scenePhase == .active { await RuleSubscriptionStore.shared.updateDue(store: store) } }
         .modifier(SourceAppLinkReceiver(store: store))
+        .modifier(LegadoThemeNavigation())
     }
     private func validateSelectedTab() {
         if (selectedTab == 1 && !showDiscovery) || (selectedTab == 2 && !showRss) || !(0...3).contains(selectedTab) { selectedTab = 0 }
@@ -214,7 +216,7 @@ struct BookshelfView: View {
             .sheet(isPresented: $showExport) { if let url = exportURL { ShareLink("导出", item: url) } }
             .navigationTitle("书架")
             .readerNavigationStyle()
-            .background(AppTheme.background.ignoresSafeArea())
+            .background(LegadoThemeBackground())
             .searchable(text: $searchText, prompt: "搜索书架")
             .safeAreaInset(edge: .top, spacing: 0) {
                 ReaderTabStrip(titles: groups, selection: $selectedGroup)
@@ -469,7 +471,7 @@ struct SourceView: View {
         .sheet(isPresented: $showScope) { SearchScopePicker(sources: store.enabledSources, selection: $sourceSelection) }
         .onChange(of: importModel.message) { _, message in if !message.isEmpty { importText = "" } }
         .readerNavigationStyle()
-        .background(AppTheme.background.ignoresSafeArea())
+        .background(LegadoThemeBackground())
         .scrollContentBackground(.hidden)
         .toolbar {
             Button { showImport = true } label: {

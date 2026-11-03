@@ -54,6 +54,12 @@ enum SourceScriptConfiguration {
     static func themeConfig() -> [String: Any] {
         lock.lock(); let automaticDark = systemDark; lock.unlock()
         let mode = themeMode(), dark = mode == "2" || (mode == "0" && automaticDark)
+        if !UserDefaults.standard.bool(forKey: "ui.customColors"), let selected = LegadoTheme.selected(dark: dark),
+           let data = try? JSONEncoder().encode(selected), let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            var fields = object
+            fields["backgroundImgPath"] = (selected.backgroundImgPath as Any?) ?? NSNull()
+            return fields
+        }
         let traits = UITraitCollection(userInterfaceStyle: dark ? .dark : .light)
         func hex(_ color: Color) -> String { "#" + UIColor(color).resolvedColor(with: traits).rgbHex }
         return [

@@ -78,7 +78,7 @@ struct SettingsView: View {
             .readerNavigationStyle()
             .listStyle(.grouped)
             .scrollContentBackground(.hidden)
-            .background(AppTheme.background.ignoresSafeArea())
+            .background(LegadoThemeBackground())
             .confirmationDialog("主题模式", isPresented: $showThemeMode, titleVisibility: .visible) {
                 Button("跟随系统") { themeMode = "system" }
                 Button("浅色") { themeMode = "light" }
@@ -149,6 +149,7 @@ struct ThemeSettingsView: View {
             }
 
             Section {
+                NavigationLink { LegadoThemeListView(store: store) } label: { SettingRow(icon: "square.and.arrow.down", iconTint: .purple, title: "导入主题", summary: "开源阅读主题 JSON、主题网址") }
                 NavigationLink { InterfaceAppearanceView(store: store) } label: { SettingRow(icon: "paintpalette", iconTint: .indigo, title: "配色与封面", summary: "主色、背景色、封面比例和圆角") }
                 NavigationLink { ReaderAppearanceView(store: store) } label: { SettingRow(icon: "textformat", iconTint: .gray, title: "字体与背景", summary: "字体文件、背景图片、自定义阅读配色") }
             } header: { SettingSectionHeader(title: "配色") }

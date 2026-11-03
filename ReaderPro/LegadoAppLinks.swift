@@ -4,7 +4,7 @@ import SwiftUI
 // booksource/importonline, rsssource/importonline and replace/importonline URLs.
 struct LegadoAppLink: Equatable {
     enum Kind: String {
-        case automatic, bookSource, rssSource, replaceRule, textTocRule, httpTTS, dictRule, addToBookshelf
+        case automatic, bookSource, rssSource, replaceRule, textTocRule, httpTTS, dictRule, theme, addToBookshelf
         var title: String {
             switch self {
             case .automatic: return "导入规则"
@@ -14,6 +14,7 @@ struct LegadoAppLink: Equatable {
             case .textTocRule: return "导入目录规则"
             case .httpTTS: return "导入在线朗读"
             case .dictRule: return "导入字典规则"
+            case .theme: return "导入主题"
             case .addToBookshelf: return "添加书籍"
             }
         }
@@ -37,10 +38,11 @@ struct LegadoAppLink: Equatable {
         case "/httptts": kind = .httpTTS
         case "/dictrule": kind = .dictRule
         case "/addtobookshelf": kind = .addToBookshelf
-        case "/theme", "/readconfig":
+        case "/theme": kind = .theme
+        case "/readconfig":
             // These Android archives need separate asset/configuration mapping;
             // never misreport an unsupported theme as a successful source import.
-            throw SourceFailure(stage: "一键导入", message: "此链接是安卓主题或排版包，尚不能完整导入")
+            throw SourceFailure(stage: "一键导入", message: "此链接是安卓排版包，尚不能完整导入")
         case "/importonline":
             switch url.host?.lowercased() {
             case "booksource": kind = .bookSource
@@ -55,7 +57,7 @@ struct LegadoAppLink: Equatable {
 }
 
 enum LegadoLinkDocument {
-    case sources(SourcePackImportResult), replacements([ReplaceRule]), toc([TxtTocRule]), tts([HttpTTS]), dictionaries([DictRule])
+    case sources(SourcePackImportResult), replacements([ReplaceRule]), toc([TxtTocRule]), tts([HttpTTS]), dictionaries([DictRule]), themes([LegadoTheme])
     var names: [String] {
         switch self {
         case .sources(let value): return value.sources.map(\.bookSourceName) + value.rssSources.map(\.sourceName)
@@ -63,6 +65,7 @@ enum LegadoLinkDocument {
         case .toc(let value): return value.map(\.name)
         case .tts(let value): return value.map(\.name)
         case .dictionaries(let value): return value.map(\.name)
+        case .themes(let value): return value.map(\.themeName)
         }
     }
     static func rules<T: ManagedReaderRule>(_ type: T.Type, data: Data) throws -> [T] {
@@ -78,7 +81,8 @@ enum LegadoLinkDocument {
         if kind == .automatic {
             let object = try JSONSerialization.jsonObject(with: data)
             let first = (object as? [[String: Any]])?.first ?? object as? [String: Any] ?? [:]
-            if first["pattern"] != nil { kind = .replaceRule }
+            if first["themeName"] != nil { kind = .theme }
+            else if first["pattern"] != nil { kind = .replaceRule }
             else if first["urlRule"] != nil { kind = .dictRule }
             else if first["rule"] != nil && first["name"] != nil { kind = .textTocRule }
             else if first["url"] != nil && first["name"] != nil { kind = .httpTTS }
@@ -94,6 +98,7 @@ enum LegadoLinkDocument {
         case .textTocRule: return .toc(try rules(TxtTocRule.self, data: data))
         case .httpTTS: return .tts(try rules(HttpTTS.self, data: data))
         case .dictRule: return .dictionaries(try rules(DictRule.self, data: data))
+        case .theme: return .themes(try LegadoTheme.decode(data))
         case .addToBookshelf: throw SourceFailure(stage: "添加书籍", message: "请通过书籍网址添加")
         }
     }
@@ -122,7 +127,7 @@ enum LegadoLinkDocument {
         }
         return try decode(Data(raw.utf8), kind: link.kind)
     }
-    @MainActor func apply(store: BookStore, library: ReaderRuleLibrary = .shared) async throws -> String {
+    @MainActor func apply(store: BookStore, library: ReaderRuleLibrary = .shared, themes: LegadoThemeLibrary = .shared) async throws -> String {
         func merge<T: ManagedReaderRule>(_ old: [T], _ incoming: [T]) -> [T] {
             var output = old
             for item in incoming {
@@ -139,6 +144,7 @@ enum LegadoLinkDocument {
         case .toc(let rules): library.txtRules = merge(library.txtRules, rules)
         case .tts(let rules): library.httpTts = merge(library.httpTts, rules)
         case .dictionaries(let rules): library.dictionaries = merge(library.dictionaries, rules)
+        case .themes(let values): try themes.merge(values); return "已导入 \(values.count) 个主题，请在主题设置中选择应用"
         }
         return "已导入 \(names.count) 条规则"
     }
