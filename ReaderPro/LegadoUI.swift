@@ -85,6 +85,7 @@ struct SourceBookDetailView: View {
     @State private var reversed = false
     @State private var chapterQuery = ""
     @State private var readingBook: LocalBook?
+    @State private var previewBookID: String?
     @State private var editingBook: LocalBook?
     @State private var downloadURLs: [String] = []
     @State private var downloadingFile = false
@@ -103,7 +104,7 @@ struct SourceBookDetailView: View {
             ?? store.sources.first { $0.bookSourceName == selected.sourceName }
     }
     private var existingBook: LocalBook? {
-        store.books.first { $0.title == selected.title && $0.author == selected.author && $0.sourceUrl == selected.sourceUrl && $0.sourceName == selected.sourceName }
+        store.books.first { $0.id == previewBookID || ($0.title == selected.title && $0.author == selected.author && $0.sourceUrl == selected.sourceUrl && $0.sourceName == selected.sourceName) }
     }
     private var chapterEntries: [(offset: Int, element: BookChapter)] {
         let entries = chapters.enumerated().filter { chapterQuery.isEmpty || $0.element.title.localizedCaseInsensitiveContains(chapterQuery) }
@@ -175,7 +176,11 @@ struct SourceBookDetailView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
-                        Button("编辑书籍信息 / 变量") { editingBook = makeBook() }.disabled(loading)
+                        Button("编辑书籍信息 / 变量") {
+                            let book = makeBook(); store.openForReading(book)
+                            if existingBook == nil { previewBookID = book.id }
+                            editingBook = book
+                        }.disabled(loading)
                         Button("重新加载目录") { Task { await load() } }.disabled(loading)
                         Button("分享书籍") { bookEvent("clickShareBook", input: shareText) { shareBook = ReaderSelectedText(text: shareText, offset: 0) } }
                         Button("复制书籍地址") { copyAddress(displayBook.url, event: "clickCopyBookUrl") }
@@ -196,6 +201,7 @@ struct SourceBookDetailView: View {
             }
             .safeAreaInset(edge: .bottom, spacing: 0) { actions }
             .onChange(of: sourceIndex) { _, _ in
+                discardPreview()
                 chapters = []; info = nil; loading = true; chapterQuery = ""
             }
             .task(id: selected.id) { await load() }
@@ -229,6 +235,7 @@ struct SourceBookDetailView: View {
                 else { ReaderView(store: store, bookId: book.id) }
             }
         }
+        .onDisappear { if readingBook == nil && editingBook == nil { discardPreview() } }
     }
 
     private var hero: some View {
@@ -289,7 +296,7 @@ struct SourceBookDetailView: View {
 
     private var actions: some View {
         HStack(spacing: 12) {
-            Button { store.updateBook(makeBook()) } label: {
+            Button { store.addToShelf(makeBook()) } label: {
                 Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
             }.buttonStyle(.bordered).disabled(existingBook != nil || chapters.isEmpty || loading)
             Button {
@@ -332,12 +339,13 @@ struct SourceBookDetailView: View {
             let worker = Task.detached { try await source.downloadBookFile(address, book: target, txtRules: rules) }
             let local = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
             guard !Task.isCancelled, selected.id == target.id else { return }
-            store.updateBook(local); readingBook = local
+            store.openForReading(local); previewBookID = local.id; readingBook = local
         } catch { errorText = sourceErrorMessage(error) }
     }
 
     private func makeBook() -> LocalBook {
-        var book = existingBook ?? LocalBook(title: selected.title, author: selected.author, coverUrl: displayBook.cover,
+        let preview = previewBookID.flatMap { store.readingBook(id: $0) }
+        var book = existingBook ?? preview ?? LocalBook(title: selected.title, author: selected.author, coverUrl: displayBook.cover,
             sourceName: selected.sourceName, sourceUrl: selected.sourceUrl,
             fileName: selected.title + ".web", kind: source?.localBookKind ?? "web")
         if let source { book.kind = source.localBookKind }
@@ -364,7 +372,14 @@ struct SourceBookDetailView: View {
         }
         var book = makeBook()
         if let index { book.chapterIndex = index; book.charOffset = 0; book.paragraphIndex = 0 }
-        store.updateBook(book); readingBook = book
+        store.openForReading(book)
+        if existingBook == nil { previewBookID = book.id }
+        readingBook = book
+    }
+
+    private func discardPreview() {
+        if let previewBookID { store.discardReadingPreview(id: previewBookID) }
+        previewBookID = nil
     }
 }
 

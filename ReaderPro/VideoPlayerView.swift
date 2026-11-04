@@ -244,7 +244,7 @@ struct VideoPlayerView: View {
         _episodeIndex = State(initialValue: book.chapters.readableIndex(from: initial) ?? book.chapters.readableIndex(from: initial, direction: -1) ?? 0)
     }
     private var chapters: [BookChapter] {
-        let current = store?.books.first(where: { $0.id == book.id }) ?? book
+        let current = store?.readingBook(id: book.id) ?? book
         return current.chapters.isEmpty ? current.videoUrls.enumerated().map { BookChapter(title: "第 \($0.offset + 1) 集", text: "__URL__" + $0.element) } : current.chapters
     }
     private var status: String {
@@ -322,7 +322,7 @@ struct VideoPlayerView: View {
         .sheet(isPresented: $showSourceAction, onDismiss: { if paymentAction { retry += 1 } }) {
             if let source {
                 NavigationStack {
-                    SourceCustomActionView(source: source, book: (store?.books.first(where: { $0.id == book.id }) ?? book).sourceBook,
+                    SourceCustomActionView(source: source, book: (store?.readingBook(id: book.id) ?? book).sourceBook,
                         chapter: chapters.indices.contains(episodeIndex) ? chapters[episodeIndex] : nil, payment: paymentAction,
                         onPaymentSuccess: {
                             if let store { try await store.refreshPurchasedChapter(bookID: book.id, chapterURL: chapters.indices.contains(episodeIndex) ? chapters[episodeIndex].url : nil) }
@@ -357,15 +357,15 @@ struct VideoPlayerView: View {
         if chapter.ruleBook == nil { chapter.ruleBook = .init(bookUrl: chapter.url ?? "", name: book.title, author: book.author) }
         model.onEnded = { if let next = chapters.readableIndex(from: episodeIndex + 1) { episodeIndex = next } }
         if let store {
-            var saved = store.books.first(where: { $0.id == book.id }) ?? book
+            var saved = store.readingBook(id: book.id) ?? book
             saved.kind = "video"; saved.chapterIndex = index; saved.lastRead = Date()
             store.updateBook(saved)
         }
         do {
             let resolved: SourceVideoResource
             let selectedChapter = chapter
-            let activeSource = store.flatMap { store in store.books.first(where: { $0.id == book.id }).flatMap { store.sourceForBook($0) } } ?? source
-            let current = store?.books.first(where: { $0.id == book.id }) ?? book
+            let activeSource = store.flatMap { store in store.readingBook(id: book.id).flatMap { store.sourceForBook($0) } } ?? source
+            let current = store?.readingBook(id: book.id) ?? book
             if let cached = try await MediaDiskCache.shared.cached(book: current, chapter: selectedChapter) {
                 resolved = .native(cached.request); danmaku = parseDanmaku(cached.auxiliary)
             } else if let activeSource {

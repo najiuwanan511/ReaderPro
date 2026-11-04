@@ -38,6 +38,8 @@ jobs:
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProTests/ReaderPageControllerTests \
             -only-testing:ReaderProTests/SourceConcurrencyTests \
+            -only-testing:ReaderProTests/SearchAndPreviewTests \
+            -only-testing:ReaderProUITests/SearchAndPreviewUITests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
             -only-testing:ReaderProUITests/SourceImportLoginUITests/testThemeLinkImportsThenAppliesFromProductionSettings \

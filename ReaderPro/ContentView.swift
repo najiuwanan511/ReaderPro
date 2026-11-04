@@ -180,7 +180,7 @@ struct BookshelfView: View {
                 if !searchText.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Button {
-                            shelfSearch.start(store.enabledSources, key: searchText)
+                            shelfSearch.start(store.enabledSources, key: searchText, matching: SearchMatchMode.saved)
                         } label: {
                             HStack {
                                 Image(systemName: "magnifyingglass")
@@ -406,6 +406,7 @@ struct SourceView: View {
     @State private var importError = ""
     @State private var importStatus = ""
     @State private var selectedResult: SourceBook?
+    @AppStorage(SearchMatchMode.storageKey) private var matchMode: SearchMatchMode = .fuzzy
     var body: some View {
         VStack {
             HStack {
@@ -423,6 +424,11 @@ struct SourceView: View {
                 .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("submitBookSearch")
             }.padding(.horizontal)
+            Picker("搜索匹配方式", selection: $matchMode) {
+                ForEach(SearchMatchMode.allCases) { mode in Text(mode.title).tag(mode) }
+            }.pickerStyle(.segmented).padding(.horizontal).accessibilityIdentifier("searchMatchMode")
+            Text(matchMode == .exact ? "书名或作者名与关键词完全一致" : "书名或作者名包含完整关键词")
+                .font(.caption2).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button { showScope = true } label: { Label("搜索范围：\(searchableSources.count) 个源", systemImage: "line.3.horizontal.decrease.circle") }
                 Text("·")
@@ -514,6 +520,7 @@ struct SourceView: View {
             }
         }
         .onDisappear { searchState.cancel() }
+        .onChange(of: matchMode) { _, mode in searchState.setMatchingMode(mode) }
         .sheet(item: $selectedResult) { result in
             SourceBookDetailView(store: store, result: result,
                 alternatives: searchState.allResults.filter { dedupeKey($0) == dedupeKey(result) })
@@ -522,7 +529,7 @@ struct SourceView: View {
     func search() {
         searchFocused = false
         SearchHistory.record(key); history = SearchHistory.values
-        searchState.start(searchableSources, key: key)
+        searchState.start(searchableSources, key: key, matching: matchMode)
     }
     func importSource() { importModel.start(importText, store: store) }
 

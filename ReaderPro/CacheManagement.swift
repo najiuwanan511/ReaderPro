@@ -5,8 +5,7 @@ extension BookStore {
     @MainActor func clearChapterCache(bookID: String) async {
         chapterCache.cancel(bookID: bookID)
         await mediaCache.clear(bookID: bookID)
-        guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
-        var book = books[index]
+        guard var book = readingBook(id: bookID) else { return }
         if book.kind == "web" {
             for chapter in book.chapters.indices where book.chapters[chapter].url != nil {
                 book.chapters[chapter].text = "__URL__" + (book.chapters[chapter].url ?? "")
@@ -16,7 +15,7 @@ extension BookStore {
         if book.kind == "comic" {
             for chapter in book.chapters.indices { book.chapters[chapter].imageUrls = [] }
         }
-        books[index] = book; saveBooks()
+        updateBook(book)
     }
     @MainActor func clearDownloadedCaches() async {
         for book in books { await clearChapterCache(bookID: book.id) }
@@ -88,7 +87,7 @@ struct ChapterDownloadView: View {
         .onDisappear { task?.cancel() }
     }
     private func start() {
-        guard let book = store.books.first(where: { $0.id == bookID }) else { return }
+        guard let book = store.readingBook(id: bookID) else { return }
         let indices = book.chapters.indices.filter { !book.chapters[$0].isVolume && (book.isAudio || book.isVideo || book.chapters[$0].text.hasPrefix("__URL__")) }
         total = indices.count; completed = 0; failed = 0; failure = ""; running = true
         task = Task { @MainActor in

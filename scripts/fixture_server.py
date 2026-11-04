@@ -570,6 +570,16 @@ class Handler(BaseHTTPRequestHandler):
                 body += f'<a class="next-chapter" href="{chapter + 1}">下一章</a>'
         elif path == '/json/noresults':
             mime, body = 'application/json; charset=utf-8', '{"data":[]}'
+        elif path == '/json/search-match':
+            mime = 'application/json; charset=utf-8'
+            page = int(parse_qs(urlsplit(self.path).query).get('page', ['1'])[0])
+            entries = [
+                {'name': '仙逆', 'author': '耳根', 'url': '/json/book/exact'},
+                {'name': '仙逆外传', 'author': '样例作者', 'url': '/json/book/extended'},
+                {'name': '仙路漫漫', 'author': '样例作者', 'url': '/json/book/single-a'},
+                {'name': '逆天传', 'author': '样例作者', 'url': '/json/book/single-b'}
+            ] if page == 1 else []
+            body = json.dumps({'data': entries}, ensure_ascii=False)
         elif path == '/json/search':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'data': [{'name': 'JSON测试', 'url': '/json/book'}]}, ensure_ascii=False)

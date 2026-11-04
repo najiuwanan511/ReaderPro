@@ -77,6 +77,9 @@ jobs:
             -only-testing:ReaderProTests/ReaderTextLayoutTests \
             -only-testing:ReaderProTests/ReaderContentPipelineTests \
             -only-testing:ReaderProTests/ReaderPageControllerTests \
+            -only-testing:ReaderProTests/SourceConcurrencyTests \
+            -only-testing:ReaderProTests/SearchAndPreviewTests \
+            -only-testing:ReaderProUITests/SearchAndPreviewUITests \
             -only-testing:ReaderProTests/JavaCryptoTests \
             -only-testing:ReaderProUITests/SourceVideoUITests \
             -only-testing:ReaderProTests/ParityFoundationTests \

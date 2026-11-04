@@ -150,12 +150,12 @@ struct SourceCustomActionView: View {
 
 extension BookStore {
     @MainActor func refreshPurchasedChapter(bookID: String, chapterURL: String?) async throws {
-        guard let original = books.first(where: { $0.id == bookID }), let source = sourceForBook(original) else { throw CancellationError() }
+        guard let original = readingBook(id: bookID), let source = sourceForBook(original) else { throw CancellationError() }
         let worker = Task.detached { try await withTimeout(60) { try await source.fetchChapters(book: original.sourceBook) } }
         let chapters = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
         try Task.checkCancellation()
         guard !chapters.isEmpty else { throw SourceFailure(stage: "购买后刷新", message: "书源未返回目录，请重新加载") }
-        guard let current = books.first(where: { $0.id == bookID }), current.sourceUrl == original.sourceUrl else { throw CancellationError() }
+        guard let current = readingBook(id: bookID), current.sourceUrl == original.sourceUrl else { throw CancellationError() }
         chapterCache.cancel(bookID: bookID)
         var updated = current.refreshingDirectory(chapters)
         if let chapterURL, let index = updated.chapters.firstIndex(where: { $0.url == chapterURL }) {

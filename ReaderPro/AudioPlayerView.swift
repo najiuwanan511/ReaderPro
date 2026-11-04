@@ -139,7 +139,7 @@ struct AudioPlayerView: View {
     @State private var showSourceChange = false
     @State private var showSourceAction = false
     @State private var paymentAction = false
-    private var chapters: [BookChapter] { (store?.books.first(where: { $0.id == book.id }) ?? book).chapters }
+    private var chapters: [BookChapter] { (store?.readingBook(id: book.id) ?? book).chapters }
 
     init(book: LocalBook, store: BookStore? = nil, source: LegadoSource? = nil) {
         self.book = book; self.store = store; self.source = source
@@ -247,7 +247,7 @@ struct AudioPlayerView: View {
         .sheet(isPresented: $showSourceAction, onDismiss: { if paymentAction { retry += 1 } }) {
             if let source {
                 NavigationStack {
-                    SourceCustomActionView(source: source, book: (store?.books.first(where: { $0.id == book.id }) ?? book).sourceBook,
+                    SourceCustomActionView(source: source, book: (store?.readingBook(id: book.id) ?? book).sourceBook,
                         chapter: chapters.indices.contains(chapterIndex) ? chapters[chapterIndex] : nil, payment: paymentAction,
                         onPaymentSuccess: {
                             if let store { try await store.refreshPurchasedChapter(bookID: book.id, chapterURL: chapters.indices.contains(chapterIndex) ? chapters[chapterIndex].url : nil) }
@@ -257,7 +257,7 @@ struct AudioPlayerView: View {
             }
         }
         .sheet(isPresented: $showSourceChange, onDismiss: { retry += 1 }) {
-            if let store, let current = store.books.first(where: { $0.id == book.id }) {
+            if let store, let current = store.readingBook(id: book.id) {
                 ReaderSourceChangeView(store: store, current: current) { candidate, index in
                     guard let chapters = candidate.chapters else { return }
                     var updated = current; updated.chapters = chapters
@@ -328,7 +328,7 @@ struct AudioPlayerView: View {
     @MainActor func load() async {
         model.stop(); loadError = ""; loading = true; lyrics = []
         let index = chapterIndex
-        let current = store?.books.first(where: { $0.id == book.id }) ?? book
+        let current = store?.readingBook(id: book.id) ?? book
         let activeSource = store?.sourceForBook(current) ?? source
         model.onEnded = { changeChapter(1) }
         model.onPrevious = { changeChapter(-1) }
@@ -367,7 +367,7 @@ struct AudioPlayerView: View {
     }
 
     func savePosition() {
-        guard let store, !loading, var current = store.books.first(where: { $0.id == book.id }) else { return }
+        guard let store, !loading, var current = store.readingBook(id: book.id) else { return }
         current.chapterIndex = chapterIndex; current.charOffset = Int(max(0, model.currentTime))
         current.lastRead = Date()
         current.progress = chapters.isEmpty ? 0 : (Double(chapterIndex) + (model.duration > 0 ? model.currentTime / model.duration : 0)) / Double(chapters.count)

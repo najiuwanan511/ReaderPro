@@ -159,7 +159,7 @@ struct SourceFixtureRoot: View {
     @State private var persistenceStatus = ""
     init() {
         var status = ""
-        if ProcessInfo.processInfo.arguments.contains("--seed-persistent-user-pack") || ProcessInfo.processInfo.arguments.contains("--layout-link-ui-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--seed-persistent-user-pack") || ProcessInfo.processInfo.arguments.contains("--layout-link-ui-fixture") || ProcessInfo.processInfo.arguments.contains("--reading-preview-fixture") {
             do { try PersistentSourceFixture.saveSnapshot() }
             catch { status = "测试备份失败：\(error.localizedDescription)" }
         }
@@ -176,6 +176,7 @@ struct SourceFixtureRoot: View {
         // persists progress. Other UI fixtures expect the normal page reader.
         if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {
             fixtureStore.pageTurn = 1
+            UserDefaults.standard.set(SearchMatchMode.fuzzy.rawValue, forKey: SearchMatchMode.storageKey)
         }
         _store = StateObject(wrappedValue: fixtureStore)
         if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {
@@ -194,7 +195,7 @@ struct SourceFixtureRoot: View {
             }
         } else {
         TabView {
-            if ProcessInfo.processInfo.arguments.contains("--source-stress-fixture") {
+            if ProcessInfo.processInfo.arguments.contains("--source-stress-fixture") || ProcessInfo.processInfo.arguments.contains("--reading-preview-fixture") {
                 BookshelfView(store: store).tabItem { Label("书架", systemImage: "books.vertical") }
             }
             if ProcessInfo.processInfo.arguments.contains("--rss-ui-fixture") {
@@ -264,6 +265,17 @@ struct SourceFixtureRoot: View {
             var failed = source; failed.id = "fixture-failed"; failed.bookSourceName = "失败测试书源"; failed.searchUrl = "/denied"; failed.exploreUrl = ""; failed.enabled = false
             var partial = SourceTestFixtures.json(); partial.id = "fixture-partial"; partial.bookSourceName = "无结果测试书源"; partial.searchUrl = "/json/noresults"; partial.enabled = false
             store.books = []; store.sources = [source, failed, partial]
+            if ProcessInfo.processInfo.arguments.contains("--search-match-fixture") {
+                var matching = SourceTestFixtures.json()
+                matching.searchUrl = "/json/search-match?page={{page}}"; matching.ruleSearch.author = "$.author"
+                store.sources = [matching]
+            }
+            if ProcessInfo.processInfo.arguments.contains("--reading-preview-fixture") {
+                UserDefaults.standard.set(SearchMatchMode.fuzzy.rawValue, forKey: SearchMatchMode.storageKey)
+                UserDefaults.standard.set(0, forKey: "ui.homeTab")
+                UserDefaults.standard.set(true, forKey: "ui.showDiscovery")
+                store.save()
+            }
             if ProcessInfo.processInfo.arguments.contains("--discovery-controls-fixture") {
                 var alternate = SourceTestFixtures.html()
                 alternate.id = "discovery-only-fixture"; alternate.bookSourceUrl += "/discover-only"

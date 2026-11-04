@@ -21,7 +21,7 @@ import Foundation
     }
 
     func content(bookID: String, index: Int) async throws -> String {
-        guard let store, let book = store.books.first(where: { $0.id == bookID }), book.chapters.indices.contains(index) else {
+        guard let store, let book = store.readingBook(id: bookID), book.chapters.indices.contains(index) else {
             throw CancellationError()
         }
         let chapter = book.chapters[index]
@@ -37,7 +37,7 @@ import Foundation
             let text = try await fetch(source, chapter, next)
             try Task.checkCancellation()
             guard let self, let store = self.store,
-                  var current = store.books.first(where: { $0.id == bookID }),
+                  var current = store.readingBook(id: bookID),
                   current.sourceUrl == book.sourceUrl, current.sourceName == book.sourceName,
                   current.chapters.indices.contains(index), current.chapters[index].id == chapter.id,
                   current.chapters[index].url == chapter.url else { throw CancellationError() }
@@ -45,11 +45,9 @@ import Foundation
                 throw SourceFailure(stage: "正文", message: "该章节没有返回正文")
             }
             current.chapters[index].text = text
-            guard let bookIndex = store.books.firstIndex(where: { $0.id == bookID }) else { throw CancellationError() }
-            store.books[bookIndex] = current
             // A background chapter does not change sources or preferences.
             // Avoid serializing a large source collection three times per turn.
-            store.saveBooks()
+            store.updateBook(current)
             return text
         }
         requests[key] = Request(token: token, bookID: bookID, task: task)
@@ -63,7 +61,7 @@ import Foundation
     func preload(bookID: String, after index: Int, count requested: Int? = nil) {
         let count = requested ?? (UserDefaults.standard.object(forKey: "reader.preloadCount") as? Int ?? 3)
         preloadTasks[bookID]?.cancel()
-        guard let book = store?.books.first(where: { $0.id == bookID }),
+        guard let book = store?.readingBook(id: bookID),
               book.kind == "web", book.chapters.indices.contains(index), count > 0 else { return }
         let upcoming = Array(book.chapters.indices.dropFirst(index + 1).filter { !book.chapters[$0].isVolume }.prefix(count))
         guard !upcoming.isEmpty else { return }

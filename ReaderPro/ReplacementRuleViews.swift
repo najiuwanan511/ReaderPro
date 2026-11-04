@@ -45,9 +45,9 @@ struct ReplaceRuleView: View {
             }
             if let bookID {
                 Toggle("本书启用替换净化", isOn: Binding(get: {
-                    store.books.first { $0.id == bookID }?.useReplaceRule ?? true
+                    store.readingBook(id: bookID)?.useReplaceRule ?? true
                 }, set: { enabled in
-                    if var book = store.books.first(where: { $0.id == bookID }) { book.useReplaceRule = enabled; store.updateBook(book) }
+                    if var book = store.readingBook(id: bookID) { book.useReplaceRule = enabled; store.updateBook(book) }
                 })).padding(.horizontal).padding(.vertical, 10)
             }
             List {
@@ -74,7 +74,7 @@ struct ReplaceRuleView: View {
                 } label: { Image(systemName: "line.3.horizontal.decrease") }.accessibilityLabel("筛选替换规则")
                 Button {
                     var rule = ReplaceRule()
-                    if let bookID { rule.scope = store.books.first { $0.id == bookID }?.title ?? "" }
+                    if let bookID { rule.scope = store.readingBook(id: bookID)?.title ?? "" }
                     editing = rule
                 } label: { Image(systemName: "plus") }.accessibilityLabel("添加替换规则")
                 Menu {

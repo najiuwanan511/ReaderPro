@@ -123,7 +123,7 @@ struct MangaView: View {
     @State private var paymentAction = false
     @State private var landAtEnd = false
 
-    var book: LocalBook? { store.books.first { $0.id == bookId } }
+    var book: LocalBook? { store.readingBook(id: bookId) }
     var isOnline: Bool { book?.kind == "comic" }
     var displayImages: [String] {
         guard let b = book else { return [] }
@@ -330,7 +330,7 @@ struct MangaView: View {
                 let imgs = try await src.fetchChapterImages(ch, nextChapterUrl: nextURL)
                 await MainActor.run {
                     guard !Task.isCancelled, loadToken == token else { return }
-                    if var nb = store.books.first(where: { $0.id == bookId }), chIndex < nb.chapters.count {
+                    if var nb = store.readingBook(id: bookId), chIndex < nb.chapters.count {
                         nb.chapters[chIndex].imageUrls = imgs
                         store.updateBook(nb)
                     }

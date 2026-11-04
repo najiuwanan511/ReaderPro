@@ -5,7 +5,7 @@ import Foundation
     private var preloads: [String: Task<Void, Never>] = [:]
     init(store: BookStore) { self.store = store }
     func download(bookID: String, index: Int) async throws -> CachedChapterMedia {
-        guard let store, let book = store.books.first(where: { $0.id == bookID }), book.chapters.indices.contains(index) else { throw CancellationError() }
+        guard let store, let book = store.readingBook(id: bookID), book.chapters.indices.contains(index) else { throw CancellationError() }
         let chapter = book.chapters[index]
         if let cached = try await MediaDiskCache.shared.cached(book: book, chapter: chapter) { return cached }
         guard let source = store.sourceForBook(book) else { throw SourceFailure(stage: "媒体缓存", message: "书源已删除，无法下载") }
@@ -22,7 +22,7 @@ import Foundation
     func preload(bookID: String, from index: Int) {
         preloads[bookID]?.cancel()
         let count = max(0, min(50, UserDefaults.standard.object(forKey: "media.preloadCount") as? Int ?? 3))
-        guard count > 0, let book = store?.books.first(where: { $0.id == bookID }), book.isAudio || book.isVideo else { return }
+        guard count > 0, let book = store?.readingBook(id: bookID), book.isAudio || book.isVideo else { return }
         let upcoming = Array(book.chapters.indices.dropFirst(max(0, index)).filter { !book.chapters[$0].isVolume }.prefix(count + 1))
         preloads[bookID] = Task { @MainActor [weak self] in
             for next in upcoming {

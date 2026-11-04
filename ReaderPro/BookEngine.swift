@@ -505,6 +505,11 @@ class BookStore: ObservableObject {
     @MainActor lazy var chapterCache = ReaderChapterCache(store: self)
     @MainActor lazy var mediaCache = ReaderMediaCache(store: self)
     @Published var books: [LocalBook] = []
+    // Reading a search/discovery result is separate from adding it to the shelf.
+    // Preview IDs remain known after dismissal so late progress callbacks cannot
+    // accidentally reinsert a discarded preview through updateBook.
+    @Published private(set) var readingPreviews: [String: LocalBook] = [:]
+    private var previewIDs: Set<String> = []
     @Published var bookmarks: [Bookmark] = []
     @Published var sources: [LegadoSource] = []
     @Published var rssSources: [RssSource] = []
@@ -626,12 +631,32 @@ class BookStore: ObservableObject {
         }
     }
     func updateBook(_ book: LocalBook) {
+        if previewIDs.contains(book.id) {
+            if readingPreviews[book.id] != nil { readingPreviews[book.id] = book }
+            return
+        }
         let added = !books.contains { $0.id == book.id }
         if let i = books.firstIndex(where: { $0.id == book.id }) { books[i] = book } else { books.insert(book, at: 0) }
         saveBooks()
         if added, let source = sourceForBook(book), source.eventListener {
             Task.detached { await source.callBookEvent("addBookShelf", book: book) }
         }
+    }
+    func readingBook(id: String) -> LocalBook? {
+        books.first { $0.id == id } ?? readingPreviews[id]
+    }
+    func openForReading(_ book: LocalBook) {
+        if books.contains(where: { $0.id == book.id }) { updateBook(book) }
+        else { previewIDs.insert(book.id); readingPreviews[book.id] = book }
+    }
+    func addToShelf(_ book: LocalBook) {
+        previewIDs.remove(book.id); readingPreviews.removeValue(forKey: book.id)
+        updateBook(book)
+    }
+    @MainActor func discardReadingPreview(id: String) {
+        guard readingPreviews.removeValue(forKey: id) != nil else { return }
+        chapterCache.cancel(bookID: id)
+        Task { await mediaCache.clear(bookID: id) }
     }
     func deleteBook(_ book: LocalBook) {
         Task { @MainActor in await mediaCache.clear(bookID: book.id) }
@@ -754,13 +779,13 @@ class BookStore: ObservableObject {
     // MARK: 整本下载（在线书缓存全部章节）
 
     @MainActor func downloadAllChapters(bookId: String, onProgress: @escaping (Int, Int) -> Void) async {
-        guard let original = books.first(where: { $0.id == bookId }) else { return }
+        guard let original = readingBook(id: bookId) else { return }
         let pending = original.chapters.indices.filter { original.chapters[$0].text.hasPrefix("__URL__") }
         let cache = chapterCache
         var completed = 0
         for offset in stride(from: 0, to: pending.count, by: 8) {
             guard !Task.isCancelled,
-                  let current = books.first(where: { $0.id == bookId }),
+                  let current = readingBook(id: bookId),
                   current.sourceUrl == original.sourceUrl, current.sourceName == original.sourceName else { return }
             let batch = pending[offset..<min(offset + 8, pending.count)]
             await withTaskGroup(of: Void.self) { group in
@@ -780,7 +805,7 @@ class BookStore: ObservableObject {
         guard !chapters.isEmpty else { throw SourceFailure(stage: "换源", message: "新书源没有返回目录，已保留当前来源") }
         await MainActor.run {
             chapterCache.cancel(bookID: bookId)
-            if var nb = books.first(where: { $0.id == bookId }) {
+            if var nb = readingBook(id: bookId) {
                 nb.sourceName = source.bookSourceName
                 nb.sourceUrl = source.bookSourceUrl
                 nb.bookUrl = info.url; nb.tocUrl = info.tocUrl ?? ""

@@ -122,7 +122,7 @@ private final class ReaderScrollProgress {
 
     @StateObject private var speech = SpeechController()
 
-    var book: LocalBook? { store.books.first { $0.id == bookId } }
+    var book: LocalBook? { store.readingBook(id: bookId) }
     var chapter: BookChapter? {
         guard let b = book, b.chapters.indices.contains(chapterIndex) else { return nil }
         return b.chapters[chapterIndex]
@@ -768,7 +768,7 @@ private final class ReaderScrollProgress {
                 // One deadline covers all pagination and synchronous JS retries.
                 let content = try await store.chapterCache.content(bookID: bookId, index: idx)
                 guard !Task.isCancelled, chapterLoadToken == token, chapterIndex == idx,
-                      var nb = store.books.first(where: { $0.id == bookId }),
+                      var nb = store.readingBook(id: bookId),
                       nb.chapters.indices.contains(idx), nb.chapters[idx].id == ch.id else { return }
                 nb.chapters[idx].text = content
                 store.updateBook(nb)

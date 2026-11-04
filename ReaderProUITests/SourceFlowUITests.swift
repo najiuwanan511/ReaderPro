@@ -326,7 +326,7 @@ final class SourceFlowUITests: XCTestCase {
         app.launch()
         app.tabBars.buttons["搜索"].tap()
         let search = app.textFields["bookSearch"]
-        XCTAssertTrue(search.waitForExistence(timeout: 15)); search.tap(); search.typeText("stress")
+        XCTAssertTrue(search.waitForExistence(timeout: 15)); search.tap(); search.typeText("批量书籍")
         app.buttons["submitBookSearch"].tap()
         let completed = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "搜索完成")).firstMatch
         XCTAssertTrue(completed.waitForExistence(timeout: 120), "All 16 sources must finish without terminating the app")
@@ -339,7 +339,7 @@ final class SourceFlowUITests: XCTestCase {
         app.tabBars.buttons["书架"].tap()
         app.swipeDown()
         let shelfSearch = app.searchFields.firstMatch
-        XCTAssertTrue(shelfSearch.waitForExistence(timeout: 10)); shelfSearch.tap(); shelfSearch.typeText("stress")
+        XCTAssertTrue(shelfSearch.waitForExistence(timeout: 10)); shelfSearch.tap(); shelfSearch.typeText("批量书籍")
         let submit = app.buttons["shelfSearchSources"]
         XCTAssertTrue(submit.waitForExistence(timeout: 10)); submit.tap()
         let results = app.staticTexts.containing(NSPredicate(format: "label CONTAINS %@", "源搜索结果")).firstMatch

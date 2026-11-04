@@ -41,23 +41,30 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
     @Published private(set) var page = 0
     @Published private(set) var concurrency = SourceConcurrency.search
     private var seen: Set<String> = []
+    private var candidates: [SourceBook] = []
+    private var matchMode: SearchMatchMode?
     private var seenURLs: [String: Set<String>] = [:]
     private var nextPages: [String: Int] = [:]
     private var sources: [LegadoSource] = []
     private var generation = UUID()
     private var task: Task<Void, Never>?
 
-    func start(_ sources: [LegadoSource], key: String) {
+    func start(_ sources: [LegadoSource], key: String, matching mode: SearchMatchMode? = nil) {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         task?.cancel()
         let run = UUID(); generation = run
-        results = []; allResults = []; errors = []; seen = []
+        results = []; allResults = []; errors = []; seen = []; candidates = []; matchMode = mode
         seenURLs = [:]; page = 0
         self.sources = sources.filter { !$0.searchUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         nextPages = Dictionary(self.sources.map { ($0.id, 1) }, uniquingKeysWith: { first, _ in first })
         keyword = trimmed; cancelled = false; searching = false
         loadMore(generation: run)
+    }
+
+    func setMatchingMode(_ mode: SearchMatchMode) {
+        matchMode = mode
+        results = candidates.filter { mode.matches($0, keyword: keyword) }
     }
 
     func loadMore() { loadMore(generation: generation) }
@@ -99,7 +106,9 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
         // causes SwiftUI to diff and copy the growing result list for every
         // row, multiplying main-thread work and transient memory use.
         let added = newBooks.filter { seen.insert(dedupeKey($0)).inserted }
-        if !added.isEmpty { results.append(contentsOf: added) }
+        candidates.append(contentsOf: added)
+        let visible = added.filter { matchMode?.matches($0, keyword: keyword) ?? true }
+        if !visible.isEmpty { results.append(contentsOf: visible) }
     }
 
     func cancel() {

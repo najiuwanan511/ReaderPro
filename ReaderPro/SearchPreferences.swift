@@ -1,5 +1,27 @@
 import SwiftUI
 
+enum SearchMatchMode: String, CaseIterable, Identifiable {
+    case exact, fuzzy
+    static let storageKey = "ReaderPro.searchMatchMode"
+    var id: String { rawValue }
+    var title: String { self == .exact ? "精确搜索" : "模糊搜索" }
+    static var saved: Self { Self(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .fuzzy }
+
+    private func normalized(_ text: String) -> String {
+        text.folding(options: [.caseInsensitive, .widthInsensitive, .diacriticInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .filter { !$0.isWhitespace && !"《》〈〉".contains($0) }
+    }
+    func matches(_ book: SourceBook, keyword: String) -> Bool {
+        let key = normalized(keyword)
+        guard !key.isEmpty else { return false }
+        let title = normalized(book.title), author = normalized(book.author)
+        switch self {
+        case .exact: return title == key || author == key
+        case .fuzzy: return title.contains(key) || author.contains(key)
+        }
+    }
+}
+
 enum SearchHistory {
     static let storageKey = "ReaderPro.searchHistory"
     static var values: [String] { UserDefaults.standard.stringArray(forKey: storageKey) ?? [] }
