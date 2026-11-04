@@ -16,6 +16,8 @@
 
 ## 当前验收状态（2026-11-04）
 
+- `65caea1` 规则回归 [41776092353](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776092353)：200 项全部通过。完整 Debug [41776109747](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776109747) 的前置 8 UI 中 7 通过、1 失败，尚未进入全量测试且没有生成 IPA。主题应用后实际导航层级变为「我的」，原像素断言因找不到「导入主题」导航栏而失败；当前修正保持导航修饰器内容身份、只更新工具栏参数，保留原颜色和流程断言，等待新回归。
+- 新增排版包候选：对照 `ReadBookConfig.Config` 和 `BgTextConfigDialog.exportConfig`，接入 `legado/yuedu://import/readConfig`、网络 ZIP/JSON 和文件导入，先预览保存再选择应用；保留原配置及包内字体、背景，按名称更新并重启后读取。字距按 em 转点数、行距/段距按当前字体行高换算，保留安卓翻页枚举映射。标题、页眉页脚等未映射字段、边距取均值和配色不自动切换均在预览说明，不能算完整排版移植。新增实际 ZIP/字体/背景、存储替换、错误原子性、枚举与分页和真实 UI 重启流程测试；尚待 Xcode 运行。
 - 已验证的代理修复：`54c8b64`。iOS 17 Release 生产专项 [41675972197](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675972197) 的 26 项全部通过，覆盖普通 HTTP、HTTPS 证书策略、认证 SOCKS、代理隔离，以及真实 SwiftUI 登录、订阅和视频网页；当前系统规则回归 [41675970245](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675970245) 的 197 项全部通过。
 - 主题候选 `2844d42` 两轮 CI 在编译时失败，原因是新增样例 JSON 的 `#` 颜色提前结束 Swift 原始字符串，未执行产品测试、未生成 IPA。`758a38a` 修正定界符，规则回归 [41768535383](https://github.com/najiuwanan511/ReaderPro/actions/runs/41768535383) 的 199 项全部通过；Debug [41768537601](https://github.com/najiuwanan511/ReaderPro/actions/runs/41768537601) 前置 8 UI 中 7 通过、1 失败（首次验证页空白，没有向样例服务器发送请求），未进入全量测试，也未生成 IPA。主题导入/应用/删除的实际 UI 流程已通过并检查截图。iOS 17 Release 回归仍待结果。
 - `eec11e4` 增加普通/粗体/细体与负字距，复用选定字体家族参与实际分页；修正脚本字距由 TextKit 点数转换为安卓 em。`14f8880` 调整验证页为非零尺寸、挂入窗口后才发起首次导航，并在页面移除时取消准备任务。原验证 UI 断言和等待时间均保留；上述候选等待新回归，不能把初始化时序推断当作根因已证实。

@@ -208,7 +208,7 @@ enum SourceHTTP {
         return SourcePage(text: text, url: parsed.url)
     }
 
-    static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false, allowHTTPError: Bool = false) async throws -> SourcePage {
+    static func load(_ request: URLRequest, stage: String, hexEncoded: Bool = false, allowHTTPError: Bool = false, retainBytes: Bool = false) async throws -> SourcePage {
         try Task.checkCancellation()
         do {
             let (data, response) = try await SourceTLS.data(for: request)
@@ -232,7 +232,7 @@ enum SourceHTTP {
                 $0[String(describing: $1.key).lowercased()] = String(describing: $1.value)
             }
             return SourcePage(text: hexEncoded ? data.map { String(format: "%02x", $0) }.joined() : decode(data, response: response), url: address,
-                              status: http?.statusCode ?? 200, headers: headers)
+                              status: http?.statusCode ?? 200, headers: headers, bytes: retainBytes ? data : nil)
         } catch let failure as SourceFailure { throw failure }
         catch {
             if Task.isCancelled { throw CancellationError() }

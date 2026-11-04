@@ -2,6 +2,55 @@ import XCTest
 import UIKit
 
 final class SourceImportLoginUITests: XCTestCase {
+    func testReadLayoutLinkPreservesPackageAppliesAndRendersAfterRestart() {
+        continueAfterFailure = false; executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--layout-link-ui-fixture"]
+        app.launch()
+        defer {
+            app.terminate(); app.launchArguments = ["--source-ui-fixture", "--restore-persistent-fixture"]; app.launch()
+            XCTAssertTrue(app.staticTexts["持久化测试数据已恢复"].waitForExistence(timeout: 15))
+            app.terminate()
+        }
+        app.tabBars.buttons["发现"].tap()
+        let source = app.buttons["source-explore-http://127.0.0.1:8765"]
+        XCTAssertTrue(source.waitForExistence(timeout: 10)); source.tap()
+        XCTAssertTrue(app.buttons["导入排版"].waitForExistence(timeout: 10)); app.buttons["导入排版"].tap()
+        let confirm = app.buttons["appLinkConfirmImport"]
+        for _ in 0..<4 { if confirm.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(confirm.waitForExistence(timeout: 15)); confirm.tap()
+        XCTAssertTrue(app.staticTexts["appLinkImportResult"].waitForExistence(timeout: 10))
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(app.tabBars.buttons["我的"].waitForExistence(timeout: 20)); app.tabBars.buttons["我的"].tap()
+        let settings = app.buttons.containing(.staticText, identifier: "主题设置").firstMatch
+        if !settings.isHittable { app.swipeUp() }; settings.tap()
+        let layouts = app.buttons.containing(.staticText, identifier: "阅读排版").firstMatch
+        if !layouts.isHittable { app.swipeUp() }; XCTAssertTrue(layouts.waitForExistence(timeout: 10)); layouts.tap()
+        let saved = app.buttons["排版导入样例"]
+        XCTAssertTrue(saved.waitForExistence(timeout: 10)); saved.tap()
+        let apply = app.buttons["layoutApply-0"]
+        for _ in 0..<3 { if apply.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(apply.waitForExistence(timeout: 10)); apply.tap()
+        app.swipeDown()
+        XCTAssertTrue(app.staticTexts["已应用昼间排版"].waitForExistence(timeout: 10))
+        let settingsShot = XCTAttachment(screenshot: app.screenshot()); settingsShot.name = "排版包保存与应用"; settingsShot.lifetime = .keepAlways; add(settingsShot)
+        app.terminate(); app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture"]; app.launch()
+        app.tabBars.buttons["发现"].tap(); app.buttons["回归测试书源"].tap()
+        XCTAssertTrue(app.buttons["分类"].waitForExistence(timeout: 10)); app.buttons["分类"].tap()
+        let book = app.buttons.containing(.staticText, identifier: "测试小说").firstMatch
+        XCTAssertTrue(book.waitForExistence(timeout: 20)); book.tap()
+        XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 20)); app.swipeUp()
+        app.buttons["chapter-0"].tap()
+        let page = app.textViews["readerPage"]
+        XCTAssertTrue(page.waitForExistence(timeout: 20)); XCTAssertGreaterThan(page.label.count, 20)
+        let pixels = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let screen = app.frame
+            return Self.pixel(app.screenshot().image, at: CGPoint(x: screen.minX + 4, y: screen.midY), in: screen, matches: 0xECDDBA)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [pixels], timeout: 10), .completed, "重启后正文仍应绘制排版包内的背景图")
+        let readerShot = XCTAttachment(screenshot: app.screenshot()); readerShot.name = "导入排版重启后正文与背景"; readerShot.lifetime = .keepAlways; add(readerShot)
+    }
+
     func testThemeLinkImportsThenAppliesFromProductionSettings() {
         continueAfterFailure = false; executionTimeAllowance = 180
         let app = XCUIApplication()

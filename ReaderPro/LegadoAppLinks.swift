@@ -4,7 +4,7 @@ import SwiftUI
 // booksource/importonline, rsssource/importonline and replace/importonline URLs.
 struct LegadoAppLink: Equatable {
     enum Kind: String {
-        case automatic, bookSource, rssSource, replaceRule, textTocRule, httpTTS, dictRule, theme, addToBookshelf
+        case automatic, bookSource, rssSource, replaceRule, textTocRule, httpTTS, dictRule, theme, readConfig, addToBookshelf
         var title: String {
             switch self {
             case .automatic: return "导入规则"
@@ -15,6 +15,7 @@ struct LegadoAppLink: Equatable {
             case .httpTTS: return "导入在线朗读"
             case .dictRule: return "导入字典规则"
             case .theme: return "导入主题"
+            case .readConfig: return "导入排版"
             case .addToBookshelf: return "添加书籍"
             }
         }
@@ -39,10 +40,7 @@ struct LegadoAppLink: Equatable {
         case "/dictrule": kind = .dictRule
         case "/addtobookshelf": kind = .addToBookshelf
         case "/theme": kind = .theme
-        case "/readconfig":
-            // These Android archives need separate asset/configuration mapping;
-            // never misreport an unsupported theme as a successful source import.
-            throw SourceFailure(stage: "一键导入", message: "此链接是安卓排版包，尚不能完整导入")
+        case "/readconfig": kind = .readConfig
         case "/importonline":
             switch url.host?.lowercased() {
             case "booksource": kind = .bookSource
@@ -57,7 +55,7 @@ struct LegadoAppLink: Equatable {
 }
 
 enum LegadoLinkDocument {
-    case sources(SourcePackImportResult), replacements([ReplaceRule]), toc([TxtTocRule]), tts([HttpTTS]), dictionaries([DictRule]), themes([LegadoTheme])
+    case sources(SourcePackImportResult), replacements([ReplaceRule]), toc([TxtTocRule]), tts([HttpTTS]), dictionaries([DictRule]), themes([LegadoTheme]), readLayout(Data)
     var names: [String] {
         switch self {
         case .sources(let value): return value.sources.map(\.bookSourceName) + value.rssSources.map(\.sourceName)
@@ -66,7 +64,12 @@ enum LegadoLinkDocument {
         case .tts(let value): return value.map(\.name)
         case .dictionaries(let value): return value.map(\.name)
         case .themes(let value): return value.map(\.themeName)
+        case .readLayout(let data): return (try? LegadoReadLayout.decode(data)).map { [$0.name] } ?? []
         }
+    }
+    var warnings: [String] {
+        if case .readLayout(let data) = self { return (try? LegadoReadLayout.decode(data))?.warnings ?? [] }
+        return []
     }
     static func rules<T: ManagedReaderRule>(_ type: T.Type, data: Data) throws -> [T] {
         let decoder = JSONDecoder()
@@ -78,10 +81,14 @@ enum LegadoLinkDocument {
     }
     static func decode(_ data: Data, kind: LegadoAppLink.Kind) throws -> Self {
         var kind = kind
+        if kind == .readConfig || (kind == .automatic && data.starts(with: [0x50, 0x4b])) {
+            _ = try LegadoReadLayout.decode(data); return .readLayout(data)
+        }
         if kind == .automatic {
             let object = try JSONSerialization.jsonObject(with: data)
             let first = (object as? [[String: Any]])?.first ?? object as? [String: Any] ?? [:]
-            if first["themeName"] != nil { kind = .theme }
+            if first["textSize"] != nil || first["bgStr"] != nil { kind = .readConfig }
+            else if first["themeName"] != nil { kind = .theme }
             else if first["pattern"] != nil { kind = .replaceRule }
             else if first["urlRule"] != nil { kind = .dictRule }
             else if first["rule"] != nil && first["name"] != nil { kind = .textTocRule }
@@ -99,6 +106,7 @@ enum LegadoLinkDocument {
         case .httpTTS: return .tts(try rules(HttpTTS.self, data: data))
         case .dictRule: return .dictionaries(try rules(DictRule.self, data: data))
         case .theme: return .themes(try LegadoTheme.decode(data))
+        case .readConfig: _ = try LegadoReadLayout.decode(data); return .readLayout(data)
         case .addToBookshelf: throw SourceFailure(stage: "添加书籍", message: "请通过书籍网址添加")
         }
     }
@@ -122,7 +130,7 @@ enum LegadoLinkDocument {
             }
             var request = try SourceHTTP.request(address, base: address)
             if noUA { request.setValue("", forHTTPHeaderField: "User-Agent") }
-            let response = try await SourceHTTP.load(request, stage: "一键导入")
+            let response = try await SourceHTTP.load(request, stage: "一键导入", retainBytes: true)
             return try decode(response.bytes ?? Data(response.text.utf8), kind: link.kind)
         }
         return try decode(Data(raw.utf8), kind: link.kind)
@@ -145,6 +153,7 @@ enum LegadoLinkDocument {
         case .tts(let rules): library.httpTts = merge(library.httpTts, rules)
         case .dictionaries(let rules): library.dictionaries = merge(library.dictionaries, rules)
         case .themes(let values): try (themes ?? .shared).merge(values); return "已导入 \(values.count) 个主题，请在主题设置中选择应用"
+        case .readLayout(let data): try LegadoReadLayoutLibrary.shared.merge(data); return "已导入排版，请在主题设置的阅读排版中选择应用"
         }
         return "已导入 \(names.count) 条规则"
     }
@@ -212,6 +221,9 @@ struct LegadoLinkImportView: View {
                         if !error.isEmpty { Text(error).foregroundStyle(.red) }
                         if !message.isEmpty { Text(message).accessibilityIdentifier("appLinkImportResult") }
                         if let document {
+                            if !document.warnings.isEmpty {
+                                Section("兼容说明") { ForEach(document.warnings, id: \.self) { Text($0).font(.caption).foregroundStyle(.secondary) } }
+                            }
                             Section("共 \(document.names.count) 条") {
                                 ForEach(Array(document.names.enumerated()), id: \.offset) { Text($0.element) }
                             }

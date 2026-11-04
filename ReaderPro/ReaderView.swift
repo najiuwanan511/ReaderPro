@@ -1140,6 +1140,7 @@ private final class ReaderScrollProgress {
                         }.labelsHidden().onChange(of: store.fontName) { _, _ in store.save() }
                     }
                     NavigationLink("导入字体 / 背景图片 / 自定义配色") { ReaderAppearanceView(store: store) }
+                    NavigationLink("导入开源阅读排版包") { LegadoReadLayoutsView(store: store) }
                     Picker("字重", selection: $textBold) {
                         Text("普通").tag(0); Text("粗体").tag(1); Text("细体").tag(2)
                     }.accessibilityIdentifier("readerFontWeight").onChange(of: textBold) { _, _ in store.save() }

@@ -159,7 +159,7 @@ struct SourceFixtureRoot: View {
     @State private var persistenceStatus = ""
     init() {
         var status = ""
-        if ProcessInfo.processInfo.arguments.contains("--seed-persistent-user-pack") {
+        if ProcessInfo.processInfo.arguments.contains("--seed-persistent-user-pack") || ProcessInfo.processInfo.arguments.contains("--layout-link-ui-fixture") {
             do { try PersistentSourceFixture.saveSnapshot() }
             catch { status = "测试备份失败：\(error.localizedDescription)" }
         }
@@ -233,6 +233,11 @@ struct SourceFixtureRoot: View {
                 var link = URLComponents(string: "legado://import/theme")!
                 link.queryItems = [URLQueryItem(name: "src", value: ##"{"themeName":"主题导入样例","isNightTheme":false,"primaryColor":"#3949AB","accentColor":"#00897B","backgroundColor":"#F4F1E8","bottomBackground":"#E8E2D3","transparentNavBar":false,"backgroundImgPath":null,"backgroundImgBlur":0}"##)]
                 source.exploreUrl = "[{\"title\":\"导入主题\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
+            }
+            if ProcessInfo.processInfo.arguments.contains("--layout-link-ui-fixture") {
+                var link = URLComponents(string: "legado://import/readConfig")!
+                link.queryItems = [URLQueryItem(name: "src", value: SourceTestFixtures.base + "/parity/read-layout.zip")]
+                source.exploreUrl = "[{\"title\":\"导入排版\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
             }
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {
                 source.exploreUrl = "重复分类::/library/categories/fiction\n重复分类::/library/categories/fiction\n重复分类::/library/categories/alternate"

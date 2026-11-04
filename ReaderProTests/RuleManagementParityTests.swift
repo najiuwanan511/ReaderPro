@@ -19,12 +19,13 @@ final class RuleManagementParityTests: XCTestCase {
             ("legado://replace/importonline?src=https%3A%2F%2Ftest.invalid%2Frules", .replaceRule),
             ("legado://import/httpTTS?src=inline", .httpTTS),
             ("legado://import/theme?src=inline", .theme),
+            ("legado://import/readConfig?src=https%3A%2F%2Ftest.invalid%2Flayout.zip", .readConfig),
             ("legado://import/addToBookshelf?src=https%3A%2F%2Fbook.test%2F1", .addToBookshelf)
         ] { XCTAssertEqual(try LegadoAppLink.parse(XCTUnwrap(URL(string: url))).kind, kind) }
         XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource")!))
         XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/bookSource?src=%20")!))
         XCTAssertFalse(LegadoAppLink.accepts(URL(string: "https://import/bookSource?src=a")!))
-        XCTAssertThrowsError(try LegadoAppLink.parse(URL(string: "legado://import/readConfig?src=a")!))
+        XCTAssertEqual(try LegadoAppLink.parse(URL(string: "legado://import/readConfig?src=a")!).kind, .readConfig)
     }
 
     @MainActor func testAndroidThemePreviewMergeSelectionAndReloadAreSeparate() async throws {

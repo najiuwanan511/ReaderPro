@@ -150,6 +150,7 @@ struct ThemeSettingsView: View {
 
             Section {
                 NavigationLink { LegadoThemeListView(store: store) } label: { SettingRow(icon: "square.and.arrow.down", iconTint: .purple, title: "导入主题", summary: "开源阅读主题 JSON、主题网址") }
+                NavigationLink { LegadoReadLayoutsView(store: store) } label: { SettingRow(icon: "textformat.size", iconTint: .indigo, title: "阅读排版", summary: "导入开源阅读排版包、字体和背景") }
                 NavigationLink { InterfaceAppearanceView(store: store) } label: { SettingRow(icon: "paintpalette", iconTint: .indigo, title: "配色与封面", summary: "主色、背景色、封面比例和圆角") }
                 NavigationLink { ReaderAppearanceView(store: store) } label: { SettingRow(icon: "textformat", iconTint: .gray, title: "字体与背景", summary: "字体文件、背景图片、自定义阅读配色") }
             } header: { SettingSectionHeader(title: "配色") }
