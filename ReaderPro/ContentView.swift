@@ -13,28 +13,33 @@ struct ContentView: View {
     @State private var selectedTab = UserDefaults.standard.integer(forKey: "ui.homeTab")
     var body: some View {
         TabView(selection: $selectedTab) {
-            BookshelfView(store: store)
-                .tabItem { Label("书架", systemImage: "books.vertical.fill") }.tag(0)
-            if showDiscovery {
-            DiscoveryView(store: store)
-                .tabItem { Label("发现", systemImage: "safari") }.tag(1)
+            // Conditional children in the tab builder can retain stale native
+            // selection on a cold launch. Give every visible tab a stable ID,
+            // and scope tab-bar preferences to its content, as UIKit expects.
+            ForEach(visibleTabs, id: \.self) { tab in
+                tabContent(tab)
+                    .tabItem { Label(["书架", "发现", "订阅", "我的"][tab], systemImage: ["books.vertical.fill", "safari", "bookmark", "person.fill"][tab]) }
+                    .tag(tab)
+                    .toolbarBackground(tabBackground, for: .tabBar)
+                    .toolbarBackground(.visible, for: .tabBar)
             }
-            if showRss {
-            RssSubscribeView(store: store)
-                .tabItem { Label("订阅", systemImage: "bookmark") }.tag(2)
-            }
-            SettingsView(store: store)
-                .tabItem { Label("我的", systemImage: "person.fill") }.tag(3)
         }
         .onAppear { validateSelectedTab() }
         .onChange(of: showDiscovery) { _, _ in validateSelectedTab() }
         .onChange(of: showRss) { _, _ in validateSelectedTab() }
         .tint(AppTheme.accent)
-        .toolbarBackground(tabBackground, for: .tabBar)
-        .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
         .task(id: scenePhase) { if scenePhase == .active { await RuleSubscriptionStore.shared.updateDue(store: store) } }
         .modifier(SourceAppLinkReceiver(store: store))
+    }
+    private var visibleTabs: [Int] { [0] + (showDiscovery ? [1] : []) + (showRss ? [2] : []) + [3] }
+    @ViewBuilder private func tabContent(_ tab: Int) -> some View {
+        switch tab {
+        case 0: BookshelfView(store: store)
+        case 1: DiscoveryView(store: store)
+        case 2: RssSubscribeView(store: store)
+        default: SettingsView(store: store)
+        }
     }
     private var tabBackground: Color {
         guard !UserDefaults.standard.bool(forKey: "ui.customColors"),

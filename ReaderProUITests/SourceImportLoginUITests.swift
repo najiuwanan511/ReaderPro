@@ -67,7 +67,12 @@ final class SourceImportLoginUITests: XCTestCase {
         let mine = app.tabBars.buttons["我的"]
         XCTAssertTrue(mine.waitForExistence(timeout: 20)); mine.tap()
         let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: mine)
-        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "首次点击我的应保持该标签选中")
+        let selectionResult = XCTWaiter.wait(for: [selected], timeout: 5)
+        if selectionResult != .completed {
+            let tree = XCTAttachment(string: app.debugDescription)
+            tree.name = "首次点击标签后的完整界面层级"; tree.lifetime = .keepAlways; add(tree)
+        }
+        XCTAssertEqual(selectionResult, .completed, "首次点击我的应保持该标签选中")
         let settings = app.buttons.containing(.staticText, identifier: "主题设置").firstMatch
         if !settings.isHittable { app.swipeUp() }
         XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()

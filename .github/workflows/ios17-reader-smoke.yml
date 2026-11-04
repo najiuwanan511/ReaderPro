@@ -40,6 +40,7 @@ jobs:
             -only-testing:ReaderProTests/SourceConcurrencyTests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
+            -only-testing:ReaderProUITests/SourceImportLoginUITests/testThemeLinkImportsThenAppliesFromProductionSettings \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryReaderPreloadsThreeAndShowsAlternativeDirectories \
             -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
