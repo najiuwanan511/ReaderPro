@@ -227,6 +227,9 @@ struct SourceBookDetailView: View {
                 Button("确定") { actionMessage = "" }
             } message: { Text(actionMessage) }
         }
+        // Keep the covered detail out of VoiceOver/XCTest while the full-screen
+        // reader is active. Previewing deliberately leaves its add button intact.
+        .accessibilityHidden(readingBook != nil)
         // Present above the detail container. A pushed reader inside a sheet
         // inherits its top gap and the detail screen's bottom action inset.
         .fullScreenCover(item: $readingBook) { book in

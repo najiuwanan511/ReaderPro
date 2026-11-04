@@ -51,6 +51,8 @@ final class SearchAndPreviewUITests: XCTestCase {
             let field = app.textFields["bookSearch"]
             XCTAssertTrue(field.waitForExistence(timeout: 15)); field.tap(); field.typeText("测试")
             app.buttons["submitBookSearch"].tap()
+            let complete = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "搜索完成")).firstMatch
+            XCTAssertTrue(complete.waitForExistence(timeout: 30))
         } else {
             app.tabBars.buttons["发现"].tap()
             XCTAssertTrue(app.buttons["回归测试书源"].waitForExistence(timeout: 15)); app.buttons["回归测试书源"].tap()
@@ -58,6 +60,13 @@ final class SearchAndPreviewUITests: XCTestCase {
         }
         let result = app.buttons.containing(.staticText, identifier: title).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 20)); result.tap()
+        if fromSearch {
+            // Parallel sources may finish in either order. Always begin with
+            // the six-chapter source before switching to the one-chapter source.
+            let picker = app.buttons["detailSourcePicker"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 10)); picker.tap()
+            app.buttons["回归测试书源"].tap()
+        }
         XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 20))
         let start = app.buttons["开始阅读"]
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)
