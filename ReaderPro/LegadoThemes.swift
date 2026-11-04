@@ -22,6 +22,17 @@ struct LegadoTheme: Codable, Equatable, Identifiable {
         return UIColor(red: CGFloat((number >> 16) & 255) / 255, green: CGFloat((number >> 8) & 255) / 255,
                        blue: CGFloat(number & 255) / 255, alpha: hex.count == 8 ? CGFloat(number >> 24) / 255 : 1)
     }
+    var navigationColorScheme: ColorScheme {
+        let color = Self.color(primaryColor) ?? .white
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        func linear(_ value: CGFloat) -> Double {
+            let channel = Double(value)
+            return channel <= 0.04045 ? channel / 12.92 : pow((channel + 0.055) / 1.055, 2.4)
+        }
+        // Match Android ColorUtils.isColorLight, independently of day/night mode.
+        return linear(r) * 0.2126 + linear(g) * 0.7152 + linear(b) * 0.0722 >= 0.5 ? .light : .dark
+    }
     func validate() throws {
         guard !themeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               [primaryColor, accentColor, backgroundColor, bottomBackground].allSatisfy({ Self.color($0) != nil }),
@@ -91,9 +102,12 @@ struct LegadoTheme: Codable, Equatable, Identifiable {
 
 struct LegadoThemeBackground: View {
     @Environment(\.colorScheme) private var scheme
+    @ObservedObject private var library = LegadoThemeLibrary.shared
     var body: some View {
         ZStack {
-            AppTheme.background
+            if !UserDefaults.standard.bool(forKey: "ui.customColors"), let theme = LegadoTheme.selected(dark: scheme == .dark) {
+                Color(uiColor: LegadoTheme.color(theme.backgroundColor) ?? .systemBackground)
+            } else { AppTheme.background }
             if !UserDefaults.standard.bool(forKey: "ui.customColors"), let theme = LegadoTheme.selected(dark: scheme == .dark),
                let path = theme.backgroundImgPath, let url = URL(string: path), isSourceURL(path) {
                 GeometryReader { geometry in
@@ -109,11 +123,18 @@ struct LegadoThemeBackground: View {
 
 struct LegadoThemeNavigation: ViewModifier {
     @Environment(\.colorScheme) private var scheme
+    @ObservedObject private var library = LegadoThemeLibrary.shared
     func body(content: Content) -> some View {
         if !UserDefaults.standard.bool(forKey: "ui.customColors"), let theme = LegadoTheme.selected(dark: scheme == .dark) {
             content.toolbarBackground(Color(uiColor: LegadoTheme.color(theme.primaryColor) ?? .clear), for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
-        } else { content }
+                .toolbarColorScheme(theme.navigationColorScheme, for: .navigationBar)
+                .toolbarBackground(Color(uiColor: LegadoTheme.color(theme.bottomBackground) ?? .clear), for: .tabBar)
+                .toolbarBackground(.visible, for: .tabBar)
+        } else {
+            content.toolbarBackground(AppTheme.surface, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+        }
     }
 }
 

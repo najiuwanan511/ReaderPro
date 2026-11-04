@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class SourceImportLoginUITests: XCTestCase {
     func testThemeLinkImportsThenAppliesFromProductionSettings() {
@@ -25,9 +26,31 @@ final class SourceImportLoginUITests: XCTestCase {
         let theme = app.buttons.containing(.staticText, identifier: "主题导入样例").firstMatch
         XCTAssertTrue(theme.waitForExistence(timeout: 10)); theme.tap()
         XCTAssertTrue(app.staticTexts["浅色"].exists)
+        let colors = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let image = app.screenshot().image
+            let bar = app.navigationBars["导入主题"].frame, screen = app.frame
+            return Self.pixel(image, at: CGPoint(x: bar.maxX - 12, y: bar.midY), in: screen, matches: 0x3949AB)
+                && Self.pixel(image, at: CGPoint(x: screen.midX, y: screen.midY + 40), in: screen, matches: 0xF4F1E8)
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [colors], timeout: 10), .completed, "导入主题的导航栏和页面背景必须实际绘制目标颜色")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "开源阅读主题导入与应用"; shot.lifetime = .keepAlways; add(shot)
         theme.swipeLeft(); app.buttons["删除"].tap()
         XCTAssertFalse(app.staticTexts["主题导入样例"].exists)
+    }
+
+    private static func pixel(_ image: UIImage, at point: CGPoint, in screen: CGRect, matches hex: UInt32) -> Bool {
+        guard let cg = image.cgImage, screen.width > 0, screen.height > 0 else { return false }
+        let x = Int((point.x - screen.minX) / screen.width * CGFloat(cg.width))
+        let y = Int((point.y - screen.minY) / screen.height * CGFloat(cg.height))
+        guard let crop = cg.cropping(to: CGRect(x: x, y: y, width: 1, height: 1)) else { return false }
+        var bytes = [UInt8](repeating: 0, count: 4)
+        let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(crop, in: CGRect(x: 0, y: 0, width: 1, height: 1)); return true
+        }
+        return drawn && zip(bytes.prefix(3), [Int((hex >> 16) & 255), Int((hex >> 8) & 255), Int(hex & 255)])
+            .allSatisfy { abs(Int($0.0) - $0.1) <= 5 }
     }
 
     func testDiscoveryScriptAppLinkPreviewsThenPersistsImportedSource() {

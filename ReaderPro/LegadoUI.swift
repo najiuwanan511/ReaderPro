@@ -3,8 +3,6 @@ import SwiftUI
 extension View {
     func readerNavigationStyle() -> some View {
         navigationBarTitleDisplayMode(.inline)
-            .toolbarBackground(AppTheme.surface, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
             .modifier(LegadoThemeNavigation())
     }
 }
