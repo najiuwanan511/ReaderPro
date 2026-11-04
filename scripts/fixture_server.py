@@ -666,20 +666,24 @@ if __name__ == '__main__':
     # An isolated, deliberately untrusted certificate proves that legacy TLS
     # compatibility is opt-in per source and never weakens normal requests.
     Path('build').mkdir(exist_ok=True)
+    print('Preparing deterministic TLS certificate', flush=True)
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
                     '-keyout', 'build/fixture-key.pem', '-out', 'build/fixture-cert.pem',
                     '-days', '1', '-subj', '/CN=localhost'], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print('Binding TLS fixture on 8766', flush=True)
     tls = ThreadingHTTPServer(('0.0.0.0', 8766), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain('build/fixture-cert.pem', 'build/fixture-key.pem')
     tls.socket = context.wrap_socket(tls.socket, server_side=True)
     threading.Thread(target=tls.serve_forever, daemon=True).start()
+    print('Binding SOCKS fixtures', flush=True)
     socks = SocksFixtureServer(('0.0.0.0', 8767), SocksFixture)
     threading.Thread(target=socks.serve_forever, daemon=True).start()
     socks_auth = SocksFixtureServer(('0.0.0.0', 8769), SocksFixture)
     socks_auth.expected_credentials = (b'fixture-user', b'fixture-pass')
     threading.Thread(target=socks_auth.serve_forever, daemon=True).start()
+    print('Binding HTTP proxy fixtures', flush=True)
     auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8768), Handler)
     auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
     threading.Thread(target=auth_proxy.serve_forever, daemon=True).start()
@@ -687,4 +691,5 @@ if __name__ == '__main__':
     persistent_auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
     persistent_auth_proxy.persistent_proxy_auth = True
     threading.Thread(target=persistent_auth_proxy.serve_forever, daemon=True).start()
+    print('Binding primary HTTP fixture on 8765', flush=True)
     ThreadingHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()
