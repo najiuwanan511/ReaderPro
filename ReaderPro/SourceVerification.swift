@@ -117,23 +117,42 @@ private struct VerificationWebPage: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(session) }
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = session.store
-        let web = WKWebView(frame: .zero, configuration: configuration)
+        // A cold WebContent process must start with a real viewport. Defer
+        // its initial navigation until SwiftUI has attached it to the visible
+        // verification controller, rather than navigating a zero-size view.
+        let web = WKWebView(frame: UIScreen.main.bounds, configuration: configuration)
         session.web = web; web.navigationDelegate = context.coordinator
         web.customUserAgent = session.request.value(forHTTPHeaderField: "User-Agent") ?? sourceUA
-        Task {
-            do { try await SourceWebDataStore.prepareProxy(configuration, request: session.request) }
+        context.coordinator.loadingTask = Task {
+            do {
+                let deadline = Date().addingTimeInterval(10)
+                while web.window == nil || web.bounds.width < 1 || web.bounds.height < 1 {
+                    try Task.checkCancellation()
+                    guard session.continuation != nil else { return }
+                    guard Date() < deadline else { throw SourceFailure(stage: "网页验证", message: "验证窗口未能显示，请返回后重试") }
+                    try await Task.sleep(nanoseconds: 20_000_000)
+                }
+                try await SourceWebDataStore.prepareProxy(configuration, request: session.request)
+            }
             catch { session.finish(.failure(error)); return }
-            for cookie in (session.source?.enabledCookieJar ?? true) ? SourceWebDataStore.cookies(for: session.request, sourceURL: session.source?.bookSourceUrl) : [] { await configuration.websiteDataStore.httpCookieStore.setCookie(cookie) }
-            guard session.continuation != nil else { return }
+            for cookie in (session.source?.enabledCookieJar ?? true) ? SourceWebDataStore.cookies(for: session.request, sourceURL: session.source?.bookSourceUrl) : [] {
+                guard !Task.isCancelled, session.continuation != nil else { return }
+                await configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
+            }
+            guard !Task.isCancelled, session.continuation != nil else { return }
             if let html = session.html, !html.isEmpty { web.loadHTMLString(html, baseURL: session.request.url) }
             else { web.load(session.request) }
         }
         return web
     }
     func updateUIView(_ web: WKWebView, context: Context) {}
-    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) { web.stopLoading(); web.navigationDelegate = nil }
+    static func dismantleUIView(_ web: WKWebView, coordinator: Coordinator) {
+        coordinator.loadingTask?.cancel(); coordinator.loadingTask = nil
+        web.stopLoading(); web.navigationDelegate = nil
+    }
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate {
         let session: VerificationSession
+        var loadingTask: Task<Void, Never>?
         init(_ session: VerificationSession) { self.session = session }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard session.source?.enabledCookieJar ?? true else { return }
