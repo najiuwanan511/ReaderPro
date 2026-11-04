@@ -568,6 +568,32 @@ class Handler(BaseHTTPRequestHandler):
                 body += f'<a class="next" href="{chapter}?page={page + 1}">下一页</a>'
             else:
                 body += f'<a class="next-chapter" href="{chapter + 1}">下一章</a>'
+        elif path == '/validation/list':
+            mime = 'application/json; charset=utf-8'
+            query = parse_qs(urlsplit(self.path).query)
+            origin = query.get('origin', ['sample'])[0]
+            target = query.get('target', ['/validation/book/' + origin])[0]
+            body = json.dumps({'data': [{'name': origin, 'url': target}]})
+        elif path.startswith('/validation/book/'):
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'toc': '/validation/toc'})
+        elif path == '/validation/toc':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'chapters': [{'name': '原创样例首章', 'url': '/json/chapter'}]}, ensure_ascii=False)
+        elif path in ('/validation/detail', '/validation/no-toc'):
+            mime = 'application/json; charset=utf-8'
+            entries = [{'name': '原创样例首章', 'url': '/json/chapter'}] if path.endswith('/detail') else []
+            body = json.dumps({'name': '详情直达样本', 'chapters': entries}, ensure_ascii=False)
+        elif path == '/validation/order':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'data': [{'name': '不可读推荐', 'url': '/denied'},
+                                        {'name': '可读样本', 'url': '/json/book'}]}, ensure_ascii=False)
+        elif path == '/validation/volumes':
+            mime = 'application/json; charset=utf-8'
+            body = json.dumps({'chapters': [{'name': '第一卷', 'url': '第一卷', 'volume': True},
+                                            {'name': '有正文的卷', 'url': '/json/chapter', 'volume': True}]}, ensure_ascii=False)
+        elif path == '/validation/media.mpd':
+            status, body = 403, 'synthetic unavailable media manifest'
         elif path == '/json/noresults':
             mime, body = 'application/json; charset=utf-8', '{"data":[]}'
         elif path == '/json/file-search':

@@ -881,7 +881,7 @@ final class SourceEngineTests: XCTestCase {
     func testValidationChecksReadingChainAndDistinguishesNoResults() async {
         let passed = await SourceValidation.run(SourceTestFixtures.html(), keyword: "不存在")
         XCTAssertEqual(passed.status, .passed, passed.summary)
-        XCTAssertEqual(passed.steps.map(\.stage), ["搜索", "发现", "详情", "目录", "正文"])
+        XCTAssertEqual(passed.steps.map(\.stage), ["搜索", "详情", "目录", "正文", "发现", "发现详情", "发现目录", "发现正文"])
         var source = SourceTestFixtures.html(); source.searchUrl = "/denied"; source.exploreUrl = ""
         let failed = await SourceValidation.run(source, keyword: "测试")
         XCTAssertEqual(failed.status, .failed)
@@ -900,7 +900,8 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertTrue(incompatible.searchableText.contains("脚本兼容性"))
         XCTAssertTrue(incompatible.steps.contains { $0.stage == "搜索" && $0.passed })
         source = SourceTestFixtures.json(); source.exploreUrl = "旧分类::/denied"; source.enabledExplore = false
-        let searchOnly = await SourceValidation.run(source, keyword: "测试")
+        var enabledDiscoveryOnly = SourceValidationOptions(); enabledDiscoveryOnly.disabledDiscovery = false
+        let searchOnly = await SourceValidation.run(source, keyword: "测试", options: enabledDiscoveryOnly)
         XCTAssertEqual(searchOnly.status, .passed, searchOnly.summary)
         XCTAssertEqual(searchOnly.steps.map(\.stage), ["搜索", "详情", "目录", "正文"])
         source.enabledExplore = true

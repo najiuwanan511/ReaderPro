@@ -34,6 +34,7 @@ jobs:
             -only-testing:ReaderProTests/RuleManagementParityTests \
             -only-testing:ReaderProTests/SourceHeaderCompatibilityTests \
             -only-testing:ReaderProTests/SourceEngineTests \
+            -only-testing:ReaderProTests/SourceValidationParityTests \
             -only-testing:ReaderProTests/SourceRuleObjectTests \
             -only-testing:ReaderProTests/DiscoveryPaginationTests \
             -only-testing:ReaderProTests/JSImportAndResponseTests \

@@ -87,6 +87,7 @@ jobs:
             -only-testing:ReaderProTests/MediaCacheTests \
             -only-testing:ReaderProTests/RuleManagementParityTests \
             -only-testing:ReaderProTests/SourceEngineTests \
+            -only-testing:ReaderProTests/SourceValidationParityTests \
             -skip-testing:ReaderProTests/SourceEngineTests/testOriginalLargeLibrariesSkipJavaCallTokenization \
             -skip-testing:ReaderProTests/SourceEngineTests/testUserProvidedPackImportsEverySourceWithoutLosingRules \
             -skip-testing:ReaderProUITests/SourceFlowUITests/testSearchWithRealUserPackCanBeCancelled \

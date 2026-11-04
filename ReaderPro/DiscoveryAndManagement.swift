@@ -169,7 +169,7 @@ struct SourceManagementView: View {
                 Form {
                     Section("测试关键词") {
                         TextField("书名或作者", text: $checkKeyword)
-                        Text("书源自带 checkKeyWord 时优先使用；没有结果记为未完整验证，不直接判死源。").font(.caption)
+                        Text("优先使用书源自带的有效 checkKeyWord；包含 http、::、++、-- 或只有空白时，按安卓规则使用这里的关键词。没有结果记为未完整验证。").font(.caption)
                     }
                     Section("校验项目") {
                         NavigationLink("搜索与校验并发") { SourceConcurrencySettingsView() }
@@ -180,16 +180,16 @@ struct SourceManagementView: View {
                         Toggle("详情", isOn: $checkOptions.info)
                         Toggle("目录", isOn: $checkOptions.catalog).disabled(!checkOptions.info)
                         Toggle("正文", isOn: $checkOptions.content).disabled(!checkOptions.info || !checkOptions.catalog)
-                        Toggle("确认音视频可播放", isOn: $checkOptions.mediaPlayback).disabled(!checkOptions.info || !checkOptions.catalog || !checkOptions.content)
+                        Toggle("额外实测媒体播放和图片响应", isOn: $checkOptions.mediaPlayback).disabled(!checkOptions.info || !checkOptions.catalog || !checkOptions.content)
                         Button("使用安卓阅读的规则校验项目") {
-                            checkOptions = SourceValidationOptions(); checkOptions.mediaPlayback = false; checkOptions.disabledDiscovery = true
+                            checkOptions = SourceValidationOptions()
                         }
-                        Text("关闭媒体播放确认时，只检查规则能否返回播放地址；该模式的成功不等于已验证播放器。关闭详情后不检查目录和正文；关闭目录后不检查正文。文件书源检查下载地址，不要求在线章节目录。")
+                        Text("默认采用安卓阅读的规则校验范围：媒体检查规则返回地址，漫画检查图片地址列表。可额外开启播放和图片响应实测；未开启时，成功不代表已验证播放或图片下载。关闭详情后不检查目录和正文；关闭目录后不检查正文。文件书源检查下载地址，不要求在线章节目录。")
                             .font(.caption).foregroundStyle(.secondary)
                     }.disabled(checking)
                     Section("成功标准") {
-                        Text("按所选项目检查搜索、发现首个有效分类，以及各自样本书的详情、目录分页和首章正文。搜索和发现是不同书时分别验证阅读链路；全部所选项目通过才记成功。部分功能可用、没有结果、取消或脚本不兼容，记为未完整验证；全部入口请求失败才记失败。")
-                        Text("漫画检查首章图片地址和首张图片响应。音频和原生视频检查首章媒体能否由播放器读取；网页视频仅解析成功仍记为未完整验证。支持 HTTP 与 WebView 规则；登录、验证码或脚本错误会显示具体阶段与原因。失败代表本次检查失败，不能据此认定书源永久失效，也不会自动停用书源。")
+                        Text("先检查搜索及其样本阅读链路，再检查发现及其样本阅读链路。即使两入口返回同一本书，也各自验证。入口已解析详情和目录地址时复用结果；其余样本读取详情、目录分页和首章正文。全部所选项目通过才记成功。部分功能可用、没有结果、取消或脚本不兼容，记为未完整验证；全部入口请求失败才记失败。")
+                        Text("开启额外实测后，漫画下载并解码首张图片，音频和原生视频交由系统播放器确认；网页视频仅解析成功仍记为未完整验证。支持 HTTP 与 WebView 规则；登录、验证码或脚本错误会显示具体阶段与原因。失败代表本次检查失败，不能据此认定书源永久失效，也不会自动停用书源。")
                     }
                     Section("结果范围") {
                         Text("封面或简介脚本失败会记录为附加信息警告，不会丢弃可阅读的书籍；成功仍以搜索、详情、目录和正文的抽样阅读链路为准。")

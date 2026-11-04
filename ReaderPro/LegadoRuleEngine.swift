@@ -1389,11 +1389,33 @@ extension LegadoSource {
         return value
     }
 
-    func parseBooks(_ response: SourcePage, rule: RuleSet, stage: String) throws -> [SourceBook] {
-        guard !rule.name.isEmpty, !rule.bookUrl.isEmpty else {
-            throw SourceFailure(stage: stage, message: "缺少书名或详情地址规则", url: response.url)
+    func parseBooks(_ response: SourcePage, rule: RuleSet, stage: String, isSearch: Bool = true) throws -> [SourceBook] {
+        // BookList handles a search response that is already a detail page,
+        // either via bookUrlPattern or its empty-list fallback. Only the
+        // configured detail rules may recognize a book; navigation links do not.
+        func detailBook() throws -> [SourceBook] {
+            guard !ruleBookInfo.name.isEmpty else { return [] }
+            let sample = SourceBook(title: "", url: response.url, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
+            return try LegadoJSCtx.$book.withValue(.init(bookUrl: sample.url)) {
+                let detail = try parseBookInfo(response, book: sample)
+                return detail.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : [detail]
+            }
         }
-        let blocks = rule.bookList.isEmpty ? [response.text] : ruleItems(response.text, rule: rule.bookList, base: response.url)
+        if isSearch && !bookUrlPattern.isEmpty {
+            let expression = try NSRegularExpression(pattern: bookUrlPattern)
+            let range = NSRange(response.url.startIndex..., in: response.url)
+            if expression.firstMatch(in: response.url, range: range)?.range == range { return try detailBook() }
+        }
+        var listRule = rule.bookList
+        let reverse = listRule.hasPrefix("-")
+        if reverse { listRule.removeFirst() }
+        if listRule.hasPrefix("+") { listRule.removeFirst() }
+        let blocks = listRule.isEmpty ? [response.text] : ruleItems(response.text, rule: listRule, base: response.url)
+        try LegadoJSCtx.failures?.check()
+        if blocks.isEmpty && bookUrlPattern.isEmpty { return try detailBook() }
+        guard !rule.name.isEmpty else {
+            throw SourceFailure(stage: stage, message: "缺少书名规则", url: response.url)
+        }
         var seen = Set<String>()
         let books = try blocks.compactMap { block -> SourceBook? in
             try Task.checkCancellation()
@@ -1407,8 +1429,9 @@ extension LegadoSource {
             var warnings: [String] = []
             let intro = try optionalMetadata(block, rule: rule.intro, base: response.url, field: "搜索简介", warnings: &warnings)
             let cover = try optionalMetadata(block, rule: rule.coverUrl, base: response.url, field: "搜索封面", warnings: &warnings)
-            let address = resolveUrl(applyRuleFirst(block, rule.bookUrl, base: response.url), base: response.url)
+            let rawAddress = applyRuleFirst(block, rule.bookUrl, base: response.url)
             try LegadoJSCtx.failures?.check()
+            let address = rawAddress.isEmpty ? response.url : resolveUrl(rawAddress, base: response.url)
             guard isSourceURL(address), seen.insert(address).inserted else { return nil }
             var book = SourceBook(title: name, url: address, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
             book.author = author
@@ -1418,7 +1441,7 @@ extension LegadoSource {
             return book
         }
         try LegadoJSCtx.failures?.check()
-        return books
+        return reverse ? Array(books.reversed()) : books
     }
 
     func search(key: String, page: Int = 1) async throws -> [SourceBook] {
@@ -1445,8 +1468,8 @@ extension LegadoSource {
                 throw SourceFailure(stage: "发现分类", message: "此分类是标题或交互控件，没有书籍列表地址")
             }
             let response = try await loadPage(category.url, page: max(1, page), stage: "发现分类「\(category.title)」")
-            let rule = effectiveDiscoverRule.bookList.isEmpty && effectiveDiscoverRule.name.isEmpty ? ruleSearch : effectiveDiscoverRule
-            let books = try parseBooks(response, rule: rule, stage: "发现列表")
+            let rule = effectiveDiscoverRule.bookList.isEmpty ? ruleSearch : effectiveDiscoverRule
+            let books = try parseBooks(response, rule: rule, stage: "发现列表", isSearch: false)
             guard page > 1 || !books.isEmpty else {
                 throw SourceFailure(stage: "发现列表", message: "页面已返回，但书籍规则未匹配到有效书名和地址（也可能是验证码或登录页）", url: response.url)
             }
@@ -1459,6 +1482,9 @@ extension LegadoSource {
     }
     private func fetchBookInfoImpl(book: SourceBook) async throws -> SourceBook {
         let response = try await loadPage(book.url, stage: "书籍详情")
+        return try parseBookInfo(response, book: book)
+    }
+    private func parseBookInfo(_ response: SourcePage, book: SourceBook) throws -> SourceBook {
         let text = ruleBookInfo.initRule.isEmpty ? response.text : applyRule(response.text, ruleBookInfo.initRule, base: response.url).joined(separator: "\n")
         var book = book
         if SourceHTTP.options(book.url).options.isEmpty { book.url = response.url }
@@ -1475,9 +1501,12 @@ extension LegadoSource {
         if !cover.isEmpty { book.cover = resolveUrl(cover, base: response.url) }
         if !intro.isEmpty { book.intro = intro }
         if !fields.tocUrl.isEmpty {
-            let toc = resolveUrl(applyRuleFirst(text, fields.tocUrl, base: response.url), base: response.url)
+            let value = applyRuleFirst(text, fields.tocUrl, base: response.url)
             try LegadoJSCtx.failures?.check()
-            guard isSourceURL(toc) else { throw SourceFailure(stage: "目录入口", message: "详情页目录地址规则未匹配", url: response.url) }
+            // A missing TOC link means the directory is on this detail page,
+            // matching BookInfo; fetchChapters must still parse real chapters.
+            let toc = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? book.url : resolveUrl(value, base: response.url)
+            guard isSourceURL(toc) else { throw SourceFailure(stage: "目录入口", message: "详情页目录地址无效", url: response.url) }
             book.tocUrl = toc
         } else { book.tocUrl = SourceHTTP.options(book.url).options.isEmpty ? response.url : book.url }
         return book
@@ -1511,7 +1540,8 @@ extension LegadoSource {
                 let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
                 let volume = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVolume") ?? "", base: response.url))
                 let rawAddress = applyRuleFirst(item, ruleToc.chapterUrl, base: response.url)
-                let address = rawAddress.isEmpty && volume ? "" : resolveUrl(rawAddress, base: response.url)
+                let heading = volume && (rawAddress.isEmpty || rawAddress.hasPrefix(name))
+                let address = heading ? "" : resolveUrl(rawAddress, base: response.url)
                 guard !name.isEmpty, volume || isSourceURL(address) else { continue }
                 matched += 1
                 let identity = volume ? "volume:\(response.url):\(matched):\(name)" : address

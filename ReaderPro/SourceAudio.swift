@@ -14,7 +14,7 @@ extension LegadoSource {
         return value
     }
 
-    func fetchChapterAudio(_ chapter: BookChapter) async throws -> SourceAudioResource {
+    func fetchChapterAudio(_ chapter: BookChapter, resolvePlayback: Bool = true) async throws -> SourceAudioResource {
         try await withChapterRules(chapter) {
             let initial = chapter.url ?? videoURLFromChapter(chapter.text)
             let ext = URL(string: SourceHTTP.options(initial).url)?.pathExtension.lowercased() ?? ""
@@ -31,7 +31,11 @@ extension LegadoSource {
             if value.contains("<audio") {
                 value = (cssExtractAll(value, "audio@src") + cssExtractAll(value, "audio source@src")).first ?? ""
             }
-            let resource = try await SourceVideoResource.make(value, base: response.url, headers: requestHeaders).resolvedForPlayback()
+            let extracted = try SourceVideoResource.make(value, base: response.url, headers: requestHeaders)
+            // Android's rule check stops at extraction. In particular it does
+            // not fetch/convert DASH manifests or require optional lyrics.
+            if !resolvePlayback { return SourceAudioResource(request: extracted.request) }
+            let resource = try await extracted.resolvedForPlayback()
             guard case .native(let request) = resource else {
                 throw SourceFailure(stage: "音频解析", message: "音频规则需要返回音频地址，当前返回了网页", url: response.url)
             }
