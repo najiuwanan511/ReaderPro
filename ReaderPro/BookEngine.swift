@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 // MARK: - Models
 
 struct BookChapter: Identifiable, Codable, Equatable, Hashable {
+    // Like Android's transient tocHtml: never serialize a fetched source page.
+    var rulePage: SourcePage? = nil
     var id: String
     var title: String
     var text: String
@@ -155,6 +157,7 @@ struct LocalBook: Identifiable, Codable, Equatable, Hashable {
 }
 
 struct SourceBook: Identifiable, Codable, Equatable, Hashable {
+    var rulePage: SourcePage? = nil
     var ruleWarnings: [String]? = nil
     var tocUrl: String? = nil
     var id: String = UUID().uuidString
@@ -165,6 +168,9 @@ struct SourceBook: Identifiable, Codable, Equatable, Hashable {
     var intro: String = ""
     var sourceName: String = ""
     var sourceUrl: String = ""
+    enum CodingKeys: String, CodingKey {
+        case ruleWarnings, tocUrl, id, title, author, url, cover, intro, sourceName, sourceUrl
+    }
 }
 
 // MARK: - Pure Swift DEFLATE inflater (ZIP entries use raw deflate)

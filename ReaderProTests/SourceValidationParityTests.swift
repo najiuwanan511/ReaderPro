@@ -131,6 +131,51 @@ final class SourceValidationParityTests: XCTestCase {
         }
     }
 
+    func testOneUseResponseIsReusedForDetailDirectoryAndContent() async {
+        for list in ["0", "1"] {
+            var source = SourceTestFixtures.json()
+            source.searchUrl = "/validation/one-shot?token=" + UUID().uuidString + "&list=" + list
+            source.ruleBookInfo.tocUrl = "$.absentLink"
+            let report = await SourceValidation.run(source, keyword: "测试")
+            XCTAssertEqual(report.status, .passed, report.searchableText)
+            XCTAssertTrue(report.steps.contains { $0.stage == "正文" && $0.detail.contains("同页首章") && $0.passed })
+        }
+    }
+
+    func testSamePageReadingAlsoReusesResponsesAndNeverPersistsPageCache() async throws {
+        var source = SourceTestFixtures.json()
+        source.searchUrl = "/validation/one-shot?token=" + UUID().uuidString + "&list=1"
+        source.ruleBookInfo.tocUrl = "$.absentLink"
+        let books = try await source.search(key: "测试")
+        let info = try await source.fetchBookInfo(book: XCTUnwrap(books.first))
+        let chapters = try await source.fetchChapters(book: info)
+        let chapter = try XCTUnwrap(chapters.first)
+        let text = try await source.fetchChapterContent(chapter)
+        XCTAssertEqual(text, "原创同页首章正文")
+        XCTAssertNotNil(info.rulePage)
+        XCTAssertNotNil(chapter.rulePage)
+        let bookData = try JSONEncoder().encode(info), chapterData = try JSONEncoder().encode(chapter)
+        XCTAssertFalse(String(decoding: bookData, as: UTF8.self).contains("原创同页首章正文"))
+        XCTAssertFalse(String(decoding: chapterData, as: UTF8.self).contains("原创同页首章正文"))
+        let restoredBook = try JSONDecoder().decode(SourceBook.self, from: bookData)
+        let restoredChapter = try JSONDecoder().decode(BookChapter.self, from: chapterData)
+        XCTAssertNil(restoredBook.rulePage)
+        XCTAssertNil(restoredChapter.rulePage)
+        var uncachedBook = info; uncachedBook.rulePage = nil
+        var uncachedChapter = chapter; uncachedChapter.rulePage = nil
+        XCTAssertEqual(restoredBook, uncachedBook)
+        XCTAssertEqual(restoredChapter, uncachedChapter)
+    }
+
+    func testOneUseFileDetailReturnsDownloadAddressWithoutRefetching() async throws {
+        var source = SourceTestFixtures.json(); source.bookSourceType = 3
+        source.searchUrl = "/validation/one-shot?token=" + UUID().uuidString + "&list=1"
+        source.ruleBookInfo = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"name":"$.name","downloadUrls":"$.file"}"#.utf8))
+        let report = await SourceValidation.run(source, keyword: "测试")
+        XCTAssertEqual(report.status, .passed, report.searchableText)
+        XCTAssertTrue(report.steps.contains { $0.stage == "文件地址" && $0.passed && $0.detail.contains("1 个") })
+    }
+
     func testListOrderPrefixesSelectTheSameFirstSampleAsAndroid() async {
         for prefix in ["-", "-+", "+"] {
             var source = SourceTestFixtures.json()

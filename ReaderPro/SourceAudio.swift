@@ -22,7 +22,9 @@ extension LegadoSource {
             let response: SourcePage
             if direct || ruleContent.content.isEmpty { response = SourcePage(text: "", url: initial) }
             else {
-                let loaded = try await loadPage(initial, stage: "音频章节")
+                let loaded: SourcePage
+                if let cached = chapter.rulePage, cached.url == SourceHTTP.options(initial).url { loaded = cached }
+                else { loaded = try await loadPage(initial, stage: "音频章节") }
                 response = try await chapterWebPage(loaded)
             }
             var value = ruleContent.content.isEmpty ? initial : applyContentRule(response.text, ruleContent.content, base: response.url).joined(separator: "\n")

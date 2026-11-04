@@ -97,7 +97,9 @@ extension LegadoSource {
             guard let rule = ruleBookInfo.androidValue("downloadUrls"), !rule.isEmpty else {
                 return [book.url]
             }
-            let response = try await loadPage(book.url, stage: "文件下载地址")
+            let response: SourcePage
+            if let cached = book.rulePage, cached.url == SourceHTTP.options(book.url).url { response = cached }
+            else { response = try await loadPage(book.url, stage: "文件下载地址") }
             var input = response.text
             if !ruleBookInfo.initRule.isEmpty { input = applyRuleFirst(input, ruleBookInfo.initRule, base: response.url) }
             let addresses = ruleItems(input, rule: rule, base: response.url).map { resolveUrl($0, base: response.url) }.filter { !$0.isEmpty }

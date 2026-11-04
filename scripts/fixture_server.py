@@ -20,6 +20,8 @@ from pathlib import Path
 # Count the list-script's synchronous detail requests per test invocation.
 bridge_stress_lock = threading.Lock()
 bridge_stress_counts = {}
+validation_page_lock = threading.Lock()
+validation_page_counts = {}
 remote_library_files = {'/remote-library/Book.txt': '第一章 开始\n远程书库正文'.encode('utf-8')}
 
 class SocksFixture(socketserver.BaseRequestHandler):
@@ -568,6 +570,19 @@ class Handler(BaseHTTPRequestHandler):
                 body += f'<a class="next" href="{chapter}?page={page + 1}">下一页</a>'
             else:
                 body += f'<a class="next-chapter" href="{chapter + 1}">下一章</a>'
+        elif path == '/validation/one-shot':
+            mime = 'application/json; charset=utf-8'
+            with validation_page_lock:
+                validation_page_counts[self.path] = validation_page_counts.get(self.path, 0) + 1
+                count = validation_page_counts[self.path]
+            if count > 1:
+                status, body = 403, 'one-use page token already consumed'
+            else:
+                values = {'name': '同页原创样本', 'text': '原创同页首章正文', 'file': '/parity/file.txt',
+                          'chapters': [{'name': '同页首章', 'url': self.path}]}
+                if parse_qs(urlsplit(self.path).query).get('list') == ['1']:
+                    values['data'] = [{'name': values['name'], 'url': self.path}]
+                body = json.dumps(values, ensure_ascii=False)
         elif path == '/validation/list':
             mime = 'application/json; charset=utf-8'
             query = parse_qs(urlsplit(self.path).query)

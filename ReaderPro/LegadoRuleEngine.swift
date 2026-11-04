@@ -1434,6 +1434,7 @@ extension LegadoSource {
             let address = rawAddress.isEmpty ? response.url : resolveUrl(rawAddress, base: response.url)
             guard isSourceURL(address), seen.insert(address).inserted else { return nil }
             var book = SourceBook(title: name, url: address, sourceName: bookSourceName, sourceUrl: bookSourceUrl)
+            if SourceHTTP.options(address).url == response.url { book.rulePage = response }
             book.author = author
             book.cover = resolveUrl(cover, base: response.url)
             book.intro = intro
@@ -1481,13 +1482,16 @@ extension LegadoSource {
         try await withRules(key: book.title, book: book) { try await fetchBookInfoImpl(book: book) }
     }
     private func fetchBookInfoImpl(book: SourceBook) async throws -> SourceBook {
-        let response = try await loadPage(book.url, stage: "书籍详情")
+        let response: SourcePage
+        if let cached = book.rulePage, cached.url == SourceHTTP.options(book.url).url { response = cached }
+        else { response = try await loadPage(book.url, stage: "书籍详情") }
         return try parseBookInfo(response, book: book)
     }
     private func parseBookInfo(_ response: SourcePage, book: SourceBook) throws -> SourceBook {
         let text = ruleBookInfo.initRule.isEmpty ? response.text : applyRule(response.text, ruleBookInfo.initRule, base: response.url).joined(separator: "\n")
         var book = book
         if SourceHTTP.options(book.url).options.isEmpty { book.url = response.url }
+        book.rulePage = response
         let fields = ruleBookInfo
         let name = applyRuleFirst(text, fields.name, base: response.url)
         let author = applyRuleFirst(text, fields.author, base: response.url)
@@ -1531,7 +1535,9 @@ extension LegadoSource {
             guard !next.isEmpty, visited.insert(next).inserted else { continue }
             guard pageCount < 1000 else { throw SourceFailure(stage: "目录分页", message: "超过 1000 页保护限制，未保存不完整目录", url: next) }
             pageCount += 1
-            let response = try await loadPage(next, stage: "目录第 \(pageCount) 页")
+            let response: SourcePage
+            if pageCount == 1, let cached = detailed.rulePage, cached.url == SourceHTTP.options(next).url { response = cached }
+            else { response = try await loadPage(next, stage: "目录第 \(pageCount) 页") }
             visited.insert(response.url)
             var listRule = ruleToc.chapterList.hasPrefix("-") ? String(ruleToc.chapterList.dropFirst()) : ruleToc.chapterList
             if listRule.hasPrefix("+") { listRule.removeFirst() }
@@ -1548,6 +1554,7 @@ extension LegadoSource {
                 let identity = volume ? "volume:\(response.url):\(matched):\(name)" : address
                 if seen.insert(identity).inserted {
                     var chapter = BookChapter(id: identity, title: name, text: volume ? "" : "__URL__" + address, url: volume && address.isEmpty ? nil : address)
+                    if SourceHTTP.options(address).url == response.url { chapter.rulePage = response }
                     chapter.isVolume = volume
                     chapter.isVip = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVip") ?? "", base: response.url))
                     chapter.isPay = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isPay") ?? "", base: response.url))
@@ -1583,7 +1590,10 @@ extension LegadoSource {
                 guard loadedPages < 100 else { throw SourceFailure(stage: "正文分页", message: "超过 100 页保护限制，未缓存不完整正文", url: next) }
                 loadedPages += 1
                 let response: SourcePage
-                do { response = try await loadPage(next, stage: "正文第 \(visited.count) 页") }
+                do {
+                    if loadedPages == 1, let cached = chapter.rulePage, cached.url == SourceHTTP.options(next).url { response = cached }
+                    else { response = try await loadPage(next, stage: "正文第 \(visited.count) 页") }
+                }
                 catch let failure as SourceFailure {
                     // Some API sources use a chapter ID as the URL and fetch
                     // the real endpoint inside their complete JS content rule.
@@ -1623,7 +1633,9 @@ extension LegadoSource {
                 guard visited.insert(next).inserted else { continue }
                 guard loadedPages < 100 else { throw SourceFailure(stage: "漫画分页", message: "超过 100 页保护限制", url: next) }
                 loadedPages += 1
-                let loaded = try await loadPage(next, stage: "漫画正文")
+                let loaded: SourcePage
+                if loadedPages == 1, let cached = chapter.rulePage, cached.url == SourceHTTP.options(next).url { loaded = cached }
+                else { loaded = try await loadPage(next, stage: "漫画正文") }
                 let response = try await chapterWebPage(loaded)
                 if response.url != SourceHTTP.options(next).url, !visited.insert(response.url).inserted { continue }
                 let rule = ruleContent.imageUrl.isEmpty ? ruleContent.content : ruleContent.imageUrl

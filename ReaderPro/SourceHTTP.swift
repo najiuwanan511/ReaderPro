@@ -29,7 +29,7 @@ func sourceErrorMessage(_ error: Error) -> String {
     }
 }
 
-struct SourcePage {
+struct SourcePage: Hashable {
     let text: String
     let url: String
     var status: Int = 200

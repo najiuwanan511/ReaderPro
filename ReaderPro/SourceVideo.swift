@@ -95,7 +95,10 @@ extension LegadoSource {
                     // such as the pack's `result = baseUrl`.
                     response = SourcePage(text: "", url: SourceHTTP.options(initial).url)
                 } else {
-                    do { response = try await loadPage(initial, stage: "视频章节") }
+                    do {
+                        if let cached = chapter.rulePage, cached.url == SourceHTTP.options(initial).url { response = cached }
+                        else { response = try await loadPage(initial, stage: "视频章节") }
+                    }
                     catch let failure as SourceFailure {
                         guard failure.message.hasPrefix("HTTP "), SourceScript.loadsOwnContent(ruleContent.content) else { throw failure }
                         response = SourcePage(text: "", url: SourceHTTP.options(initial).url)
