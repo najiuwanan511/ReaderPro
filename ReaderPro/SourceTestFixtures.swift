@@ -231,7 +231,7 @@ struct SourceFixtureRoot: View {
             }
             if ProcessInfo.processInfo.arguments.contains("--theme-link-ui-fixture") {
                 var link = URLComponents(string: "legado://import/theme")!
-                link.queryItems = [URLQueryItem(name: "src", value: #"{"themeName":"主题导入样例","isNightTheme":false,"primaryColor":"#3949AB","accentColor":"#00897B","backgroundColor":"#F4F1E8","bottomBackground":"#E8E2D3","transparentNavBar":false,"backgroundImgPath":null,"backgroundImgBlur":0}"#)]
+                link.queryItems = [URLQueryItem(name: "src", value: ##"{"themeName":"主题导入样例","isNightTheme":false,"primaryColor":"#3949AB","accentColor":"#00897B","backgroundColor":"#F4F1E8","bottomBackground":"#E8E2D3","transparentNavBar":false,"backgroundImgPath":null,"backgroundImgBlur":0}"##)]
                 source.exploreUrl = "[{\"title\":\"导入主题\",\"type\":\"button\",\"action\":" + sourceJSONString("java.openUrl(" + sourceJSONString(link.url!.absoluteString) + ")") + "}]"
             }
             if ProcessInfo.processInfo.arguments.contains("--duplicate-category-fixture") {

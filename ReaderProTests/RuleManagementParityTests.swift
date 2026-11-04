@@ -28,7 +28,7 @@ final class RuleManagementParityTests: XCTestCase {
     }
 
     @MainActor func testAndroidThemePreviewMergeSelectionAndReloadAreSeparate() async throws {
-        let raw = #"{"themeName":"纸色","isNightTheme":false,"primaryColor":"#FF102030","accentColor":"#FF405060","backgroundColor":"#FFF5F1E8","bottomBackground":"#FFE0D0C0","transparentNavBar":true,"backgroundImgPath":null,"backgroundImgBlur":0}"#
+        let raw = ##"{"themeName":"纸色","isNightTheme":false,"primaryColor":"#FF102030","accentColor":"#FF405060","backgroundColor":"#FFF5F1E8","bottomBackground":"#FFE0D0C0","transparentNavBar":true,"backgroundImgPath":null,"backgroundImgBlur":0}"##
         let suite = "ReaderPro.ThemeTest." + UUID().uuidString
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -62,7 +62,7 @@ final class RuleManagementParityTests: XCTestCase {
         XCTAssertEqual(red, 17.0 / 255, accuracy: 0.0001); XCTAssertEqual(alpha, 128.0 / 255, accuracy: 0.0001)
         XCTAssertNotNil(LegadoTheme.color("white")); XCTAssertNil(LegadoTheme.color("#xyz"))
         XCTAssertThrowsError(try LegadoTheme.decode(Data("[]".utf8)))
-        XCTAssertThrowsError(try LegadoTheme.decode(Data(#"{"themeName":"错误","accentColor":"#123456"}"#.utf8)))
+        XCTAssertThrowsError(try LegadoTheme.decode(Data(##"{"themeName":"错误","accentColor":"#123456"}"##.utf8)))
     }
 
     func testAppLinkImportPreviewKeepsRequestedSourceType() throws {
