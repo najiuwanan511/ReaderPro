@@ -694,6 +694,7 @@ struct CurlPageController: UIViewControllerRepresentable {
     var onEdgeTap: (Bool) -> Void
     var onCenterTap: () -> Void = {}
     var onTapPoint: ((CGPoint, CGSize) -> Void)? = nil
+    var pageTurnAtPoint: ((CGPoint, CGSize) -> Bool?)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -707,6 +708,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         vc.delegate = context.coordinator
         vc.view.backgroundColor = background
         vc.isDoubleSided = false
+        context.coordinator.controller = vc
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.readerTapped(_:)))
         tap.cancelsTouchesInView = false
         tap.delegate = context.coordinator
@@ -741,6 +743,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         private var finishing = false
         private var needsRefresh = false
         var isActive = true
+        weak var controller: UIPageViewController?
         init(_ p: CurlPageController) {
             parent = p
             displayed = p
@@ -749,6 +752,10 @@ struct CurlPageController: UIViewControllerRepresentable {
         @objc func readerTapped(_ tap: UITapGestureRecognizer) {
             guard tap.state == .ended, let view = tap.view, view.bounds.width > 0 else { return }
             guard !ReaderSelectionDelegate.shared.hasSelection else { return }
+            if let forward = parent.pageTurnAtPoint?(tap.location(in: view), view.bounds.size), let controller {
+                turnPage(forward: forward, in: controller)
+                return
+            }
             if let handler = parent.onTapPoint { handler(tap.location(in: view), view.bounds.size); return }
             let fraction = tap.location(in: view).x / view.bounds.width
             if fraction < 1.0 / 3.0 { parent.onEdgeTap(false) }
@@ -790,6 +797,7 @@ struct CurlPageController: UIViewControllerRepresentable {
         }
 
         func update(_ vc: UIPageViewController, parent: CurlPageController) {
+            controller = vc
             self.parent = parent
             needsRefresh = displayed.pages != parent.pages
                 || !displayed.attributed.isEqual(to: parent.attributed)
@@ -800,6 +808,23 @@ struct CurlPageController: UIViewControllerRepresentable {
                 || displayed.startIndex != parent.startIndex
             vc.view.backgroundColor = parent.background
             refreshIfNeeded(vc)
+        }
+
+        func turnPage(forward: Bool, in vc: UIPageViewController) {
+            guard isActive, !transitioning, !finishing, !needsRefresh,
+                  !ReaderSelectionDelegate.shared.hasSelection,
+                  let current = vc.viewControllers?.first as? PageHostController,
+                  displayed.pages.indices.contains(current.index),
+                  let next = pageVC(for: current.index + (forward ? 1 : -1)) else { return }
+            transitioning = true
+            trace("tap", index: next.index)
+            // Programmatic page-curl animations do not invoke the interactive
+            // delegate. Commit progress only from their completion, using the
+            // same deferred boundary handling as a completed native swipe.
+            vc.setViewControllers([next], direction: forward ? .forward : .reverse, animated: true) { [weak self, weak vc] completed in
+                guard let self, let vc else { return }
+                self.pageViewController(vc, didFinishAnimating: completed, previousViewControllers: [current], transitionCompleted: completed)
+            }
         }
 
         private func refreshIfNeeded(_ vc: UIPageViewController) {

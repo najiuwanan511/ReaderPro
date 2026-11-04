@@ -3,6 +3,85 @@ import UIKit
 @testable import ReaderPro
 
 final class ReaderPageControllerTests: XCTestCase {
+    @MainActor private final class RecordingPageController: UIPageViewController {
+        var animatedDirections: [UIPageViewController.NavigationDirection] = []
+        var completeTurn: ((Bool) -> Void)?
+
+        override func setViewControllers(_ viewControllers: [UIViewController]?, direction: UIPageViewController.NavigationDirection,
+                                         animated: Bool, completion: ((Bool) -> Void)? = nil) {
+            super.setViewControllers(viewControllers, direction: direction, animated: false)
+            if animated {
+                animatedDirections.append(direction)
+                completeTurn = completion
+            } else { completion?(true) }
+        }
+    }
+
+    @MainActor func testTapRequestsCurlAnimationAndCommitsOnceAfterCompletion() async {
+        var positions: [Int] = []
+        var parent = CurlPageController(
+            pages: [NSRange(location: 0, length: 1), NSRange(location: 1, length: 1)],
+            attributed: NSAttributedString(string: "甲乙"), pageSize: CGSize(width: 320, height: 600),
+            background: .white, startIndex: 0, hasPreviousChapter: false, hasNextChapter: false,
+            onPageChange: { positions.append($0) }, onChapterBoundary: { _ in }, onEdgeTap: { _ in })
+        let coordinator = parent.makeCoordinator()
+        let controller = RecordingPageController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        controller.setViewControllers([coordinator.pageVC(for: 0)!], direction: .forward, animated: false)
+        coordinator.turnPage(forward: true, in: controller)
+        coordinator.turnPage(forward: true, in: controller)
+        XCTAssertEqual(controller.animatedDirections, [.forward], "A rapid second tap must not start another turn")
+        XCTAssertTrue(positions.isEmpty, "Do not publish a page before the curl finishes")
+        controller.completeTurn?(true)
+        await nextMainTurn()
+        XCTAssertEqual(positions, [1])
+        parent.startIndex = 1
+        coordinator.update(controller, parent: parent)
+        coordinator.turnPage(forward: false, in: controller)
+        XCTAssertEqual(controller.animatedDirections, [.forward, .reverse])
+        controller.completeTurn?(true)
+        await nextMainTurn()
+        XCTAssertEqual(positions, [1, 0])
+    }
+
+    @MainActor func testTapAtChapterBoundaryAnimatesBeforeOpeningChapter() async {
+        var boundaries: [Bool] = []
+        let parent = model { boundaries.append($0) }
+        let coordinator = parent.makeCoordinator()
+        let controller = RecordingPageController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        controller.setViewControllers([coordinator.pageVC(for: 0)!], direction: .forward, animated: false)
+        coordinator.turnPage(forward: true, in: controller)
+        XCTAssertEqual(controller.animatedDirections, [.forward])
+        XCTAssertTrue(boundaries.isEmpty)
+        controller.completeTurn?(true)
+        await nextMainTurn()
+        XCTAssertEqual(boundaries, [true])
+        coordinator.turnPage(forward: true, in: controller)
+        XCTAssertEqual(boundaries, [true], "A boundary placeholder cannot turn again while the chapter loads")
+    }
+
+    @MainActor func testCancelledOrDismantledTapCannotPublishProgress() async {
+        var positions: [Int] = []
+        var boundaries: [Bool] = []
+        var parent = model { boundaries.append($0) }
+        parent.onPageChange = { positions.append($0) }
+        let coordinator = parent.makeCoordinator()
+        let controller = RecordingPageController(transitionStyle: .pageCurl, navigationOrientation: .horizontal)
+        let first = coordinator.pageVC(for: 0)!
+        controller.setViewControllers([first], direction: .forward, animated: false)
+        coordinator.turnPage(forward: true, in: controller)
+        controller.setViewControllers([first], direction: .reverse, animated: false)
+        controller.completeTurn?(false)
+        await nextMainTurn()
+        XCTAssertTrue(positions.isEmpty)
+        XCTAssertTrue(boundaries.isEmpty)
+        coordinator.turnPage(forward: false, in: controller)
+        CurlPageController.dismantleUIViewController(controller, coordinator: coordinator)
+        controller.completeTurn?(true)
+        await nextMainTurn()
+        XCTAssertTrue(positions.isEmpty)
+        XCTAssertTrue(boundaries.isEmpty)
+    }
+
     @MainActor private func model(_ text: String = "第一章", boundary: @escaping (Bool) -> Void = { _ in }) -> CurlPageController {
         CurlPageController(pages: [NSRange(location: 0, length: (text as NSString).length)],
                            attributed: NSAttributedString(string: text),

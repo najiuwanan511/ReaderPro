@@ -343,7 +343,14 @@ private final class ReaderScrollProgress {
                 onCenterTap: {
                     withAnimation(.easeInOut(duration: 0.15)) { showMenu.toggle() }
                 },
-                onTapPoint: { point, dimensions in handleTap(point, size: dimensions); jumpToken += 1 }
+                onTapPoint: { point, dimensions in handleTap(point, size: dimensions); jumpToken += 1 },
+                pageTurnAtPoint: animatedCurl ? { point, dimensions in
+                    switch ReaderInteraction.action(at: point, size: dimensions) {
+                    case .previous: return false
+                    case .next: return true
+                    default: return nil
+                    }
+                } : nil
             )
         }
         .frame(width: size.width, height: size.height)

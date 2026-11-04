@@ -36,6 +36,7 @@ jobs:
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
+            -only-testing:ReaderProTests/ReaderPageControllerTests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \

@@ -119,6 +119,34 @@ final class ReaderChapterPagingUITests: XCTestCase {
     func testNoAnimationSwipeAcrossChapterBoundaries() { exercisePagedMode(3) }
     func testCurlSwipeAcrossChapterBoundaries() { exercisePagedMode(4) }
 
+    func testCurlTapTurnsBothDirectionsThenSwipesAndCrossesChapters() {
+        let app = launch(mode: 4)
+        XCTAssertTrue(page(app, containing: "第一章分页内容").waitForExistence(timeout: 30))
+        let next = app.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5))
+        let previous = app.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5))
+        for _ in 0..<3 {
+            next.tap()
+            XCTAssertTrue(app.staticTexts["第 2 页"].waitForExistence(timeout: 10))
+            previous.tap()
+            XCTAssertTrue(app.staticTexts["第 1 页"].waitForExistence(timeout: 10))
+        }
+        app.swipeLeft()
+        XCTAssertTrue(app.staticTexts["第 2 页"].waitForExistence(timeout: 10))
+        previous.tap()
+        XCTAssertTrue(app.staticTexts["第 1 页"].waitForExistence(timeout: 10))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let slider = app.sliders["readerProgressSlider"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 10)); slider.adjust(toNormalizedSliderPosition: 1)
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 10))
+        next.tap()
+        XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
+        previous.tap()
+        XCTAssertTrue(page(app, containing: "第一章末尾标记").waitForExistence(timeout: 20))
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "仿真点按与滑动混合翻页及跨章"; shot.lifetime = .keepAlways; add(shot)
+    }
+
     func testCurlCanReverseDirectionRepeatedlyAcrossChapters() {
         let app = launch(mode: 4, startSecond: true)
         XCTAssertTrue(page(app, containing: "第二章正文标记").waitForExistence(timeout: 20))
