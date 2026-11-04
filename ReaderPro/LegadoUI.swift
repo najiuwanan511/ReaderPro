@@ -5,6 +5,7 @@ extension View {
         navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(AppTheme.surface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
+            .modifier(LegadoThemeNavigation())
     }
 }
 

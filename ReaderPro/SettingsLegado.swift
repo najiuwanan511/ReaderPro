@@ -155,7 +155,9 @@ struct ThemeSettingsView: View {
             } header: { SettingSectionHeader(title: "配色") }
         }
         .navigationTitle("主题设置")
-        .navigationBarTitleDisplayMode(.inline)
+        .readerNavigationStyle()
+        .scrollContentBackground(.hidden)
+        .background(LegadoThemeBackground())
         .confirmationDialog("主题模式", isPresented: $showThemeMode, titleVisibility: .visible) {
             Button("跟随系统") { themeMode = "system" }
             Button("浅色") { themeMode = "light" }

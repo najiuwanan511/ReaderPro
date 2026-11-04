@@ -166,5 +166,8 @@ struct LegadoThemeListView: View {
                 }
             }
         }.navigationTitle("导入主题").navigationBarTitleDisplayMode(.inline)
+            .readerNavigationStyle()
+            .scrollContentBackground(.hidden)
+            .background(LegadoThemeBackground())
     }
 }
