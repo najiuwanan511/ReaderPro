@@ -25,7 +25,11 @@ final class ParityFoundationTests: XCTestCase {
         let result = LegadoJSCtx.$failures.withValue(failures) {
             LegadoJS.run(#"""
             var c=java.getReadBookConfigMap(),t=java.getThemeConfigMap();
-            if(JSON.stringify(c)!==java.getReadBookConfig())throw Error('Map methods leaked into JSON');
+            var raw=JSON.parse(java.getReadBookConfig());
+            // Foundation and JavaScript may spell the same double differently
+            // (0.10000000000000001 vs 0.1). Compare decoded values and require
+            // every enumerable key to remain a configuration value.
+            if(JSON.stringify(c)!==JSON.stringify(raw)||Object.keys(c).some(function(k){return typeof c[k]==='function';}))throw Error('Map methods leaked into JSON');
             if(c.get('bgAlpha')!==100||c.get('bgType')!==0)throw Error('wrong Android background percentage');
             if(!t.get('isNightTheme')||!t.get('backgroundColor').startsWith('#'))throw Error('wrong theme');
             if(c.get('absent')!==null||c.containsKey('get')||c.keySet().size()!==c.size()||c.entrySet().size()!==c.size())throw Error('Map mismatch');
