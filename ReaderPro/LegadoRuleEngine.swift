@@ -1410,7 +1410,7 @@ extension LegadoSource {
         let reverse = listRule.hasPrefix("-")
         if reverse { listRule.removeFirst() }
         if listRule.hasPrefix("+") { listRule.removeFirst() }
-        let blocks = listRule.isEmpty ? [response.text] : ruleItems(response.text, rule: listRule, base: response.url)
+        let blocks = listRule.isEmpty ? [] : ruleItems(response.text, rule: listRule, base: response.url)
         try LegadoJSCtx.failures?.check()
         if blocks.isEmpty && bookUrlPattern.isEmpty { return try detailBook() }
         guard !rule.name.isEmpty else {
@@ -1559,12 +1559,12 @@ extension LegadoSource {
                 }
             }
             try LegadoJSCtx.failures?.check()
-            guard matched > 0 else { throw SourceFailure(stage: "目录解析", message: "章节规则没有匹配到有效章节，未使用导航链接冒充目录", url: response.url) }
             for value in applyRule(response.text, ruleToc.nextTocUrl, base: response.url) {
                 let address = resolveUrl(value, base: response.url)
                 if isSourceURL(address), !visited.contains(address), queued.insert(address).inserted { pending.append(address) }
             }
         }
+        guard !chapters.isEmpty else { throw SourceFailure(stage: "目录解析", message: "章节规则没有匹配到有效章节，未使用导航链接冒充目录", url: initial) }
         if ruleToc.chapterList.hasPrefix("-") { chapters.reverse() }
         for index in chapters.indices { chapters[index].ruleIndex = index }
         return try formattedChapterTitles(chapters, book: detailed)

@@ -580,6 +580,10 @@ class Handler(BaseHTTPRequestHandler):
         elif path == '/validation/toc':
             mime = 'application/json; charset=utf-8'
             body = json.dumps({'chapters': [{'name': '原创样例首章', 'url': '/json/chapter'}]}, ensure_ascii=False)
+        elif path in ('/validation/toc-index', '/validation/toc-empty-index'):
+            mime = 'application/json; charset=utf-8'
+            target = '/validation/toc' if path == '/validation/toc-index' else '/validation/no-toc'
+            body = json.dumps({'chapters': [], 'next': target})
         elif path in ('/validation/detail', '/validation/no-toc'):
             mime = 'application/json; charset=utf-8'
             entries = [{'name': '原创样例首章', 'url': '/json/chapter'}] if path.endswith('/detail') else []

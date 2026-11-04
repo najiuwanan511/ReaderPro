@@ -62,10 +62,12 @@ final class SourceValidationParityTests: XCTestCase {
     }
 
     func testSearchDetailPagePatternAndEmptyListFallbackReachRealContent() async throws {
-        for pattern in ["", NSRegularExpression.escapedPattern(for: base + "/validation/detail")] {
+        for (pattern, list) in [("", "$.data"), ("", ""), (NSRegularExpression.escapedPattern(for: base + "/validation/detail"), "$.data")] {
             var source = SourceTestFixtures.json()
             source.searchUrl = "/validation/detail"
             source.bookUrlPattern = pattern
+            source.ruleSearch.bookList = list
+            if list.isEmpty { source.ruleSearch.name = ""; source.ruleSearch.bookUrl = "" }
             source.ruleBookInfo.tocUrl = "$.absentLink"
             // Parse once while recognizing the detail response. The checker
             // must reuse it rather than execute a stateful init rule twice.
@@ -97,7 +99,7 @@ final class SourceValidationParityTests: XCTestCase {
     func testSingleBookListCanUseResponseURLWithoutASeparateBookURLRule() async {
         var source = SourceTestFixtures.json()
         source.searchUrl = "/validation/detail"
-        source.ruleSearch.bookList = ""; source.ruleSearch.bookUrl = ""
+        source.ruleSearch.bookList = "@js:[JSON.parse(result)]"; source.ruleSearch.bookUrl = ""
         source.ruleBookInfo.tocUrl = "$.absentLink"
         let report = await SourceValidation.run(source, keyword: "测试")
         XCTAssertEqual(report.status, .passed, report.searchableText)
@@ -111,6 +113,22 @@ final class SourceValidationParityTests: XCTestCase {
         let report = await SourceValidation.run(source, keyword: "测试")
         XCTAssertEqual(report.status, .passed, report.searchableText)
         XCTAssertTrue(report.steps.contains { $0.stage == "发现正文" && $0.passed })
+    }
+
+    func testDirectoryPaginationCanStartWithAnEmptyIndexButCannotPassEmptyChain() async {
+        for path in ["/validation/toc-index", "/validation/toc-empty-index"] {
+            var source = SourceTestFixtures.json()
+            source.ruleBookInfo.tocUrl = "@js:'" + base + path + "'"
+            source.ruleToc.nextTocUrl = "$.next"
+            let report = await SourceValidation.run(source, keyword: "测试")
+            if path == "/validation/toc-index" {
+                XCTAssertEqual(report.status, .passed, report.searchableText)
+                XCTAssertTrue(report.steps.contains { $0.stage == "正文" && $0.passed })
+            } else {
+                XCTAssertEqual(report.status, .partial)
+                XCTAssertTrue(report.steps.contains { $0.stage == "目录" && !$0.passed })
+            }
+        }
     }
 
     func testListOrderPrefixesSelectTheSameFirstSampleAsAndroid() async {
