@@ -125,16 +125,15 @@ struct LegadoThemeNavigation: ViewModifier {
     @Environment(\.colorScheme) private var scheme
     @ObservedObject private var library = LegadoThemeLibrary.shared
     func body(content: Content) -> some View {
-        if !UserDefaults.standard.bool(forKey: "ui.customColors"), let theme = LegadoTheme.selected(dark: scheme == .dark) {
-            content.toolbarBackground(Color(uiColor: LegadoTheme.color(theme.primaryColor) ?? .clear), for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbarColorScheme(theme.navigationColorScheme, for: .navigationBar)
-                .toolbarBackground(Color(uiColor: LegadoTheme.color(theme.bottomBackground) ?? .clear), for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
-        } else {
-            content.toolbarBackground(AppTheme.surface, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-        }
+        let theme = UserDefaults.standard.bool(forKey: "ui.customColors") ? nil : LegadoTheme.selected(dark: scheme == .dark)
+        // Changing a conditional branch around `content` destroys the ancestor
+        // NavigationLinks and pops the settings stack when a theme is applied.
+        // Keep the content identity and update only toolbar preferences.
+        content.toolbarBackground(theme.flatMap { LegadoTheme.color($0.primaryColor) }.map { Color(uiColor: $0) } ?? AppTheme.surface, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(theme?.navigationColorScheme, for: .navigationBar)
+            .toolbarBackground(theme.flatMap { LegadoTheme.color($0.bottomBackground) }.map { Color(uiColor: $0) } ?? AppTheme.surface, for: .tabBar)
+            .toolbarBackground(theme == nil ? .automatic : .visible, for: .tabBar)
     }
 }
 
