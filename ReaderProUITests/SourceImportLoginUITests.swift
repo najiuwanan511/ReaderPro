@@ -91,7 +91,10 @@ final class SourceImportLoginUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [colors], timeout: 10), .completed, "导入主题的导航栏和页面背景必须实际绘制目标颜色")
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "开源阅读主题导入与应用"; shot.lifetime = .keepAlways; add(shot)
         theme.swipeLeft(); app.buttons["删除"].tap()
-        XCTAssertFalse(app.staticTexts["主题导入样例"].exists)
+        let removed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                object: app.staticTexts["主题导入样例"])
+        XCTAssertEqual(XCTWaiter.wait(for: [removed], timeout: 5), .completed,
+                       "删除动画结束后，主题应从列表移除")
         for title in ["发现", "订阅", "书架", "我的"] {
             let tab = app.tabBars.buttons[title]; tab.tap()
             let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: tab)

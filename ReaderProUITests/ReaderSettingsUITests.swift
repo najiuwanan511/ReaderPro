@@ -17,17 +17,31 @@ final class ReaderSettingsUITests: XCTestCase {
         }
         app.launch(); openSettings()
         app.buttons["恢复默认并发数"].tap()
-        for name in ["searchConcurrency", "validationConcurrency", "webConcurrency"] {
+        let values = [("searchConcurrency", "搜索并发数：33"),
+                      ("validationConcurrency", "校验并发数：33"),
+                      ("webConcurrency", "网页并发数：5")]
+        func assertValue(_ text: String) {
+            let result = app.staticTexts[text].waitForExistence(timeout: 5)
+            if !result {
+                let tree = XCTAttachment(string: app.debugDescription)
+                tree.name = "并发设置值不匹配"; tree.lifetime = .keepAlways; add(tree)
+            }
+            XCTAssertTrue(result, "界面应显示实际并发值：" + text)
+        }
+        for (name, text) in values {
             let stepper = app.steppers[name]
             XCTAssertTrue(stepper.exists)
-            stepper.coordinate(withNormalizedOffset: CGVector(dx: 0.95, dy: 0.5)).tap()
+            // The accessibility frame includes the row's trailing margin.
+            // Its 95% point misses the visible plus button on iOS 18.
+            let increment = stepper.buttons["Increment"]
+            if increment.exists { increment.tap() }
+            else { stepper.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap() }
+            assertValue(text)
         }
         app.terminate()
         app.launchArguments = []
         app.launch(); openSettings()
-        XCTAssertTrue(app.steppers["searchConcurrency"].label.contains("33"))
-        XCTAssertTrue(app.steppers["validationConcurrency"].label.contains("33"))
-        XCTAssertTrue(app.steppers["webConcurrency"].label.contains("5"))
+        for (_, text) in values { assertValue(text) }
         let shot = XCTAttachment(screenshot: app.screenshot())
         shot.name = "搜索校验网页并发设置重启持久化"; shot.lifetime = .keepAlways; add(shot)
         app.buttons["恢复默认并发数"].tap()
