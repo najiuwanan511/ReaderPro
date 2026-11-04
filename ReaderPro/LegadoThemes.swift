@@ -132,8 +132,6 @@ struct LegadoThemeNavigation: ViewModifier {
         content.toolbarBackground(theme.flatMap { LegadoTheme.color($0.primaryColor) }.map { Color(uiColor: $0) } ?? AppTheme.surface, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbarColorScheme(theme?.navigationColorScheme, for: .navigationBar)
-            .toolbarBackground(theme.flatMap { LegadoTheme.color($0.bottomBackground) }.map { Color(uiColor: $0) } ?? AppTheme.surface, for: .tabBar)
-            .toolbarBackground(theme == nil ? .automatic : .visible, for: .tabBar)
     }
 }
 

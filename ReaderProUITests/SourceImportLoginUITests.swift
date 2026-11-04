@@ -66,6 +66,8 @@ final class SourceImportLoginUITests: XCTestCase {
         app.terminate(); app.launchArguments = []; app.launch()
         let mine = app.tabBars.buttons["我的"]
         XCTAssertTrue(mine.waitForExistence(timeout: 20)); mine.tap()
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: mine)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed, "首次点击我的应保持该标签选中")
         let settings = app.buttons.containing(.staticText, identifier: "主题设置").firstMatch
         if !settings.isHittable { app.swipeUp() }
         XCTAssertTrue(settings.waitForExistence(timeout: 10)); settings.tap()
@@ -85,6 +87,12 @@ final class SourceImportLoginUITests: XCTestCase {
         let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "开源阅读主题导入与应用"; shot.lifetime = .keepAlways; add(shot)
         theme.swipeLeft(); app.buttons["删除"].tap()
         XCTAssertFalse(app.staticTexts["主题导入样例"].exists)
+        for title in ["发现", "订阅", "书架", "我的"] {
+            let tab = app.tabBars.buttons[title]; tab.tap()
+            let selection = XCTNSPredicateExpectation(predicate: NSPredicate(format: "selected == true"), object: tab)
+            XCTAssertEqual(XCTWaiter.wait(for: [selection], timeout: 5), .completed, "主题刷新后单次点击应切换到" + title)
+        }
+        XCTAssertTrue(app.navigationBars["导入主题"].exists, "切换标签应保留主题页面的导航进度")
     }
 
     private static func pixel(_ image: UIImage, at point: CGPoint, in screen: CGRect, matches hex: UInt32) -> Bool {

@@ -5,6 +5,7 @@ import AVFoundation
 struct ContentView: View {
     @StateObject private var store = BookStore()
     @ObservedObject private var importedThemes = LegadoThemeLibrary.shared
+    @Environment(\.colorScheme) private var colorScheme
     @EnvironmentObject private var network: NetworkBootstrap
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage("ui.showDiscovery") private var showDiscovery = true
@@ -29,12 +30,17 @@ struct ContentView: View {
         .onChange(of: showDiscovery) { _, _ in validateSelectedTab() }
         .onChange(of: showRss) { _, _ in validateSelectedTab() }
         .tint(AppTheme.accent)
-        .toolbarBackground(AppTheme.surface, for: .tabBar)
+        .toolbarBackground(tabBackground, for: .tabBar)
         .toolbarBackground(.visible, for: .tabBar)
         .overlay(alignment: .top) { networkBanner }
         .task(id: scenePhase) { if scenePhase == .active { await RuleSubscriptionStore.shared.updateDue(store: store) } }
         .modifier(SourceAppLinkReceiver(store: store))
-        .modifier(LegadoThemeNavigation())
+    }
+    private var tabBackground: Color {
+        guard !UserDefaults.standard.bool(forKey: "ui.customColors"),
+              let theme = LegadoTheme.selected(dark: colorScheme == .dark),
+              let color = LegadoTheme.color(theme.bottomBackground) else { return AppTheme.surface }
+        return Color(uiColor: color)
     }
     private func validateSelectedTab() {
         if (selectedTab == 1 && !showDiscovery) || (selectedTab == 2 && !showRss) || !(0...3).contains(selectedTab) { selectedTab = 0 }

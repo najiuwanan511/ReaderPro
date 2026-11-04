@@ -16,6 +16,7 @@
 
 ## 当前验收状态（2026-11-04）
 
+- `53a0b9f` 规则回归 [41778736783](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778736783)：205 项全部通过，5 项新增排版包测试均通过。Debug [41778764359](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778764359) 前置 9 UI 中 8 通过、1 失败，新增排版导入/保存/应用/重启后正文背景像素检查通过；主题用例在进入设置前失败。失败录屏和控件树显示点击「我的」后仍选中「书架」，未执行到原颜色断言。当前移除 TabView 根部的导航样式包装，底栏样式只由根 TabView 处理，内页只更新导航栏；新增单击标签选中、主题刷新后切换全部标签和保留导航进度断言。此候选尚待新回归，不把前置失败算作全量通过。
 - `65caea1` 规则回归 [41776092353](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776092353)：200 项全部通过。完整 Debug [41776109747](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776109747) 的前置 8 UI 中 7 通过、1 失败，尚未进入全量测试且没有生成 IPA。主题应用后实际导航层级变为「我的」，原像素断言因找不到「导入主题」导航栏而失败；当前修正保持导航修饰器内容身份、只更新工具栏参数，保留原颜色和流程断言，等待新回归。
 - 新增排版包候选：对照 `ReadBookConfig.Config` 和 `BgTextConfigDialog.exportConfig`，接入 `legado/yuedu://import/readConfig`、网络 ZIP/JSON 和文件导入，先预览保存再选择应用；保留原配置及包内字体、背景，按名称更新并重启后读取。字距按 em 转点数、行距/段距按当前字体行高换算，保留安卓翻页枚举映射。标题、页眉页脚等未映射字段、边距取均值和配色不自动切换均在预览说明，不能算完整排版移植。新增实际 ZIP/字体/背景、存储替换、错误原子性、枚举与分页和真实 UI 重启流程测试；尚待 Xcode 运行。
 - 已验证的代理修复：`54c8b64`。iOS 17 Release 生产专项 [41675972197](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675972197) 的 26 项全部通过，覆盖普通 HTTP、HTTPS 证书策略、认证 SOCKS、代理隔离，以及真实 SwiftUI 登录、订阅和视频网页；当前系统规则回归 [41675970245](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675970245) 的 197 项全部通过。

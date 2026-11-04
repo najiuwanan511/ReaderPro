@@ -207,6 +207,7 @@ struct LegadoReadLayoutsView: View {
                 }
             }
         }.navigationTitle("阅读排版").readerNavigationStyle()
+        .scrollContentBackground(.hidden).background(LegadoThemeBackground())
         .fileImporter(isPresented: $importingFile, allowedContentTypes: [.zip, .json]) { response in
             do {
                 let file = try response.get(), access = file.startAccessingSecurityScopedResource()
