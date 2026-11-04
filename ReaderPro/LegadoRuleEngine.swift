@@ -1533,7 +1533,8 @@ extension LegadoSource {
             pageCount += 1
             let response = try await loadPage(next, stage: "目录第 \(pageCount) 页")
             visited.insert(response.url)
-            let listRule = ruleToc.chapterList.hasPrefix("-") ? String(ruleToc.chapterList.dropFirst()) : ruleToc.chapterList
+            var listRule = ruleToc.chapterList.hasPrefix("-") ? String(ruleToc.chapterList.dropFirst()) : ruleToc.chapterList
+            if listRule.hasPrefix("+") { listRule.removeFirst() }
             let items = ruleItems(response.text, rule: listRule, base: response.url)
             var matched = 0
             for item in items {

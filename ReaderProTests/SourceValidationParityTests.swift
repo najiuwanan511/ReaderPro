@@ -114,13 +114,14 @@ final class SourceValidationParityTests: XCTestCase {
     }
 
     func testListOrderPrefixesSelectTheSameFirstSampleAsAndroid() async {
-        for prefix in ["-", "+"] {
+        for prefix in ["-", "-+", "+"] {
             var source = SourceTestFixtures.json()
             source.searchUrl = "/validation/order"
             source.ruleSearch.bookList = prefix + "$.data"
+            source.ruleToc.chapterList = "+$.chapters[*]"
             let report = await SourceValidation.run(source, keyword: "测试")
-            XCTAssertEqual(report.status, prefix == "-" ? .passed : .partial, report.searchableText)
-            if prefix == "-" { XCTAssertTrue(report.steps.contains { $0.stage == "正文" && $0.passed }) }
+            XCTAssertEqual(report.status, prefix.hasPrefix("-") ? .passed : .partial, report.searchableText)
+            if prefix.hasPrefix("-") { XCTAssertTrue(report.steps.contains { $0.stage == "正文" && $0.passed }) }
             else { XCTAssertTrue(report.steps.contains { $0.stage == "详情" && !$0.passed && $0.detail.contains("403") }) }
         }
     }
