@@ -39,9 +39,21 @@ jobs:
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
           xcrun simctl boot "$DEVICE" 2>/dev/null || true
           xcrun simctl bootstatus "$DEVICE" -b
+          # Run 41803528748 compiled successfully but FrontBoard could not
+          # launch the installed test runner after the simulator sat through
+          # compilation. Refresh simulator services before executing tests,
+          # as the iOS 17 Release workflow already does.
+          xcodebuild build-for-testing \
+            -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
+            -destination "platform=iOS Simulator,id=$DEVICE" \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/debug-build.log
+          xcrun simctl shutdown "$DEVICE"
+          xcrun simctl boot "$DEVICE"
+          xcrun simctl bootstatus "$DEVICE" -b
           # Exercise changed import/login flows and the multi-sheet editor first.
           # The full regression below still includes these tests.
-          xcodebuild test \
+          xcodebuild test-without-building \
             -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" \
             -parallel-testing-enabled NO \
@@ -53,7 +65,7 @@ jobs:
             -maximum-test-execution-time-allowance 600 \
             -resultBundlePath build/ReplacementEditorRegression.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/replacement-editor.log
-          xcodebuild test \
+          xcodebuild test-without-building \
             -project ReaderPro.xcodeproj \
             -scheme ReaderPro \
             -configuration Debug \
@@ -95,6 +107,7 @@ jobs:
             build/SourceRegression.xcresult
             build/ReplacementEditorRegression.xcresult
             build/replacement-editor.log
+            build/debug-build.log
             build/tests.log
             build/fixture-server.log
             build/screenshots
