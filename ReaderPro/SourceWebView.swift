@@ -24,11 +24,11 @@ import UIKit
     static func load(_ request: URLRequest, html: String? = nil, script: String = "", timeout: Double = 20, delay: Double = 0,
                      resourceRegex: String? = nil, navigationRegex: String? = nil, cacheFirst: Bool = false) async throws -> SourcePage {
         // Each WKWebView can launch a separate WebKit process. Keeping only
-        // two active reduces peak memory when many book sources are searched.
+        // a separate configurable limit bounds peak memory during source work.
         // Allocate its data store only after admission: queued searches must
         // not create hundreds of isolated WebKit sessions before this limit.
         try await SourceRateLimiter.shared.wait()
-        while active.count >= 2 { try await Task.sleep(nanoseconds: 50_000_000) }
+        while active.count >= SourceConcurrency.web { try await Task.sleep(nanoseconds: 50_000_000) }
         try Task.checkCancellation()
         let store = try SourceWebDataStore.make(request: request,
             ephemeral: SourceTLS.allowsInvalidCertificates || !(LegadoJSCtx.ruleSource?.enabledCookieJar ?? true))

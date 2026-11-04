@@ -45,6 +45,7 @@ struct SourceManagementView: View {
     @State private var selectedReport: SourceValidationReport?
     @State private var checkTask: Task<Void, Never>?
     @State private var checkProgress = ""
+    @State private var checkCompleted = 0
 
     var textFiltered: [LegadoSource] {
         store.sources.filter { source in
@@ -171,6 +172,7 @@ struct SourceManagementView: View {
                         Text("书源自带 checkKeyWord 时优先使用；没有结果记为未完整验证，不直接判死源。").font(.caption)
                     }
                     Section("校验项目") {
+                        NavigationLink("搜索与校验并发") { SourceConcurrencySettingsView() }
                         Stepper("每源超时：\(Int(checkOptions.timeout)) 秒", value: $checkOptions.timeout, in: 5...600, step: 5)
                         Toggle("搜索", isOn: $checkOptions.search)
                         Toggle("发现", isOn: $checkOptions.discovery)
@@ -191,7 +193,7 @@ struct SourceManagementView: View {
                     }
                     Section("结果范围") {
                         Text("封面或简介脚本失败会记录为附加信息警告，不会丢弃可阅读的书籍；成功仍以搜索、详情、目录和正文的抽样阅读链路为准。")
-                        Text("成功仅代表校验时所选项目和这些样本通过，不代表每个分类、每本书和所有章节均可用。报告保存当次项目配置；规则或请求头变更后需重新校验。每批最多 4 个并发，支持取消。")
+                        Text("成功仅代表校验时所选项目和这些样本通过，不代表每个分类、每本书和所有章节均可用。报告保存当次项目配置；规则或请求头变更后需重新校验。并发数可设置，完成一个立即补上下一个，支持取消。")
                     }
                 }.navigationTitle("校验规则").toolbar { Button("完成") { showCheckRules = false } }
                     .onChange(of: checkOptions) { _, value in value.save() }
@@ -336,24 +338,20 @@ struct SourceManagementView: View {
         let keyword = checkKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
         let key = keyword.isEmpty ? "我的" : keyword
         let options = checkOptions
+        let concurrency = SourceConcurrency.validation
+        checkCompleted = 0
         checkingIDs = Set(targets.map { $0.id })
-        checkProgress = "开始校验 \(targets.count) 个书源 · \(options.summary)"
+        checkProgress = "开始校验 \(targets.count) 个书源 · \(concurrency) 路并发 · \(options.summary)"
         checkTask = Task {
-            var done = 0
-            var index = 0
-            while index < targets.count && !Task.isCancelled {
-                let slice = Array(targets[index..<min(index + 4, targets.count)])
-                await withTaskGroup(of: SourceValidationReport.self) { group in
-                    for source in slice { group.addTask { await SourceValidation.run(source, keyword: key, options: options) } }
-                    for await report in group {
-                        if !Task.isCancelled { validation.set(report) }
-                        checkingIDs.remove(report.id)
-                        done += 1
-                        checkProgress = "已校验 \(done)/\(targets.count) · 点击状态标签查看报告"
-                    }
+            await streamSourceValidation(targets, keyword: key, options: options, concurrency: concurrency) { report in
+                await MainActor.run {
+                    guard !Task.isCancelled else { return }
+                    validation.set(report)
+                    checkingIDs.remove(report.id)
+                    checkCompleted += 1
+                    checkProgress = "已校验 \(checkCompleted)/\(targets.count) · \(concurrency) 路并发 · 点击状态标签查看报告"
+                    if checkCompleted % 16 == 0 { validation.save() }
                 }
-                validation.save()
-                index += slice.count
             }
             checkingIDs.removeAll()
             checking = false

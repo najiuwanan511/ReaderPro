@@ -14,20 +14,20 @@ final class RuleFailures: @unchecked Sendable {
     }
 }
 
-enum SourceValidationStatus: String, Codable, CaseIterable {
+enum SourceValidationStatus: String, Codable, CaseIterable, Sendable {
     case passed, failed, partial
     var title: String {
         switch self { case .passed: return "成功"; case .failed: return "失败"; case .partial: return "未完整验证" }
     }
 }
 
-struct SourceValidationStep: Codable, Equatable {
+struct SourceValidationStep: Codable, Equatable, Sendable {
     var stage: String
     var passed: Bool
     var detail: String
 }
 
-struct SourceValidationReport: Codable, Identifiable, Equatable {
+struct SourceValidationReport: Codable, Identifiable, Equatable, Sendable {
     var id: String
     var fingerprint: String
     var checkedAt: Date
@@ -60,6 +60,14 @@ struct SourceValidationOptions: Codable, Equatable, Sendable {
         if info { stages.append("详情"); if catalog { stages.append("目录"); if content { stages.append("正文") } } }
         return "超时 \(Int(timeout)) 秒；" + stages.joined(separator: "、") + (mediaPlayback ? "；检查媒体可播放性" : "；媒体仅检查规则取流")
     }
+}
+
+func streamSourceValidation(_ sources: [LegadoSource], keyword: String, options: SourceValidationOptions,
+                            concurrency: Int = SourceConcurrency.validation,
+                            update: @escaping @Sendable (SourceValidationReport) async -> Void) async {
+    await streamConcurrentWork(sources, concurrency: concurrency, operation: { source in
+        await SourceValidation.run(source, keyword: keyword, options: options)
+    }, update: update)
 }
 
 enum SourceValidation {

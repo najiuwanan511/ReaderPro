@@ -253,6 +253,9 @@ struct OtherSettingsView: View {
 
             Section {
                 TextField("自定义 User-Agent（留空使用默认）", text: $userAgent, axis: .vertical).textInputAutocapitalization(.never).autocorrectionDisabled()
+                NavigationLink { SourceConcurrencySettingsView() } label: {
+                    SettingRow(icon: "arrow.triangle.branch", iconTint: .blue, title: "搜索与校验并发", summary: "调整搜索、校验和网页脚本并发数")
+                }
                 NavigationLink { CacheManagementView(store: store) } label: {
                     SettingRow(icon: "tray.full", iconTint: .blue, title: "缓存管理", summary: "正文下载、预加载数量、图片和网页缓存")
                 }

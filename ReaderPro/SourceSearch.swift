@@ -11,32 +11,21 @@ struct SourceSearchUpdate: Sendable {
 
 // Refill a slot as soon as it finishes. A slow source must never hold back
 // results or prevent the next source from starting.
-func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = 8, timeout: Double = 25,
+func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int = SourceConcurrency.search, timeout: Double = 25,
                         pages: [String: Int] = [:],
                         willSearch: (@Sendable (LegadoSource) async -> Void)? = nil,
                         update: @escaping @Sendable (SourceSearchUpdate) async -> Void) async {
     let searchable = sources.filter { !$0.searchUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    await withTaskGroup(of: SourceSearchUpdate.self) { group in
-        var next = 0
-        func enqueue(_ source: LegadoSource) {
-            group.addTask {
-                await willSearch?(source)
-                let page = pages[source.id] ?? 1
-                do {
-                    let books = try await withTimeout(timeout) { try await source.search(key: key, page: page) }
-                    return .init(sourceID: source.id, sourceName: source.bookSourceName, books: books, error: "", page: page)
-                } catch {
-                    return .init(sourceID: source.id, sourceName: source.bookSourceName, books: [], error: sourceErrorMessage(error), page: page)
-                }
-            }
+    await streamConcurrentWork(searchable, concurrency: concurrency, operation: { source in
+        await willSearch?(source)
+        let page = pages[source.id] ?? 1
+        do {
+            let books = try await withTimeout(timeout) { try await source.search(key: key, page: page) }
+            return .init(sourceID: source.id, sourceName: source.bookSourceName, books: books, error: "", page: page)
+        } catch {
+            return .init(sourceID: source.id, sourceName: source.bookSourceName, books: [], error: sourceErrorMessage(error), page: page)
         }
-        while next < min(max(1, concurrency), searchable.count) { enqueue(searchable[next]); next += 1 }
-        for await result in group {
-            if Task.isCancelled { group.cancelAll(); break }
-            await update(result)
-            if next < searchable.count { enqueue(searchable[next]); next += 1 }
-        }
-    }
+    }, update: update)
 }
 
 @MainActor final class SourceSearchController: ObservableObject {
@@ -50,6 +39,7 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
     @Published private(set) var cancelled = false
     @Published private(set) var hasMore = false
     @Published private(set) var page = 0
+    @Published private(set) var concurrency = SourceConcurrency.search
     private var seen: Set<String> = []
     private var seenURLs: [String: Set<String>] = [:]
     private var nextPages: [String: Int] = [:]
@@ -78,9 +68,11 @@ func streamSourceSearch(_ sources: [LegadoSource], key: String, concurrency: Int
         completed = 0; total = pending.count; hasMore = !pending.isEmpty
         guard !pending.isEmpty else { return }
         let pages = nextPages, key = keyword
+        concurrency = SourceConcurrency.search
+        let limit = concurrency
         cancelled = false; searching = true; errors = []
         task = Task {
-            await streamSourceSearch(pending, key: key, pages: pages) { [weak self] result in
+            await streamSourceSearch(pending, key: key, concurrency: limit, pages: pages) { [weak self] result in
                 await self?.receive(result, generation: run)
             }
             guard generation == run else { return }

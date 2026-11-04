@@ -762,7 +762,7 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(publishedCounts.filter { $0 > 0 }, [400], "Publish one complete update per source, not one UI update per row")
     }
 
-    func testDefaultSearchConcurrencyBoundsSimultaneousRequests() async throws {
+    func testConfiguredSearchConcurrencyBoundsSimultaneousRequests() async throws {
         var sources: [LegadoSource] = []
         for _ in 0..<12 {
             var source = SourceTestFixtures.json()
@@ -770,11 +770,11 @@ final class SourceEngineTests: XCTestCase {
             sources.append(source)
         }
         let probe = SearchConcurrencyProbe()
-        await streamSourceSearch(sources, key: "测试", willSearch: { _ in await probe.start() }) { _ in await probe.finish() }
+        await streamSourceSearch(sources, key: "测试", concurrency: 3, willSearch: { _ in await probe.start() }) { _ in await probe.finish() }
         let (active, maximum, completed) = await probe.snapshot()
         XCTAssertEqual(active, 0)
         XCTAssertEqual(completed, sources.count)
-        XCTAssertLessThanOrEqual(maximum, 8)
+        XCTAssertEqual(maximum, 3)
         XCTAssertGreaterThan(maximum, 1, "Fast sources should still run concurrently")
     }
 

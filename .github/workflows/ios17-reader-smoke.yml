@@ -37,6 +37,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$READER_SIMULATOR_ID" \
             -parallel-testing-enabled NO -enableCodeCoverage NO \
             -only-testing:ReaderProTests/ReaderPageControllerTests \
+            -only-testing:ReaderProTests/SourceConcurrencyTests \
             -only-testing:ReaderProUITests/ReaderChapterPagingUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \

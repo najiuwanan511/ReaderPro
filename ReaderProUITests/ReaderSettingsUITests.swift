@@ -1,6 +1,37 @@
 import XCTest
 
 final class ReaderSettingsUITests: XCTestCase {
+    func testSourceConcurrencySettingsPersistAfterRelaunch() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture"]
+        func openSettings() {
+            app.tabBars.buttons["我的"].tap()
+            let other = app.buttons.containing(.staticText, identifier: "其他设置").firstMatch
+            XCTAssertTrue(other.waitForExistence(timeout: 10))
+            if !other.isHittable { app.swipeUp() }
+            other.tap()
+            app.buttons.containing(.staticText, identifier: "搜索与校验并发").firstMatch.tap()
+            XCTAssertTrue(app.navigationBars["搜索与校验并发"].waitForExistence(timeout: 10))
+        }
+        app.launch(); openSettings()
+        app.buttons["恢复默认并发数"].tap()
+        for name in ["searchConcurrency", "validationConcurrency", "webConcurrency"] {
+            let stepper = app.steppers[name]
+            XCTAssertTrue(stepper.exists)
+            stepper.buttons.element(boundBy: 1).tap()
+        }
+        app.terminate()
+        app.launchArguments = ["--source-ui-fixture"]
+        app.launch(); openSettings()
+        XCTAssertTrue(app.staticTexts["搜索并发数：33"].exists)
+        XCTAssertTrue(app.staticTexts["校验并发数：33"].exists)
+        XCTAssertTrue(app.staticTexts["网页并发数：5"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "搜索校验网页并发设置重启持久化"; shot.lifetime = .keepAlways; add(shot)
+        app.buttons["恢复默认并发数"].tap()
+    }
+
     func testInterfaceAndReadingSettingsAreSeparateAndPersist() {
         continueAfterFailure = false
         executionTimeAllowance = 300

@@ -187,7 +187,7 @@ struct BookshelfView: View {
                         if shelfSearch.searching {
                             HStack {
                                 ProgressView().controlSize(.small)
-                                Text("已搜索 \(shelfSearch.completed)/\(shelfSearch.total)")
+                                Text("已搜索 \(shelfSearch.completed)/\(shelfSearch.total) · \(shelfSearch.concurrency) 路并发")
                                     .lineLimit(1).minimumScaleFactor(0.75)
                                 Spacer()
                                 Button { shelfSearch.cancel() } label: {
@@ -423,12 +423,15 @@ struct SourceView: View {
                 Text("·")
                 Text("\(store.sources.count) 个已导入")
                 Spacer()
+                NavigationLink { SourceConcurrencySettingsView() } label: {
+                    Label("并发", systemImage: "arrow.triangle.branch")
+                }
             }
             .font(.caption2).foregroundStyle(.secondary).padding(.horizontal)
             if searchState.searching {
                 HStack {
                     ProgressView().controlSize(.small)
-                    Text("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.results.count) 本")
+                    Text("已搜索 \(searchState.completed)/\(searchState.total) · \(searchState.concurrency) 路并发 · \(searchState.results.count) 本")
                         .lineLimit(1).minimumScaleFactor(0.75)
                     Spacer()
                     Button { searchState.cancel() } label: {
