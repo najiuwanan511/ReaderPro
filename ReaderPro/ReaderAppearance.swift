@@ -3,6 +3,21 @@ import CoreText
 import UniformTypeIdentifiers
 import ImageIO
 
+enum ReaderTypography {
+    static func font(name: String, size: CGFloat, weight: Int) -> UIFont {
+        let selected: UIFont.Weight = weight == 1 ? .bold : (weight == 2 ? .light : .regular)
+        guard !name.isEmpty, let base = UIFont(name: name, size: size) else {
+            return UIFont.systemFont(ofSize: size, weight: selected)
+        }
+        // Retain the imported family's descriptor, including italic/width
+        // traits. CoreText selects its nearest available weight face.
+        guard weight == 1 || weight == 2 else { return base }
+        var traits = base.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any] ?? [:]
+        traits[.weight] = selected.rawValue
+        return UIFont(descriptor: base.fontDescriptor.addingAttributes([.traits: traits]), size: size)
+    }
+}
+
 enum ReaderAssets {
     private static let images = NSCache<NSString, UIImage>()
     static var directory: URL {

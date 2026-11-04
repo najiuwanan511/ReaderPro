@@ -45,7 +45,12 @@ enum SourceScriptConfiguration {
         // This snapshot describes the solid reading color (bgType = 0).
         config["bgAlpha"] = 100
         config["textColor"] = "#" + theme.text.rgbHex
-        config["letterSpacing"] = defaults.double(forKey: "reader.letterSpacing")
+        // Android TextPaint.letterSpacing is in em; TextKit's kern is in
+        // points. Keep existing saved spacing intact and convert at the bridge.
+        let fontSize = (config["textSize"] as? Double) ?? 19
+        config["letterSpacing"] = defaults.double(forKey: "reader.letterSpacing") / max(1, fontSize)
+        let weight = defaults.integer(forKey: "reader.textBold")
+        config["textBold"] = (0...2).contains(weight) ? weight : 0
         let indent = max(0, min(4, defaults.double(forKey: "reader.paragraphIndent")))
         config["paragraphIndent"] = String(repeating: "　", count: Int(indent.rounded()))
         return config

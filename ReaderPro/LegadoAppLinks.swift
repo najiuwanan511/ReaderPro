@@ -127,7 +127,7 @@ enum LegadoLinkDocument {
         }
         return try decode(Data(raw.utf8), kind: link.kind)
     }
-    @MainActor func apply(store: BookStore, library: ReaderRuleLibrary = .shared, themes: LegadoThemeLibrary = .shared) async throws -> String {
+    @MainActor func apply(store: BookStore, library: ReaderRuleLibrary = .shared, themes: LegadoThemeLibrary? = nil) async throws -> String {
         func merge<T: ManagedReaderRule>(_ old: [T], _ incoming: [T]) -> [T] {
             var output = old
             for item in incoming {
@@ -144,7 +144,7 @@ enum LegadoLinkDocument {
         case .toc(let rules): library.txtRules = merge(library.txtRules, rules)
         case .tts(let rules): library.httpTts = merge(library.httpTts, rules)
         case .dictionaries(let rules): library.dictionaries = merge(library.dictionaries, rules)
-        case .themes(let values): try themes.merge(values); return "已导入 \(values.count) 个主题，请在主题设置中选择应用"
+        case .themes(let values): try (themes ?? .shared).merge(values); return "已导入 \(values.count) 个主题，请在主题设置中选择应用"
         }
         return "已导入 \(names.count) 条规则"
     }

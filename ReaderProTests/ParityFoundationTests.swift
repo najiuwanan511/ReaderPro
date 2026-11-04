@@ -9,7 +9,7 @@ final class ParityFoundationTests: XCTestCase {
     }
 
     func testScriptConfigurationReadsCurrentPreferencesAndKeepsJavaMapMethodsOutOfJSON() throws {
-        let defaults = UserDefaults.standard, keys = ["appThemeMode", "reader.letterSpacing", "reader.paragraphIndent"]
+        let defaults = UserDefaults.standard, keys = ["appThemeMode", "reader.letterSpacing", "reader.paragraphIndent", "reader.textBold"]
         let saved = keys.map { defaults.object(forKey: $0) }
         let store = BookStore()
         defer {
@@ -18,7 +18,7 @@ final class ParityFoundationTests: XCTestCase {
             }
             SourceScriptConfiguration.updateReading(BookStore())
         }
-        defaults.set("dark", forKey: keys[0]); defaults.set(1.5, forKey: keys[1]); defaults.set(2.0, forKey: keys[2])
+        defaults.set("dark", forKey: keys[0]); defaults.set(2.6, forKey: keys[1]); defaults.set(2.0, forKey: keys[2]); defaults.set(2, forKey: keys[3])
         store.fontSize = 26; store.pageTurn = 4; store.pagePaddingH = 24
         SourceScriptConfiguration.updateReading(store)
         let failures = RuleFailures()
@@ -29,11 +29,14 @@ final class ParityFoundationTests: XCTestCase {
             if(c.get('bgAlpha')!==100||c.get('bgType')!==0)throw Error('wrong Android background percentage');
             if(!t.get('isNightTheme')||!t.get('backgroundColor').startsWith('#'))throw Error('wrong theme');
             if(c.get('absent')!==null||c.containsKey('get')||c.keySet().size()!==c.size()||c.entrySet().size()!==c.size())throw Error('Map mismatch');
-            [java.getThemeMode(),c.get('textSize'),c.get('pageAnim'),c.get('paddingRight'),c.get('letterSpacing'),c.get('paragraphIndent')].join('|');
+            [java.getThemeMode(),c.get('textSize'),c.get('pageAnim'),c.get('paddingRight'),c.get('letterSpacing').toFixed(3),c.get('paragraphIndent'),c.get('textBold')].join('|');
             """#, input: "", baseUrl: "https://config.test", sourceKey: "", sourceUrl: "https://config.test")
         }
         try failures.check()
-        XCTAssertEqual(result, "2|26|2|24|1.5|　　")
+        XCTAssertEqual(result, "2|26|2|24|0.100|　　|2")
+        defaults.set(-2.6, forKey: keys[1]); defaults.set(1, forKey: keys[3])
+        XCTAssertEqual(SourceScriptConfiguration.readConfig()["letterSpacing"] as? Double ?? 0, -0.1, accuracy: 0.0001)
+        XCTAssertEqual(SourceScriptConfiguration.readConfig()["textBold"] as? Int, 1)
         defaults.set("light", forKey: keys[0])
         XCTAssertEqual(SourceScriptConfiguration.themeMode(), "1")
         XCTAssertEqual(SourceScriptConfiguration.themeConfig()["isNightTheme"] as? Bool, false)

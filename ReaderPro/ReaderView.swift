@@ -88,6 +88,7 @@ private final class ReaderScrollProgress {
     @AppStorage("reader.keepScreenAwake") private var keepScreenAwake = false
     @AppStorage("reader.justifyText") private var justifyText = true
     @AppStorage("reader.letterSpacing") private var letterSpacing = 0.0
+    @AppStorage("reader.textBold") private var textBold = 0
     @AppStorage("reader.paragraphIndent") private var paragraphIndent = 0.0
     @AppStorage("reader.customText") private var customText = "3A3A3A"
     @AppStorage("reader.customBackground") private var customBackground = "F5F1E8"
@@ -134,7 +135,7 @@ private final class ReaderScrollProgress {
 
     // 排版参数签名：任一变化即重排
     func layoutSignature(_ size: CGSize) -> String {
-        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)|\(landscapeDoublePage)|\(selectionEnabled)"
+        "\(store.fontSize)|\(store.lineSpacing)|\(store.paragraphSpacing)|\(store.pagePaddingH)|\(store.pagePaddingV)|\(store.fontName)|\(store.theme)|\(store.showHeader)|\(store.showFooter)|\(store.pageTurn)|\(justifyText)|\(letterSpacing)|\(paragraphIndent)|\(Int(size.width))|\(Int(size.height))|\(customText)|\(customBackground)|\(backgroundImage)|\(backgroundOpacity)|\(landscapeDoublePage)|\(selectionEnabled)|\(textBold)"
     }
 
     var body: some View {
@@ -621,16 +622,12 @@ private final class ReaderScrollProgress {
         para.firstLineHeadIndent = CGFloat(paragraphIndent * store.fontSize)
         para.lineBreakMode = .byCharWrapping
         para.hyphenationFactor = 0
-        var attrs: [NSAttributedString.Key: Any] = [
+        let attrs: [NSAttributedString.Key: Any] = [
             .foregroundColor: theme.text,
             .paragraphStyle: para,
             .kern: letterSpacing,
+            .font: ReaderTypography.font(name: store.fontName, size: CGFloat(store.fontSize), weight: textBold),
         ]
-        if store.fontName.isEmpty {
-            attrs[.font] = UIFont.systemFont(ofSize: CGFloat(store.fontSize))
-        } else {
-            attrs[.font] = UIFont(name: store.fontName, size: CGFloat(store.fontSize)) ?? UIFont.systemFont(ofSize: CGFloat(store.fontSize))
-        }
         return attrs
     }
 
@@ -1143,8 +1140,11 @@ private final class ReaderScrollProgress {
                         }.labelsHidden().onChange(of: store.fontName) { _, _ in store.save() }
                     }
                     NavigationLink("导入字体 / 背景图片 / 自定义配色") { ReaderAppearanceView(store: store) }
+                    Picker("字重", selection: $textBold) {
+                        Text("普通").tag(0); Text("粗体").tag(1); Text("细体").tag(2)
+                    }.accessibilityIdentifier("readerFontWeight").onChange(of: textBold) { _, _ in store.save() }
                     styleSlider("字号", value: $store.fontSize, range: 12...45)
-                    styleSlider("字距", value: $letterSpacing, range: 0...8)
+                    styleSlider("字距", value: $letterSpacing, range: -8...8)
                     styleSlider("行距", value: $store.lineSpacing, range: 0...24)
                     styleSlider("段距", value: $store.paragraphSpacing, range: 0...40)
                     styleSlider("缩进", value: $paragraphIndent, range: 0...4)

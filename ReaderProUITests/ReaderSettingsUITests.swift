@@ -25,7 +25,13 @@ final class ReaderSettingsUITests: XCTestCase {
         XCTAssertTrue(interface.waitForExistence(timeout: 10)); interface.tap()
         XCTAssertTrue(app.navigationBars["界面"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["字距"].exists)
+        let weight = app.buttons["readerFontWeight"]
+        XCTAssertTrue(weight.exists); weight.tap(); app.buttons["粗体"].tap()
         XCTAssertFalse(app.switches["阅读时保持屏幕常亮"].exists)
+        app.buttons["完成"].tap()
+        app.buttons["界面"].tap()
+        XCTAssertTrue(weight.waitForExistence(timeout: 10)); XCTAssertTrue(weight.label.contains("粗体"))
+        weight.tap(); app.buttons["普通"].tap()
         app.buttons["完成"].tap()
 
         app.buttons["设置"].tap()

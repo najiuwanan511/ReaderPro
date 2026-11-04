@@ -4,6 +4,39 @@ import SwiftUI
 @testable import ReaderPro
 
 final class ReaderTextLayoutTests: XCTestCase {
+    @MainActor func testReaderWeightsAndTightSpacingPaginateWithoutDroppingOrOverflowingText() throws {
+        let original = String(repeating: "细体、普通与粗体都必须完整显示，翻页不能漏字。\n", count: 80)
+        let size = CGSize(width: 260, height: 380)
+        var fontWeights: [Double] = []
+        for weight in 0...2 {
+            let font = ReaderTypography.font(name: "", size: 23, weight: weight)
+            let traits = font.fontDescriptor.object(forKey: .traits) as? [UIFontDescriptor.TraitKey: Any]
+            fontWeights.append((traits?[.weight] as? NSNumber)?.doubleValue ?? 0)
+            let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 8; paragraph.paragraphSpacing = 10
+            let text = NSAttributedString(string: original, attributes: [.font: font, .kern: -1.5, .paragraphStyle: paragraph])
+            let pages = Paginator.paginate(text, pageSize: size)
+            XCTAssertGreaterThan(pages.count, 1)
+            var reconstructed = "", next = 0
+            for range in pages {
+                XCTAssertEqual(range.location, next)
+                let part = text.attributedSubstring(from: range)
+                let view = makeReaderTextView(attributed: part, size: size)
+                view.layoutManager.ensureLayout(for: view.textContainer)
+                let bounds = view.layoutManager.usedRect(for: view.textContainer)
+                XCTAssertLessThanOrEqual(bounds.maxX, size.width + 1)
+                XCTAssertLessThanOrEqual(bounds.maxY, size.height + 1)
+                reconstructed += part.string; next = NSMaxRange(range)
+            }
+            XCTAssertEqual(reconstructed, original)
+        }
+        XCTAssertGreaterThan(fontWeights[1], fontWeights[0]); XCTAssertLessThan(fontWeights[2], fontWeights[0])
+        let importedFamily = "CourierNewPSMT"
+        let regular = ReaderTypography.font(name: importedFamily, size: 23, weight: 0)
+        let bold = ReaderTypography.font(name: importedFamily, size: 23, weight: 1)
+        XCTAssertEqual(bold.familyName, regular.familyName, "Changing weight must retain the selected font family")
+        XCTAssertEqual(bold.pointSize, regular.pointSize)
+    }
+
     @MainActor func testSwiftUIColumnsRetainSeparateFramesAndWrappedText() async {
         let size = CGSize(width: 180, height: 300)
         let original = NSAttributedString(string: String(repeating: "分页正文必须换行。", count: 30), attributes: [.font: UIFont.systemFont(ofSize: 18)])
