@@ -4,6 +4,37 @@ final class SearchAndPreviewUITests: XCTestCase {
     func testDiscoveryPreviewDoesNotAddUntilExplicitlyRequested() { checkPreview(fromSearch: false) }
     func testSearchPreviewDoesNotAddUntilExplicitlyRequested() { checkPreview(fromSearch: true) }
 
+    func testDownloadedFilePreviewCanBeAddedWithoutLosingOfflineChapters() {
+        continueAfterFailure = false; executionTimeAllowance = 240
+        let app = XCUIApplication()
+        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--reading-preview-fixture", "--file-reading-preview-fixture"]
+        app.launch()
+        defer {
+            app.terminate(); app.launchArguments = ["--source-ui-fixture", "--restore-persistent-fixture"]; app.launch()
+            XCTAssertTrue(app.staticTexts["持久化测试数据已恢复"].waitForExistence(timeout: 15)); app.terminate()
+        }
+        app.tabBars.buttons["搜索"].tap()
+        let field = app.textFields["bookSearch"]
+        XCTAssertTrue(field.waitForExistence(timeout: 15)); field.tap(); field.typeText("文件小说")
+        app.buttons["submitBookSearch"].tap()
+        let result = app.buttons.containing(.staticText, identifier: "文件小说").firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 20)); result.tap()
+        let start = app.buttons["开始阅读"]
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: start)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed); start.tap()
+        XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 30))
+        XCTAssertTrue(app.textViews["readerPage"].label.contains("离线内容一"))
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.buttons["返回"].waitForExistence(timeout: 10)); app.buttons["返回"].tap()
+        let addBook = app.buttons["加入书架"]
+        XCTAssertTrue(addBook.waitForExistence(timeout: 10)); XCTAssertTrue(addBook.isEnabled); addBook.tap()
+        XCTAssertTrue(app.buttons["已在书架"].waitForExistence(timeout: 10))
+        app.terminate(); app.launchArguments = []; app.launch()
+        XCTAssertTrue(result.waitForExistence(timeout: 20)); result.tap()
+        XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.textViews["readerPage"].label.contains("离线内容一"), "文件入架必须保留下载解析后的离线章节")
+    }
+
     private func checkPreview(fromSearch: Bool) {
         continueAfterFailure = false; executionTimeAllowance = 300
         let app = XCUIApplication()

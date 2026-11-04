@@ -106,6 +106,10 @@ struct SourceBookDetailView: View {
     private var existingBook: LocalBook? {
         store.books.first { $0.id == previewBookID || ($0.title == selected.title && $0.author == selected.author && $0.sourceUrl == selected.sourceUrl && $0.sourceName == selected.sourceName) }
     }
+    private var downloadedFileBook: LocalBook? {
+        guard source?.isFile == true else { return nil }
+        return existingBook ?? previewBookID.flatMap { store.readingBook(id: $0) }
+    }
     private var chapterEntries: [(offset: Int, element: BookChapter)] {
         let entries = chapters.enumerated().filter { chapterQuery.isEmpty || $0.element.title.localizedCaseInsensitiveContains(chapterQuery) }
         return reversed ? Array(entries.reversed()) : entries
@@ -296,11 +300,16 @@ struct SourceBookDetailView: View {
 
     private var actions: some View {
         HStack(spacing: 12) {
-            Button { store.addToShelf(makeBook()) } label: {
-                Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
-            }.buttonStyle(.bordered).disabled(existingBook != nil || chapters.isEmpty || loading)
             Button {
-                if source?.isFile == true, let address = downloadURLs.first { Task { await downloadFile(address) } }
+                if source?.isFile == true, downloadedFileBook == nil, let address = downloadURLs.first {
+                    Task { await downloadFile(address, addToShelf: true) }
+                } else { store.addToShelf(makeBook()) }
+            } label: {
+                Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
+            }.buttonStyle(.bordered).disabled(existingBook != nil || loading || downloadingFile || (source?.isFile == true ? downloadURLs.isEmpty && downloadedFileBook == nil : chapters.isEmpty))
+            Button {
+                if let book = downloadedFileBook { readingBook = book }
+                else if source?.isFile == true, let address = downloadURLs.first { Task { await downloadFile(address) } }
                 else { openChapter(nil) }
             } label: {
                 Text(source?.isVideo == true ? (existingBook == nil ? "开始播放" : "继续播放") : (existingBook == nil ? "开始阅读" : "继续阅读")).frame(maxWidth: .infinity, minHeight: 46)
@@ -330,7 +339,7 @@ struct SourceBookDetailView: View {
         }
     }
 
-    @MainActor private func downloadFile(_ address: String) async {
+    @MainActor private func downloadFile(_ address: String, addToShelf: Bool = false) async {
         guard !downloadingFile, let source else { return }
         downloadingFile = true; errorText = ""
         defer { downloadingFile = false }
@@ -339,11 +348,13 @@ struct SourceBookDetailView: View {
             let worker = Task.detached { try await source.downloadBookFile(address, book: target, txtRules: rules) }
             let local = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
             guard !Task.isCancelled, selected.id == target.id else { return }
-            store.openForReading(local); previewBookID = local.id; readingBook = local
+            if addToShelf { store.addToShelf(local); previewBookID = local.id }
+            else { store.openForReading(local); previewBookID = local.id; readingBook = local }
         } catch { errorText = sourceErrorMessage(error) }
     }
 
     private func makeBook() -> LocalBook {
+        if let downloadedFileBook { return downloadedFileBook }
         let preview = previewBookID.flatMap { store.readingBook(id: $0) }
         var book = existingBook ?? preview ?? LocalBook(title: selected.title, author: selected.author, coverUrl: displayBook.cover,
             sourceName: selected.sourceName, sourceUrl: selected.sourceUrl,

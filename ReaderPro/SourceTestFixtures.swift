@@ -271,6 +271,12 @@ struct SourceFixtureRoot: View {
                 store.sources = [matching]
             }
             if ProcessInfo.processInfo.arguments.contains("--reading-preview-fixture") {
+                if ProcessInfo.processInfo.arguments.contains("--file-reading-preview-fixture") {
+                    var file = SourceTestFixtures.json(); file.bookSourceType = 3
+                    file.searchUrl = "/json/file-search"; file.ruleBookInfo.name = ""; file.ruleBookInfo.tocUrl = ""
+                    file.ruleBookInfo.downloadUrls = "$.downloads[*]"
+                    store.sources = [file]
+                }
                 UserDefaults.standard.set(SearchMatchMode.fuzzy.rawValue, forKey: SearchMatchMode.storageKey)
                 UserDefaults.standard.set(0, forKey: "ui.homeTab")
                 UserDefaults.standard.set(true, forKey: "ui.showDiscovery")
