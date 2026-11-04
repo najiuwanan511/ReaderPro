@@ -206,7 +206,12 @@ struct SourceBookDetailView: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) { Button("关闭") { dismiss() } }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) { actions }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // A covered native NavigationStack can retain this inset in
+                // its accessibility tree even when the stack is hidden.
+                // Unmount the detail's actions while its reader is presented.
+                if readingBook == nil { actions }
+            }
             .onChange(of: sourceIndex) { _, _ in
                 discardPreview()
                 chapters = []; info = nil; loading = true; chapterQuery = ""
@@ -227,9 +232,6 @@ struct SourceBookDetailView: View {
                 Button("确定") { actionMessage = "" }
             } message: { Text(actionMessage) }
         }
-        // Keep the covered detail out of VoiceOver/XCTest while the full-screen
-        // reader is active. Previewing deliberately leaves its add button intact.
-        .accessibilityHidden(readingBook != nil)
         // Present above the detail container. A pushed reader inside a sheet
         // inherits its top gap and the detail screen's bottom action inset.
         .fullScreenCover(item: $readingBook) { book in
