@@ -47,6 +47,7 @@ jobs:
             -parallel-testing-enabled NO \
             -only-testing:ReaderProUITests/SourceFlowUITests/testReaderReplacementEntryEditsSavesAndRestoresRawContent \
             -only-testing:ReaderProUITests/SourceImportLoginUITests \
+            -only-testing:ReaderProUITests/ReaderSettingsUITests/testSourceConcurrencySettingsPersistAfterRelaunch \
             -test-timeouts-enabled YES -default-test-execution-time-allowance 300 \
             -maximum-test-execution-time-allowance 600 \
             -resultBundlePath build/ReplacementEditorRegression.xcresult \
