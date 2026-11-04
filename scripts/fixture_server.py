@@ -24,6 +24,15 @@ validation_page_lock = threading.Lock()
 validation_page_counts = {}
 remote_library_files = {'/remote-library/Book.txt': '第一章 开始\n远程书库正文'.encode('utf-8')}
 
+class FixtureHTTPServer(ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer normally reverse-resolves its bind address. Hosted Intel
+        # runners can stall there before the local health endpoint even opens.
+        # These deterministic fixtures never need an externally resolved name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = 'localhost'
+        self.server_port = self.server_address[1]
+
 class SocksFixture(socketserver.BaseRequestHandler):
     """Minimal SOCKS5 endpoint proving that URLSession uses the proxy."""
     def read_exact(self, count):
@@ -672,7 +681,7 @@ if __name__ == '__main__':
                     '-days', '1', '-subj', '/CN=localhost'], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     print('Binding TLS fixture on 8766', flush=True)
-    tls = ThreadingHTTPServer(('0.0.0.0', 8766), Handler)
+    tls = FixtureHTTPServer(('0.0.0.0', 8766), Handler)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.load_cert_chain('build/fixture-cert.pem', 'build/fixture-key.pem')
     tls.socket = context.wrap_socket(tls.socket, server_side=True)
@@ -684,12 +693,12 @@ if __name__ == '__main__':
     socks_auth.expected_credentials = (b'fixture-user', b'fixture-pass')
     threading.Thread(target=socks_auth.serve_forever, daemon=True).start()
     print('Binding HTTP proxy fixtures', flush=True)
-    auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8768), Handler)
+    auth_proxy = FixtureHTTPServer(('0.0.0.0', 8768), Handler)
     auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
     threading.Thread(target=auth_proxy.serve_forever, daemon=True).start()
-    persistent_auth_proxy = ThreadingHTTPServer(('0.0.0.0', 8770), Handler)
+    persistent_auth_proxy = FixtureHTTPServer(('0.0.0.0', 8770), Handler)
     persistent_auth_proxy.expected_proxy_auth = 'Basic ' + base64.b64encode(b'fixture-user:fixture-pass').decode('ascii')
     persistent_auth_proxy.persistent_proxy_auth = True
     threading.Thread(target=persistent_auth_proxy.serve_forever, daemon=True).start()
     print('Binding primary HTTP fixture on 8765', flush=True)
-    ThreadingHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()
+    FixtureHTTPServer(('0.0.0.0', 8765), Handler).serve_forever()
