@@ -16,9 +16,13 @@
 
 ## 当前验收状态（2026-11-04）
 
-- `53a0b9f` 规则回归 [41778736783](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778736783)：205 项全部通过，5 项新增排版包测试均通过。Debug [41778764359](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778764359) 前置 9 UI 中 8 通过、1 失败，新增排版导入/保存/应用/重启后正文背景像素检查通过；主题用例在进入设置前失败。失败录屏和控件树显示点击「我的」后仍选中「书架」，未执行到原颜色断言。当前移除 TabView 根部的导航样式包装，底栏样式只由根 TabView 处理，内页只更新导航栏；新增单击标签选中、主题刷新后切换全部标签和保留导航进度断言。此候选尚待新回归，不把前置失败算作全量通过。
+- 本轮交付产品代码固定为 `eab49ad`；验收结束后的提交仅更新此文档，使用 `[skip ci]` 避免重复构建，不改变已验收代码。按用户既有授权将 `fix/legado-parity` 正常快进到 main。安装包以其内置产品提交号为准；以下历史中的“进行中”“待验证”描述只对应当时提交，当前结论以本节首部为准。
+- 当前产品候选为 `eab49ad5be1b5be54b22f835beef69dd8fafecc9`，规则回归 [41781041419](https://github.com/najiuwanan511/ReaderPro/actions/runs/41781041419) 的 205 项全部通过。完整 Debug/IPA [41781089501](https://github.com/najiuwanan511/ReaderPro/actions/runs/41781089501) 的 261 单测、48 UI 全部通过，前置 9 UI 通过但不重复累计；正文像素检查成功，28 张截图已人工检查。移除 TabView 根部导航样式包装后，底栏由根 TabView 管理、内页仅控制导航栏；真实颜色、主题刷新后单击全部标签和保留导航进度断言通过。iPhone 14 Pro Max / iOS 17.0 Release [41781089448](https://github.com/najiuwanan511/ReaderPro/actions/runs/41781089448) 已完成：261 项单测、48 项 UI 全部通过，0 失败、0 跳过；28 张截图已人工检查，包含主题配色与导航、排版重启后正文、发现滚动、目录、验证/登录和实际视频播放。
+- IPA 已生成并核验：`ReaderPro-1.1.0-eab49ad-unsigned.ipa`，build 146，内置提交号对应上述候选，中文、arm64 真机二进制、最低 iOS 17，排除调试入口及不兼容的 Swift WebKit overlay；SHA-256 `93e568d5550a0f4d27863f8bd63ab2aabdc0e68af1c6876a2421fdbd0be9acf2`。安装包核验不等于实体 iPhone/TrollStore 测试。
+- 下方记录包含中间候选、失败与取消历史，不代表当前候选结果。新排版包已补充导入、保存、应用、字体与背景资源及重启流程；仍缺完整标题、页眉页脚、非对称边距、透明度与九宫格背景映射。完整 JVM/Rhino、部分 DASH 格式、完整 Flexbox 及逐屏 UI 也未齐，不能宣称与安卓全部等价；没有实体 iPhone/TrollStore 验收证据。
+- `53a0b9f` 规则回归 [41778736783](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778736783)：205 项全部通过，5 项新增排版包测试均通过。Debug [41778764359](https://github.com/najiuwanan511/ReaderPro/actions/runs/41778764359) 前置 9 UI 中 8 通过、1 失败，新增排版导入/保存/应用/重启后正文背景像素检查通过；主题用例在进入设置前失败。失败录屏和控件树显示点击「我的」后仍选中「书架」，未执行到原颜色断言。当前移除 TabView 根部的导航样式包装，底栏样式只由根 TabView 处理，内页只更新导航栏；新增单击标签选中、主题刷新后切换全部标签和保留导航进度断言。这是当时失败与待验证状态；后续 eab49ad 的完整 Debug 与 iOS 17 Release 已通过，原失败记录仍保留。
 - `65caea1` 规则回归 [41776092353](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776092353)：200 项全部通过。完整 Debug [41776109747](https://github.com/najiuwanan511/ReaderPro/actions/runs/41776109747) 的前置 8 UI 中 7 通过、1 失败，尚未进入全量测试且没有生成 IPA。主题应用后实际导航层级变为「我的」，原像素断言因找不到「导入主题」导航栏而失败；当前修正保持导航修饰器内容身份、只更新工具栏参数，保留原颜色和流程断言，等待新回归。
-- 新增排版包候选：对照 `ReadBookConfig.Config` 和 `BgTextConfigDialog.exportConfig`，接入 `legado/yuedu://import/readConfig`、网络 ZIP/JSON 和文件导入，先预览保存再选择应用；保留原配置及包内字体、背景，按名称更新并重启后读取。字距按 em 转点数、行距/段距按当前字体行高换算，保留安卓翻页枚举映射。标题、页眉页脚等未映射字段、边距取均值和配色不自动切换均在预览说明，不能算完整排版移植。新增实际 ZIP/字体/背景、存储替换、错误原子性、枚举与分页和真实 UI 重启流程测试；尚待 Xcode 运行。
+- 新增排版包候选：对照 `ReadBookConfig.Config` 和 `BgTextConfigDialog.exportConfig`，接入 `legado/yuedu://import/readConfig`、网络 ZIP/JSON 和文件导入，先预览保存再选择应用；保留原配置及包内字体、背景，按名称更新并重启后读取。字距按 em 转点数、行距/段距按当前字体行高换算，保留安卓翻页枚举映射。标题、页眉页脚等未映射字段、边距取均值和配色不自动切换均在预览说明，不能算完整排版移植。新增实际 ZIP/字体/背景、存储替换、错误原子性、枚举与分页和真实 UI 重启流程测试；已在 eab49ad 的规则、完整 Debug 及 iOS 17 Release 中通过。
 - 已验证的代理修复：`54c8b64`。iOS 17 Release 生产专项 [41675972197](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675972197) 的 26 项全部通过，覆盖普通 HTTP、HTTPS 证书策略、认证 SOCKS、代理隔离，以及真实 SwiftUI 登录、订阅和视频网页；当前系统规则回归 [41675970245](https://github.com/najiuwanan511/ReaderPro/actions/runs/41675970245) 的 197 项全部通过。
 - 主题候选 `2844d42` 两轮 CI 在编译时失败，原因是新增样例 JSON 的 `#` 颜色提前结束 Swift 原始字符串，未执行产品测试、未生成 IPA。`758a38a` 修正定界符，规则回归 [41768535383](https://github.com/najiuwanan511/ReaderPro/actions/runs/41768535383) 的 199 项全部通过；Debug [41768537601](https://github.com/najiuwanan511/ReaderPro/actions/runs/41768537601) 前置 8 UI 中 7 通过、1 失败（首次验证页空白，没有向样例服务器发送请求），未进入全量测试，也未生成 IPA。主题导入/应用/删除的实际 UI 流程已通过并检查截图。iOS 17 Release 回归仍待结果。
 - `eec11e4` 增加普通/粗体/细体与负字距，复用选定字体家族参与实际分页；修正脚本字距由 TextKit 点数转换为安卓 em。`14f8880` 调整验证页为非零尺寸、挂入窗口后才发起首次导航，并在页面移除时取消准备任务。原验证 UI 断言和等待时间均保留；上述候选等待新回归，不能把初始化时序推断当作根因已证实。
@@ -32,7 +36,7 @@
 - `7d3bee9` 独立规则复跑 41773527036 仍为 199 通过、1 失败：本次网页跳转捕获通过，失败改为证书兼容网页在页面加载阶段超时。两次失败均保留；同提交完整 Debug 包含上述原用例并通过，尚不能把独立运行的间歇失败归为已解决。
 - 主题页面颜色继续修正：导航样式只保留一次背景设置，避免旧 surface 偏好覆盖主题主色；页面背景和导航订阅主题库更新，实色背景直接取所选主题；导航文字按安卓主色亮度选择明暗。原主题 UI 用例新增真实截图的导航与页面背景颜色断言，保留导入、应用和删除流程，等待新回归。
 - 旧应用 iOS 17 完整回归 [41671341027](https://github.com/najiuwanan511/ReaderPro/actions/runs/41671341027)：246 单测中 243 通过、3 项旧代理失败；46 UI 全部通过。该运行不包含上述代理修复，整体失败，不能记为新版本完整验收。
-- 目前已有安装包仍是 `7897750`，不能作为代理和主题修复后的新版。未进行实体 iPhone/TrollStore 验收；未完成的 JVM、DASH、排版和界面差异见下表。
+- 历史时点的安装包为 `7897750`，现已由顶部记录的 `eab49ad` 包替代。未进行实体 iPhone/TrollStore 验收；未完成的 JVM、DASH、排版和界面差异见下表。
 
 ## 2026-11-03 实施记录
 
