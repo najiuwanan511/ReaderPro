@@ -281,7 +281,6 @@ struct SourceFixtureRoot: View {
                 UserDefaults.standard.set(SearchMatchMode.fuzzy.rawValue, forKey: SearchMatchMode.storageKey)
                 UserDefaults.standard.set(0, forKey: "ui.homeTab")
                 UserDefaults.standard.set(true, forKey: "ui.showDiscovery")
-                store.save()
             }
             if ProcessInfo.processInfo.arguments.contains("--discovery-controls-fixture") {
                 var alternate = SourceTestFixtures.html()
@@ -362,6 +361,7 @@ struct SourceFixtureRoot: View {
                     persistenceStatus = "测试准备失败：无法读取书源合集"
                 }
             }
+            if ProcessInfo.processInfo.arguments.contains("--reading-preview-fixture") { store.save() }
         }.overlay(alignment: .top) {
             if !persistenceStatus.isEmpty { Text(persistenceStatus).font(.caption).padding(6).background(.white) }
         }

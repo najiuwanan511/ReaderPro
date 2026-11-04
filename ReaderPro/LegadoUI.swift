@@ -110,6 +110,9 @@ struct SourceBookDetailView: View {
         guard source?.isFile == true else { return nil }
         return existingBook ?? previewBookID.flatMap { store.readingBook(id: $0) }
     }
+    private var currentReadingBook: LocalBook? {
+        existingBook ?? previewBookID.flatMap { store.readingBook(id: $0) }
+    }
     private var chapterEntries: [(offset: Int, element: BookChapter)] {
         let entries = chapters.enumerated().filter { chapterQuery.isEmpty || $0.element.title.localizedCaseInsensitiveContains(chapterQuery) }
         return reversed ? Array(entries.reversed()) : entries
@@ -181,7 +184,7 @@ struct SourceBookDetailView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Menu {
                         Button("编辑书籍信息 / 变量") {
-                            let book = makeBook(); store.openForReading(book)
+                            let book = currentReadingBook ?? makeBook(); store.openForReading(book)
                             if existingBook == nil { previewBookID = book.id }
                             editingBook = book
                         }.disabled(loading)
@@ -303,7 +306,7 @@ struct SourceBookDetailView: View {
             Button {
                 if source?.isFile == true, downloadedFileBook == nil, let address = downloadURLs.first {
                     Task { await downloadFile(address, addToShelf: true) }
-                } else { store.addToShelf(makeBook()) }
+                } else { store.addToShelf(currentReadingBook ?? makeBook()) }
             } label: {
                 Text(existingBook == nil ? "加入书架" : "已在书架").frame(maxWidth: .infinity, minHeight: 46)
             }.buttonStyle(.bordered).disabled(existingBook != nil || loading || downloadingFile || (source?.isFile == true ? downloadURLs.isEmpty && downloadedFileBook == nil : chapters.isEmpty))
@@ -359,6 +362,10 @@ struct SourceBookDetailView: View {
         var book = existingBook ?? preview ?? LocalBook(title: selected.title, author: selected.author, coverUrl: displayBook.cover,
             sourceName: selected.sourceName, sourceUrl: selected.sourceUrl,
             fileName: selected.title + ".web", kind: source?.localBookKind ?? "web")
+        if book.sourceUrl != selected.sourceUrl || book.sourceName != selected.sourceName {
+            book.chapterIndex = 0; book.charOffset = 0; book.paragraphIndex = 0; book.progress = 0
+        }
+        book.sourceUrl = selected.sourceUrl; book.sourceName = selected.sourceName
         if let source { book.kind = source.localBookKind }
         book.bookUrl = displayBook.url; book.tocUrl = displayBook.tocUrl ?? ""
         // Refresh the directory without discarding already downloaded content.
@@ -381,7 +388,7 @@ struct SourceBookDetailView: View {
             guard chapters.indices.contains(index), !chapters[index].isVolume,
                   expectedChapterID == nil || chapters[index].id == expectedChapterID else { return }
         }
-        var book = makeBook()
+        var book = (index == nil ? currentReadingBook : nil) ?? makeBook()
         if let index { book.chapterIndex = index; book.charOffset = 0; book.paragraphIndex = 0 }
         store.openForReading(book)
         if existingBook == nil { previewBookID = book.id }

@@ -39,6 +39,7 @@ final class SearchAndPreviewUITests: XCTestCase {
         continueAfterFailure = false; executionTimeAllowance = 300
         let app = XCUIApplication()
         app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--reading-preview-fixture"]
+            + (fromSearch ? ["--source-switch-fixture"] : [])
         app.launch()
         defer {
             app.terminate(); app.launchArguments = ["--source-ui-fixture", "--restore-persistent-fixture"]; app.launch()
@@ -81,6 +82,18 @@ final class SearchAndPreviewUITests: XCTestCase {
         XCTAssertTrue(app.buttons["分类"].waitForExistence(timeout: 15)); app.buttons["分类"].tap()
         XCTAssertTrue(result.waitForExistence(timeout: 20)); result.tap()
         XCTAssertTrue(app.staticTexts["目录 · 6 章"].waitForExistence(timeout: 20))
+        if fromSearch {
+            app.buttons["开始阅读"].tap()
+            XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 20))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            app.buttons["更多操作"].tap(); app.buttons["切换书源"].tap()
+            let directory = app.buttons["查看备用测试书源目录"]
+            XCTAssertTrue(directory.waitForExistence(timeout: 30)); directory.tap()
+            XCTAssertTrue(app.buttons["sourceDirectoryChapter-0"].waitForExistence(timeout: 15)); app.buttons["sourceDirectoryChapter-0"].tap()
+            XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 20))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            XCTAssertTrue(app.buttons["返回"].waitForExistence(timeout: 10)); app.buttons["返回"].tap()
+        }
         let addBook = app.buttons["加入书架"]
         let canAdd = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: addBook)
         XCTAssertEqual(XCTWaiter.wait(for: [canAdd], timeout: 10), .completed); addBook.tap()
@@ -88,6 +101,13 @@ final class SearchAndPreviewUITests: XCTestCase {
         app.terminate(); app.launchArguments = []; app.launch()
         XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 20))
         XCTAssertEqual(app.staticTexts.matching(identifier: title).count, 1)
+        if fromSearch {
+            result.tap()
+            XCTAssertTrue(app.textViews["readerPage"].waitForExistence(timeout: 20))
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap(); app.buttons["目录"].tap()
+            XCTAssertTrue(app.buttons["readerChapter-0"].waitForExistence(timeout: 10))
+            XCTAssertFalse(app.buttons["readerChapter-1"].exists, "试读换源后加入书架应保留备用源的一章目录")
+        }
     }
 
     func testExactAndFuzzySearchFilterNoiseAndPersistSelection() {
