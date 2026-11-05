@@ -21,16 +21,16 @@ enum SourceImagePipeline {
         guard let source else {
             let request = try SourceHTTP.request(address, base: address)
             let (data, response) = try await SourceHTTP.session.data(for: request)
-            guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
-                throw SourceFailure(stage: "图片", message: "图片请求失败", url: address)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw SourceFailure(stage: "图片", message: "图片请求失败（HTTP \(http.statusCode)）", url: address)
             }
             return data
         }
         return try await source.withRules {
             let request = try SourceHTTP.request(address, base: source.bookSourceUrl, headers: source.requestHeaders)
             let (data, response) = try await SourceTLS.data(for: request)
-            guard (response as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true else {
-                throw SourceFailure(stage: "图片", message: "图片请求失败", url: address)
+            if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                throw SourceFailure(stage: "图片", message: "图片请求失败（HTTP \(http.statusCode)）", url: address)
             }
             return try decode(data, source: source, cover: cover, url: address)
         }
