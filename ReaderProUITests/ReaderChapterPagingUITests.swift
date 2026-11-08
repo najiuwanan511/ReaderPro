@@ -41,6 +41,81 @@ final class ReaderChapterPagingUITests: XCTestCase {
             .matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
 
+    private func openCatalog(_ app: XCUIApplication) {
+        let button = app.buttons["目录"]
+        if !button.exists {
+            app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        XCTAssertTrue(button.waitForExistence(timeout: 10)); button.tap()
+        XCTAssertTrue(app.navigationBars["目录"].waitForExistence(timeout: 10))
+    }
+
+    private func assertCatalogStarts(at index: Int, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let catalog = app.descendants(matching: .any).matching(identifier: "readerCatalog").firstMatch
+        let row = app.buttons["readerChapter-\(index)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), file: file, line: line)
+        let aligned = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            let top = max(catalog.frame.minY, app.navigationBars["目录"].frame.maxY)
+            return row.isHittable && row.frame.minY >= top - 2 && row.frame.minY <= top + 40
+        }, object: row)
+        XCTAssertEqual(XCTWaiter.wait(for: [aligned], timeout: 10), .completed,
+                       "当前阅读章节应位于目录顶部：\(row.frame)，目录：\(catalog.frame)", file: file, line: line)
+        let next = app.buttons["readerChapter-\(index + 1)"]
+        let afterNext = app.buttons["readerChapter-\(index + 2)"]
+        XCTAssertTrue(next.isHittable && afterNext.isHittable, file: file, line: line)
+        XCTAssertLessThan(row.frame.minY, next.frame.minY, file: file, line: line)
+        XCTAssertLessThan(next.frame.minY, afterNext.frame.minY, file: file, line: line)
+        if index > 0 { XCTAssertFalse(app.buttons["readerChapter-\(index - 1)"].isHittable, file: file, line: line) }
+    }
+
+    func testCatalogStartsAtCurrentChapterAndFollowsJumpAfterReopenAndRelaunch() {
+        let app = XCUIApplication()
+        XCUIDevice.shared.orientation = .portrait
+        app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=0", "--reader-catalog-position-fixture"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "目录定位第70章正文标记").waitForExistence(timeout: 20))
+        openCatalog(app)
+        assertCatalogStarts(at: 69, in: app)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "目录打开定位第70章并按70-71-72显示"; shot.lifetime = .keepAlways; add(shot)
+
+        // Earlier chapters remain available; closing and reopening must locate
+        // the reading position again, rather than keep this manual scroll.
+        app.swipeDown()
+        XCTAssertTrue(app.buttons["readerChapter-68"].isHittable)
+        app.buttons["关闭"].tap()
+        openCatalog(app)
+        assertCatalogStarts(at: 69, in: app)
+        app.buttons["readerChapter-71"].tap()
+        XCTAssertTrue(page(app, containing: "目录定位第72章正文标记").waitForExistence(timeout: 20))
+        openCatalog(app)
+        assertCatalogStarts(at: 71, in: app)
+        app.buttons["关闭"].tap()
+        app.terminate()
+
+        app.launchArguments = ["--reader-boundary-fixture", "--reader-mode=0", "--reader-catalog-position-fixture"]
+        app.launch()
+        XCTAssertTrue(page(app, containing: "目录定位第72章正文标记").waitForExistence(timeout: 20))
+        openCatalog(app)
+        assertCatalogStarts(at: 71, in: app)
+    }
+
+    func testCatalogKeepsFirstAndLastChaptersReachable() {
+        for number in [1, 120] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--reader-boundary-fixture", "--reset-reader-boundary", "--reader-mode=0", "--reader-catalog-position-fixture", "--reader-catalog-start=\(number)"]
+            app.launch()
+            XCTAssertTrue(page(app, containing: "目录定位第\(number)章正文标记").waitForExistence(timeout: 20))
+            openCatalog(app)
+            let row = app.buttons["readerChapter-\(number - 1)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            XCTAssertTrue(row.isHittable, "首章和末章都应在打开目录时可见")
+            row.tap()
+            XCTAssertTrue(page(app, containing: "目录定位第\(number)章正文标记").waitForExistence(timeout: 10))
+            app.terminate()
+        }
+    }
+
     private func exercisePagedMode(_ mode: Int) {
         let app = launch(mode: mode)
         XCTAssertTrue(page(app, containing: "第一章分页内容").waitForExistence(timeout: 30))

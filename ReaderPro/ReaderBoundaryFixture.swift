@@ -38,6 +38,14 @@ struct ReaderBoundaryFixtureRoot: View {
                 BookChapter(id: "boundary-third", title: "第三章", text: "第三章正文标记")
             ]
             book.chapterIndex = args.contains("--reader-start-second") ? 1 : 0
+            if args.contains("--reader-catalog-position-fixture") {
+                book.chapters = (1...120).map { number in
+                    BookChapter(id: "catalog-\(number)", title: "第\(number)章", text: "目录定位第\(number)章正文标记")
+                }
+                let start = args.first(where: { $0.hasPrefix("--reader-catalog-start=") })
+                    .flatMap { Int($0.dropFirst("--reader-catalog-start=".count)) } ?? 70
+                book.chapterIndex = boundedReadingIndex(start - 1, count: book.chapters.count)
+            }
             store.books = [book]
             store.sources = [source]
             if args.contains("--reader-bookmark-fixture") {

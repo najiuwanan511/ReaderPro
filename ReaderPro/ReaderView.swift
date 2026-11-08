@@ -1213,25 +1213,36 @@ private final class ReaderScrollProgress {
 
     var catalogSheet: some View {
         NavigationStack {
-            List {
-                ForEach(Array((book?.chapters ?? []).enumerated()), id: \.offset) { entry in
-                    Button {
-                        showCatalog = false
-                        showMenu = false
-                        guard let current = book, current.chapters.indices.contains(entry.offset),
-                              current.chapters[entry.offset].id == entry.element.id else { return }
-                        openChapter(entry.offset, atStart: true)
-                    } label: {
-                        HStack {
-                            Text(store.purify(entry.element.displayTitle, book: book, title: true))
-                                .foregroundColor(entry.offset == chapterIndex ? Color.accentColor : .primary)
-                            Spacer()
-                            if entry.offset == chapterIndex { Image(systemName: "checkmark") }
-                            if !entry.element.text.hasPrefix("__URL__") { Image(systemName: "checkmark.circle").foregroundStyle(.secondary) }
+            ScrollViewReader { proxy in
+                List {
+                    ForEach(Array((book?.chapters ?? []).enumerated()), id: \.offset) { entry in
+                        Button {
+                            showCatalog = false
+                            showMenu = false
+                            guard let current = book, current.chapters.indices.contains(entry.offset),
+                                  current.chapters[entry.offset].id == entry.element.id else { return }
+                            openChapter(entry.offset, atStart: true)
+                        } label: {
+                            HStack {
+                                Text(store.purify(entry.element.displayTitle, book: book, title: true))
+                                    .foregroundColor(entry.offset == chapterIndex ? Color.accentColor : .primary)
+                                Spacer()
+                                if entry.offset == chapterIndex { Image(systemName: "checkmark") }
+                                if !entry.element.text.hasPrefix("__URL__") { Image(systemName: "checkmark.circle").foregroundStyle(.secondary) }
+                            }
                         }
+                        .accessibilityIdentifier("readerChapter-\(entry.offset)")
+                        .accessibilityValue(entry.element.text.hasPrefix("__URL__") ? "未缓存" : "已缓存")
+                        .id(entry.offset)
                     }
-                    .accessibilityIdentifier("readerChapter-\(entry.offset)")
-                    .accessibilityValue(entry.element.text.hasPrefix("__URL__") ? "未缓存" : "已缓存")
+                }
+                .accessibilityIdentifier("readerCatalog")
+                .task {
+                    // Wait for the sheet's list to mount before locating a lazy row.
+                    // Run on every presentation, using the reader's live position.
+                    await Task.yield()
+                    guard let book, !book.chapters.isEmpty, !Task.isCancelled else { return }
+                    proxy.scrollTo(boundedReadingIndex(chapterIndex, count: book.chapters.count), anchor: .top)
                 }
             }
             .navigationTitle("目录")
