@@ -433,6 +433,24 @@ final class SourceEngineTests: XCTestCase {
         }
     }
 
+    func testListScriptsKeepBookChangesBetweenFieldsAndIsolateItems() async throws {
+        var source = SourceTestFixtures.json()
+        // 八叉书库's name script sets book.bookUrl; its URL rule reads it
+        // in a separate evaluation. Book names/authors also belong to the row.
+        source.ruleSearch.bookList = "$.items[*]"
+        source.ruleSearch.name = #"$.name<js>if(java.getString('$.id')!=='') book.bookUrl='/book/'+java.getString('$.id'); result</js>"#
+        source.ruleSearch.author = "@js:book.name+'作者'"
+        source.ruleSearch.bookUrl = "@js:book.bookUrl"
+        source.ruleSearch.coverUrl = ""
+        source.ruleSearch.intro = ""
+        let response = SourcePage(text: #"{"items":[{"id":"a","name":"甲"},{"id":"b","name":"乙"},{"name":"丙"}]}"#, url: base + "/books")
+        let books = try await source.withRules { try source.parseBooks(response, rule: source.ruleSearch, stage: "搜索") }
+        XCTAssertEqual(books.map(\.title), ["甲", "乙", "丙"])
+        XCTAssertEqual(books.map(\.author), ["甲作者", "乙作者", "丙作者"])
+        XCTAssertEqual(books.map(\.url), [base + "/book/a", base + "/book/b", response.url])
+        XCTAssertNil(LegadoJSCtx.bookState)
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

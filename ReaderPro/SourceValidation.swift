@@ -96,7 +96,7 @@ enum SourceValidation {
         var source = source
         source.id = ""; source.enabled = true; source.bookSourceGroup = ""
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
-        var data = Data("source-engine-20261104-v15".utf8)
+        var data = Data("source-engine-20261108-v16".utf8)
         data.append(SourceTLS.isAllowed(source.bookSourceUrl) ? 1 : 0)
         data.append((try? encoder.encode(source)) ?? Data())
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()

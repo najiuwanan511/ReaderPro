@@ -39,6 +39,16 @@ final class LegadoJS {
         var coverUrl = ""
     }
 
+    final class BookState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var context: BookCtx
+        init(_ context: BookCtx = .init()) { self.context = context }
+        var snapshot: BookCtx { lock.lock(); defer { lock.unlock() }; return context }
+        func update(_ operation: (inout BookCtx) -> Void) {
+            lock.lock(); defer { lock.unlock() }; operation(&context)
+        }
+    }
+
     // 可变引用盒：@convention(block) 闭包间共享的可变并发数（避免捕获 var 装箱的不确定性）
     final class ConcurrentBox {
         var value: Int = 0
@@ -487,7 +497,8 @@ final class LegadoJS {
         ctx.setObject(source, forKeyedSubscript: "source" as NSString)
 
         // ---- book 对象 ----
-        let b = book ?? BookCtx()
+        let bookState = LegadoJSCtx.bookState
+        let b = bookState?.snapshot ?? book ?? BookCtx()
         let bookObj = JSValue(newObjectIn: ctx)!
         bookObj.setObject(b.bookUrl, forKeyedSubscript: "bookUrl" as NSString)
         bookObj.setObject(b.name, forKeyedSubscript: "name" as NSString)
@@ -765,6 +776,22 @@ final class LegadoJS {
         guard exception.isEmpty else {
             LegadoJSCtx.failures?.add(exception)
             return ""
+        }
+        // Each list item owns this state. A name/init script can set bookUrl
+        // for a later URL rule, as in Android's shared ruleData object, without
+        // sharing JavaScriptCore values or mutations with another item.
+        if let bookState {
+            func field(_ key: String, _ fallback: String) -> String {
+                guard let value = bookObj.objectForKeyedSubscript(key), !value.isNull, !value.isUndefined else { return fallback }
+                return value.toString() ?? fallback
+            }
+            bookState.update {
+                $0.bookUrl = field("bookUrl", b.bookUrl)
+                $0.name = field("name", b.name)
+                $0.author = field("author", b.author)
+                $0.tocUrl = field("tocUrl", b.tocUrl)
+                $0.coverUrl = field("coverUrl", b.coverUrl)
+            }
         }
         if let urlContext, let updated = java.objectForKeyedSubscript("url"), !updated.isUndefined, !updated.isNull {
             urlContext.url = updated.toString() ?? urlContext.url

@@ -51,6 +51,26 @@ final class DiscoveryPaginationTests: XCTestCase {
             XCTAssertTrue(end.isEmpty)
         }
     }
+
+    func testDiscoveryListScriptsSeeTheRequestedPageWithoutLeakingIt() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://discover-pages.test"
+        source.ruleExplore.bookList = "$.items[*]"
+        source.ruleExplore.name = "@js:JSON.parse(result).name+'|'+page"
+        source.ruleExplore.bookUrl = "$.url"
+        let category = ExploreCategory(title: "分类", url: "/list?page={{page}}")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [DiscoveryPageProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        try await SourceHTTP.$testSession.withValue(session) {
+            let second = try await source.discover(category: category, page: 2)
+            let first = try await source.discover(category: category, page: 1)
+            XCTAssertEqual(second.map(\.title), ["第二页|2"])
+            XCTAssertEqual(first.map(\.title), ["第一页|1"])
+        }
+        XCTAssertEqual(LegadoJSCtx.page, 1)
+    }
     func testJSONCategoriesPreserveHeadingsControlsAndSourceStylesBeforeTextSeparators() throws {
         let text = #"""
         [

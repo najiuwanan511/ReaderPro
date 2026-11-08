@@ -65,6 +65,21 @@ jobs:
           set -o pipefail
           DEVICE=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if "iPhone" in x["name"]))')
           echo "READER_SIMULATOR_ID=$DEVICE" >> "$GITHUB_ENV"
+          if [ "$SOURCE_AUDIT_PACK_ID" = "1332" ]; then
+            # These fixtures run locally, so a broken website cannot hide a
+            # regression in stored fields, per-item state or category paging.
+            xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
+              -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
+              -enableAddressSanitizer ${{ inputs.sanitizer }} -enableCodeCoverage NO \
+              -only-testing:ReaderProTests/SourceEngineTests/testStoredDetailFieldsAreLiteralValuesAndReplacementKeepsItsSelector \
+              -only-testing:ReaderProTests/SourceEngineTests/testDetailInitializationRestoresStoredNovelAndComicFields \
+              -only-testing:ReaderProTests/SourceEngineTests/testListScriptsKeepBookChangesBetweenFieldsAndIsolateItems \
+              -only-testing:ReaderProTests/SourceEngineTests/testRuleTemplatesRecursiveJSONAndStoredValues \
+              -only-testing:ReaderProTests/SourceEngineTests/testRealPackJavaScriptRuleTemplatesExpandBeforeEvaluation \
+              -only-testing:ReaderProTests/DiscoveryPaginationTests/testDiscoveryListScriptsSeeTheRequestedPageWithoutLeakingIt \
+              -resultBundlePath build/Source1332Compatibility.xcresult \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-1332-compatibility.log
+          fi
           xcodebuild test -project ReaderPro.xcodeproj -scheme ReaderPro -configuration Debug \
             -destination "platform=iOS Simulator,id=$DEVICE" -parallel-testing-enabled NO \
             -enableAddressSanitizer ${{ inputs.sanitizer }} -enableCodeCoverage NO \

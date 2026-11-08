@@ -10,6 +10,7 @@ enum LegadoJSCtx {
     @TaskLocal static var key: String = ""
     @TaskLocal static var page: Int = 1
     @TaskLocal static var book: LegadoJS.BookCtx? = nil
+    @TaskLocal static var bookState: LegadoJS.BookState? = nil
     @TaskLocal static var chapter: BookChapter?
     @TaskLocal static var library = ""
     @TaskLocal static var comment = ""
@@ -1434,14 +1435,18 @@ extension LegadoSource {
         }
         var seen = Set<String>()
         let books = try blocks.compactMap { block -> SourceBook? in
+          let state = LegadoJS.BookState()
+          return try LegadoJSCtx.$bookState.withValue(state) {
             try Task.checkCancellation()
             let name = applyRuleFirst(block, rule.name, base: response.url)
             try LegadoJSCtx.failures?.check()
             // Search APIs may mix recommendation/group rows with book rows.
             // Do not evaluate a book-ID script on entries with no book name.
             guard !name.isEmpty else { return nil }
+            state.update { $0.name = name }
             let author = applyRuleFirst(block, rule.author, base: response.url)
             try LegadoJSCtx.failures?.check()
+            state.update { $0.author = author }
             var warnings: [String] = []
             let intro = try optionalMetadata(block, rule: rule.intro, base: response.url, field: "搜索简介", warnings: &warnings)
             let cover = try optionalMetadata(block, rule: rule.coverUrl, base: response.url, field: "搜索封面", warnings: &warnings)
@@ -1456,6 +1461,7 @@ extension LegadoSource {
             book.intro = intro
             book.ruleWarnings = warnings.isEmpty ? nil : warnings
             return book
+          }
         }
         try LegadoJSCtx.failures?.check()
         return reverse ? Array(books.reversed()) : books
@@ -1477,6 +1483,7 @@ extension LegadoSource {
     }
 
     func discover(category: ExploreCategory? = nil, page: Int = 1) async throws -> [SourceBook] {
+      try await LegadoJSCtx.$page.withValue(max(1, page)) {
         try await withRules {
             guard let category = category ?? exploreCategories().first(where: \.canNavigate) else {
                 throw SourceFailure(stage: "发现分类", message: "没有解析到分类，请检查 exploreUrl 或脚本兼容性")
@@ -1492,6 +1499,7 @@ extension LegadoSource {
             }
             return books
         }
+      }
     }
 
     func fetchBookInfo(book: SourceBook) async throws -> SourceBook {
