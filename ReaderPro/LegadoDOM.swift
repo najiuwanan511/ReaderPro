@@ -2,6 +2,49 @@ import Foundation
 import Kanna
 import SwiftSoup
 
+// Swift's cooperative workers have small native stacks. A source can enter
+// SwiftSoup from nested JS/template callbacks on top of many TaskLocal scopes,
+// exhausting that stack even for ordinary HTML (1332 crash evidence). Parse
+// and serialize on two bounded workers; only strings cross the boundary.
+private final class SourceDOMWorkers: @unchecked Sendable {
+    static let shared = SourceDOMWorkers()
+    private let condition = NSCondition()
+    private var jobs: [() -> Void] = []
+    private final class Output<Value>: @unchecked Sendable {
+        var result: Result<Value, Error>?
+        let ready = DispatchSemaphore(value: 0)
+    }
+    private init() {
+        for index in 0..<2 {
+            let worker = Thread { [self] in
+                while true {
+                    condition.lock()
+                    while jobs.isEmpty { condition.wait() }
+                    let job = jobs.removeFirst()
+                    condition.unlock()
+                    autoreleasepool { job() }
+                }
+            }
+            worker.name = "ReaderPro.DOM.\(index)"
+            worker.stackSize = 4 * 1024 * 1024
+            worker.qualityOfService = .userInitiated
+            worker.start()
+        }
+    }
+    func sync<Value>(_ operation: @escaping () throws -> Value) throws -> Value {
+        let output = Output<Value>()
+        condition.lock()
+        jobs.append {
+            output.result = Result(catching: operation)
+            output.ready.signal()
+        }
+        condition.signal()
+        condition.unlock()
+        output.ready.wait()
+        return try output.result!.get()
+    }
+}
+
 // Parse malformed HTML with libxml2 instead of treating HTML as a regular
 // language. In particular, nested lists, sibling CSS combinators and XPath
 // attributes must keep their real parent/child relationships.
@@ -45,12 +88,14 @@ enum LegadoDOM {
         // SwiftSoup implements the same selector dialect and throws on invalid
         // selectors, so one imported rule cannot crash the entire source audit.
         do {
+          return try SourceDOMWorkers.shared.sync {
             let document = try cssDocument(html)
             return try document.select(selector).array().map { node in
                 let full = try node.outerHtml()
                 let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""
                 return HtmlEl(open: open, inner: try node.html(), full: full)
             }
+          }
         } catch {
             LegadoJSCtx.failures?.add("CSS 规则解析失败：\(selector)：\(error.localizedDescription)")
             return []
@@ -61,12 +106,14 @@ enum LegadoDOM {
     // direct children of the current element, not all descendants.
     static func children(_ html: String) -> [HtmlEl] {
         do {
+          return try SourceDOMWorkers.shared.sync {
             guard let body = try cssDocument(html).body() else { return [] }
             return try body.children().array().map { node in
                 let full = try node.outerHtml()
                 let open = full.firstIndex(of: ">").map { String(full[...$0]) } ?? ""
                 return HtmlEl(open: open, inner: try node.html(), full: full)
             }
+          }
         } catch { return [] }
     }
 

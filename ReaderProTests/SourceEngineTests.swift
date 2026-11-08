@@ -451,6 +451,38 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertNil(LegadoJSCtx.bookState)
     }
 
+    func testSinglePageNovelAndComicCanOmitTheChapterURLRule() async throws {
+        for type in [0, 2] {
+            var source = SourceTestFixtures.html()
+            source.bookSourceType = type
+            source.ruleToc.chapterList = "tag.html"
+            source.ruleToc.chapterName = "h1@text"
+            source.ruleToc.chapterUrl = ""
+            source.ruleToc.nextTocUrl = ""
+            source.ruleContent.content = type == 2 ? "img@src" : ".content@text"
+            source.ruleContent.nextContentUrl = ""
+            source.ruleContent.imageUrl = ""
+            let address = base + "/single-page/\(type)"
+            var book = SourceBook(title: "单页作品", url: address, sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl)
+            book.tocUrl = address
+            book.rulePage = SourcePage(text: #"<html><body><h1>单页作品</h1><div class="content">单页正文</div><img src="/page.jpg"></body></html>"#, url: address)
+            let chapters = try await source.fetchChapters(book: book)
+            XCTAssertEqual(chapters.count, 1)
+            let chapter = try XCTUnwrap(chapters.first)
+            XCTAssertEqual(chapter.url, address)
+            if type == 2 {
+                let images = try await source.fetchChapterImages(chapter)
+                XCTAssertEqual(images, [base + "/page.jpg"])
+            } else {
+                let text = try await source.fetchChapterContent(chapter)
+                XCTAssertEqual(text, "单页正文")
+            }
+            book.rulePage = SourcePage(text: "<html><body><a href='/home'>导航</a></body></html>", url: address)
+            do { _ = try await source.fetchChapters(book: book); XCTFail("Unmatched chapter titles must not produce a fake chapter") }
+            catch { XCTAssertTrue(sourceErrorMessage(error).contains("章节规则没有匹配")) }
+        }
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

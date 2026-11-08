@@ -1544,8 +1544,8 @@ extension LegadoSource {
         try await withRules(key: book.title, book: book) { try await fetchChaptersImpl(book: book) }
     }
     private func fetchChaptersImpl(book: SourceBook) async throws -> [BookChapter] {
-        guard !ruleToc.chapterList.isEmpty, !ruleToc.chapterName.isEmpty, !ruleToc.chapterUrl.isEmpty else {
-            throw SourceFailure(stage: "目录", message: "缺少章节列表、章节名或章节地址规则")
+        guard !ruleToc.chapterList.isEmpty, !ruleToc.chapterName.isEmpty else {
+            throw SourceFailure(stage: "目录", message: "缺少章节列表或章节名规则")
         }
         let prepared = try preparedDirectoryBook(book)
         let detailed = prepared.tocUrl == nil ? try await fetchBookInfoImpl(book: prepared) : prepared
@@ -1572,7 +1572,10 @@ extension LegadoSource {
                 let volume = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVolume") ?? "", base: response.url))
                 let rawAddress = applyRuleFirst(item, ruleToc.chapterUrl, base: response.url)
                 let heading = volume && (rawAddress.isEmpty || rawAddress.hasPrefix(name))
-                let address = heading ? "" : resolveUrl(rawAddress, base: response.url)
+                // Single-page poems/comics intentionally omit chapterUrl.
+                // Android keeps the matched chapter on its directory page;
+                // still require a genuine list item and chapter title.
+                let address = heading ? "" : (rawAddress.isEmpty ? response.url : resolveUrl(rawAddress, base: response.url))
                 guard !name.isEmpty, volume || isSourceURL(address) else { continue }
                 matched += 1
                 let identity = volume ? "volume:\(response.url):\(matched):\(name)" : address

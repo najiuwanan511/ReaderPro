@@ -74,9 +74,11 @@ jobs:
               -only-testing:ReaderProTests/SourceEngineTests/testStoredDetailFieldsAreLiteralValuesAndReplacementKeepsItsSelector \
               -only-testing:ReaderProTests/SourceEngineTests/testDetailInitializationRestoresStoredNovelAndComicFields \
               -only-testing:ReaderProTests/SourceEngineTests/testListScriptsKeepBookChangesBetweenFieldsAndIsolateItems \
+              -only-testing:ReaderProTests/SourceEngineTests/testSinglePageNovelAndComicCanOmitTheChapterURLRule \
               -only-testing:ReaderProTests/SourceEngineTests/testRuleTemplatesRecursiveJSONAndStoredValues \
               -only-testing:ReaderProTests/SourceEngineTests/testRealPackJavaScriptRuleTemplatesExpandBeforeEvaluation \
               -only-testing:ReaderProTests/DiscoveryPaginationTests/testDiscoveryListScriptsSeeTheRequestedPageWithoutLeakingIt \
+              -only-testing:ReaderProTests/DiscoveryPaginationTests/testDynamicCategoriesCanParseHTMLFromNestedScriptTemplates \
               -resultBundlePath build/Source1332Compatibility.xcresult \
               CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-1332-compatibility.log
           fi

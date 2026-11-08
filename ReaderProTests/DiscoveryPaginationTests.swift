@@ -71,6 +71,27 @@ final class DiscoveryPaginationTests: XCTestCase {
         }
         XCTAssertEqual(LegadoJSCtx.page, 1)
     }
+
+    func testDynamicCategoriesCanParseHTMLFromNestedScriptTemplates() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://nested-category.test"
+        source.jsLib = #"function categoryTitle(){return org.jsoup.Jsoup.parse('<html><head></head><body><div><a>动态分类</a></div></body></html>').select('div a').text();}"#
+        source.exploreUrl = #"@js:JSON.stringify([{title:'{{categoryTitle()}}',url:'/list'}])"#
+        // Run inside the same asynchronous TaskLocal and nested JavaScript
+        // path as the crashing source, including concurrent parsing calls.
+        try await withThrowingTaskGroup(of: String.self) { group in
+            for _ in 0..<8 {
+                group.addTask { [source] in
+                    let categories = try await source.resolvedExploreCategories()
+                    return categories.first?.title ?? ""
+                }
+            }
+            for try await title in group { XCTAssertEqual(title, "动态分类") }
+        }
+        let failures = RuleFailures()
+        LegadoJSCtx.$failures.withValue(failures) { _ = LegadoDOM.css("<p>text</p>", "[") }
+        XCTAssertThrowsError(try failures.check(), "Worker errors must still reach the original source context")
+    }
     func testJSONCategoriesPreserveHeadingsControlsAndSourceStylesBeforeTextSeparators() throws {
         let text = #"""
         [
