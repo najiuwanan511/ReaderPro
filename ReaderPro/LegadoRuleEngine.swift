@@ -1168,6 +1168,17 @@ func applyRuleFirst(_ htmlOrJson: String, _ rule: String, base: String) -> Strin
     return joined
 }
 
+// Android's getString joins text/XPath matches. URL fields intentionally keep
+// the first match through applyRuleFirst (getString0); otherwise a flag text
+// node before a comic title can replace the entire title in the detail view.
+func applyTextRule(_ input: String, _ rule: String, base: String) -> String {
+    let joined = applyContentRule(input, rule, base: base).joined(separator: "\n")
+    if !rule.hasSuffix("@html"), joined.contains("<"), joined.contains(">") {
+        return stripText(joined, preserveNewlines: true)
+    }
+    return joined
+}
+
 func chapterFlag(_ item: String, rule: String, base: String) -> Bool {
     let rule = rule.trimmingCharacters(in: .whitespacesAndNewlines)
     guard item.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<"), isJavaScriptRule(rule) else {
@@ -1460,7 +1471,7 @@ extension LegadoSource {
     private func optionalMetadata(_ input: String, rule: String, base: String, field: String, warnings: inout [String]) throws -> String {
         try Task.checkCancellation()
         let failures = RuleFailures()
-        let value = LegadoJSCtx.$failures.withValue(failures) { applyRuleFirst(input, rule, base: base) }
+        let value = LegadoJSCtx.$failures.withValue(failures) { applyTextRule(input, rule, base: base) }
         do { try failures.check() }
         catch {
             try Task.checkCancellation()
@@ -1503,13 +1514,13 @@ extension LegadoSource {
           let state = LegadoJS.BookState()
           return try LegadoJSCtx.$bookState.withValue(state) {
             try Task.checkCancellation()
-            let name = applyRuleFirst(block, rule.name, base: response.url)
+            let name = applyTextRule(block, rule.name, base: response.url)
             try LegadoJSCtx.failures?.check()
             // Search APIs may mix recommendation/group rows with book rows.
             // Do not evaluate a book-ID script on entries with no book name.
             guard !name.isEmpty else { return nil }
             state.update { $0.name = name }
-            let author = applyRuleFirst(block, rule.author, base: response.url)
+            let author = applyTextRule(block, rule.author, base: response.url)
             try LegadoJSCtx.failures?.check()
             state.update { $0.author = author }
             var warnings: [String] = []
@@ -1582,8 +1593,8 @@ extension LegadoSource {
         if SourceHTTP.options(book.url).options.isEmpty { book.url = response.url }
         book.rulePage = response
         let fields = ruleBookInfo
-        let name = applyRuleFirst(text, fields.name, base: response.url)
-        let author = applyRuleFirst(text, fields.author, base: response.url)
+        let name = applyTextRule(text, fields.name, base: response.url)
+        let author = applyTextRule(text, fields.author, base: response.url)
         try LegadoJSCtx.failures?.check()
         var warnings = book.ruleWarnings ?? []
         let intro = try optionalMetadata(text, rule: fields.intro, base: response.url, field: "详情简介", warnings: &warnings)
@@ -1633,7 +1644,7 @@ extension LegadoSource {
             let items = ruleItems(response.text, rule: listRule, base: response.url)
             var matched = 0
             for item in items {
-                let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
+                let name = applyTextRule(item, ruleToc.chapterName, base: response.url)
                 let volume = chapterFlag(item, rule: ruleToc.androidValue("isVolume") ?? "", base: response.url)
                 let rawAddress = applyRuleFirst(item, ruleToc.chapterUrl, base: response.url)
                 let heading = volume && (rawAddress.isEmpty || rawAddress.hasPrefix(name))

@@ -519,6 +519,24 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(SourceScript.adaptingChapterFlagCalls(#"'chapter.isVip()'; // chapter.isPay()"#), #"'chapter.isVip()'; // chapter.isPay()"#)
     }
 
+    func testDetailTextRulesKeepAllXPathTitlePartsAndJoinScriptsBeforeTransform() async throws {
+        var source = SourceTestFixtures.html()
+        source.ruleBookInfo.name = "//h1/text()"
+        source.ruleBookInfo.author = "//p[@class='author']/text()"
+        source.ruleBookInfo.coverUrl = #"//script@js:result.match(/https:\/\/images\.test\/cover\.webp/g)[0]"#
+        source.ruleBookInfo.intro = ""
+        source.ruleBookInfo.tocUrl = "a@href"
+        let address = base + "/comic-title"
+        var book = SourceBook(title: "原名", url: address, sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl)
+        book.rulePage = SourcePage(text: #"<html><body><h1>🇨🇳<span></span>完整书名</h1><p class="author">作者甲<span></span>作者乙</p><script>var other=1;</script><script>var image='https://images.test/cover.webp';</script><a href="/toc">目录</a></body></html>"#, url: address)
+        let detail = try await source.fetchBookInfo(book: book)
+        XCTAssertEqual(detail.title, "🇨🇳\n完整书名")
+        XCTAssertEqual(detail.author, "作者甲\n作者乙")
+        XCTAssertEqual(detail.cover, "https://images.test/cover.webp")
+        XCTAssertTrue(detail.ruleWarnings?.isEmpty ?? true)
+        XCTAssertEqual(detail.tocUrl, base + "/toc")
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

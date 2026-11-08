@@ -77,6 +77,7 @@ jobs:
               -only-testing:ReaderProTests/SourceEngineTests/testSinglePageNovelAndComicCanOmitTheChapterURLRule \
               -only-testing:ReaderProTests/SourceEngineTests/testLegacyJSONTemplatesResolveRealComicDetailURLRules \
               -only-testing:ReaderProTests/SourceEngineTests/testComicChapterFlagsReceiveSelectableDOMElements \
+              -only-testing:ReaderProTests/SourceEngineTests/testDetailTextRulesKeepAllXPathTitlePartsAndJoinScriptsBeforeTransform \
               -only-testing:ReaderProTests/JSImportAndResponseTests/testLoginResponseURLSupportsStringMethodsAndMethodCalls \
               -only-testing:ReaderProTests/LegadoIndexRuleTests/testLegacyColonIndicesIncludeAndExcludeIndividualRows \
               -only-testing:ReaderProTests/SourceEngineTests/testRuleTemplatesRecursiveJSONAndStoredValues \
