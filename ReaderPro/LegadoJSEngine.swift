@@ -175,6 +175,9 @@ final class LegadoJS {
         java.setObject(LegadoJS.sha1Block, forKeyedSubscript: "sha1Encode" as NSString)
         java.setObject(LegadoJS.traditionalToSimplifiedBlock, forKeyedSubscript: "t2s" as NSString)
         java.setObject(LegadoJS.simplifiedToTraditionalBlock, forKeyedSubscript: "s2t" as NSString)
+        // Login-check scripts are AnalyzeUrl extensions too. In particular,
+        // StrResponse(java.url, decodedBody) needs the current request URL.
+        java.setObject(response?.url ?? baseUrl, forKeyedSubscript: "url" as NSString)
         if let urlContext {
             java.setObject(urlContext.url, forKeyedSubscript: "url" as NSString)
             let map = JSValue(newObjectIn: ctx)!
@@ -972,7 +975,10 @@ final class LegadoJS {
             url: address,
             raw: function() { return {
                 request:function() {return {url:function(){return data.url;}};},
+                code:function(){return data.status;},
+                isRedirect:function(){return [300,301,302,303,307,308].indexOf(data.status)>=0;},
                 headers:function(name) {
+                    if(name==null)return data.headers;
                     var value = data.headers[String(name).toLowerCase()];
                     return _array(value == null ? [] : Array.isArray(value) ? value : [String(value)]);
                 }

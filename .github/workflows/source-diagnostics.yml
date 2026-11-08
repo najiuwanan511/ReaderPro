@@ -79,6 +79,7 @@ jobs:
               -only-testing:ReaderProTests/SourceEngineTests/testComicChapterFlagsReceiveSelectableDOMElements \
               -only-testing:ReaderProTests/SourceEngineTests/testDetailTextRulesKeepAllXPathTitlePartsAndJoinScriptsBeforeTransform \
               -only-testing:ReaderProTests/JSImportAndResponseTests/testLoginResponseURLSupportsStringMethodsAndMethodCalls \
+              -only-testing:ReaderProTests/JSImportAndResponseTests/testLoginCheckCanUnwrapAnAPIEnvelopeUsingAndroidStrResponse \
               -only-testing:ReaderProTests/LegadoIndexRuleTests/testLegacyColonIndicesIncludeAndExcludeIndividualRows \
               -only-testing:ReaderProTests/SourceEngineTests/testRuleTemplatesRecursiveJSONAndStoredValues \
               -only-testing:ReaderProTests/SourceEngineTests/testRealPackJavaScriptRuleTemplatesExpandBeforeEvaluation \

@@ -156,4 +156,29 @@ final class JSImportAndResponseTests: XCTestCase {
         XCTAssertEqual(result.1, "")
         XCTAssertEqual(result.0, "ok")
     }
+
+    func testLoginCheckCanUnwrapAnAPIEnvelopeUsingAndroidStrResponse() async throws {
+        var source = LegadoSource()
+        source.bookSourceUrl = "https://response-constructor.test"
+        source.loginCheckJs = #"if(result.url().includes('content')){let c=JSON.parse(result.body());result=new Packages.io.legado.app.help.http.StrResponse(java.url,c.data.content);} result"#
+        let input = SourcePage(text: #"{"data":{"content":"首章完整正文"}}"#, url: source.bookSourceUrl + "/content/1", headers: ["x-original": "discarded"])
+        let checked = try await source.withRules { try source.checkedLoginResponse(input, stage: "正文") }
+        XCTAssertEqual(checked.text, "首章完整正文")
+        XCTAssertEqual(checked.url, input.url)
+        XCTAssertEqual(checked.status, 200)
+        XCTAssertTrue(checked.headers.isEmpty)
+
+        source.loginCheckJs = #"new Packages.io.legado.app.help.http.StrResponse(result.raw(),'替换响应')"#
+        let forbidden = SourcePage(text: "原错误", url: input.url, status: 403, headers: ["x-error": "preserved"])
+        do {
+            _ = try await source.withRules { try source.checkedLoginResponse(forbidden, stage: "正文") }
+            XCTFail("Wrapping an existing raw HTTP error must preserve its status")
+        } catch { XCTAssertTrue(sourceErrorMessage(error).contains("403")) }
+
+        let result = try await source.withRules {
+            LegadoJS.run(#"var r=new Packages.io.legado.app.help.http.StrResponse('not a URL',null);[r.url(),r.body(),r.code(),r.raw().isRedirect()].join('|')"#,
+                         input: "", baseUrl: input.url, sourceKey: "", sourceUrl: source.bookSourceUrl)
+        }
+        XCTAssertEqual(result, "http://localhost/||200|false")
+    }
 }

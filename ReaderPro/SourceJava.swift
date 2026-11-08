@@ -10,6 +10,22 @@ enum SourceJava {
         var number=parseInt(String(value),radix || 10);if(!Number.isFinite(number))throw Error('Invalid integer');return number;
     }};
     source.getSource=function(){return source;};
+    // Some loginCheckJs rules unwrap an API envelope into a StrResponse.
+    // Match its URL/body and raw-response/body constructors; do not turn a
+    // preserved HTTP error into status 200 in the raw-response overload.
+    function _StrResponse(address,body){
+        var status=200,headers={};
+        if(address!=null && typeof address==='object' && typeof address.request==='function'){
+            var raw=address;
+            address=String(raw.request().url());
+            status=Number(raw.code());headers=raw.headers();
+        }else{
+            address=String(address);
+            if(!/^https?:\/\/[^\s/]+(?:\/|$)/i.test(address))address='http://localhost/';
+        }
+        return _response(JSON.stringify({url:address,text:body==null?'':String(body),status:status,headers:headers}));
+    }
+    Packages.io={legado:{app:{help:{http:{StrResponse:_StrResponse}}}}};
     java.util.Arrays = {
         copyOfRange:function(value,from,to){
             if(from<0 || from>value.length || to<from) throw Error('Invalid array range');
