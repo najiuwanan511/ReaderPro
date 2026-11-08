@@ -33,4 +33,11 @@ final class LegadoIndexRuleTests: XCTestCase {
         let asymmetric = #"<p class="line_en">One</p><p class="line_cn" title="一"></p><p class="line_cn" title="额外"></p>"#
         XCTAssertEqual(applyRule(asymmetric, ".line_en@text%%.line_cn@title", base: base), ["One", "一"])
     }
+
+    func testLegacyColonIndicesIncludeAndExcludeIndividualRows() {
+        let html = (0..<12).map { "<dd>第\($0)行</dd>" }.joined()
+        XCTAssertEqual(applyRule(html, "tag.dd!0:1:2:3:4:5:6:7:8@text", base: base), ["第9行", "第10行", "第11行"])
+        XCTAssertEqual(applyRule(html, "tag.dd.-1:10:2@text", base: base), ["第11行", "第10行", "第2行"])
+        XCTAssertEqual(applyRule(html, "dd[!0,1,2,3,4,5,6,7,8]@text", base: base), ["第9行", "第10行", "第11行"])
+    }
 }

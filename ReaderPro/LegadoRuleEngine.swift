@@ -458,6 +458,16 @@ private struct LegadoElementIndex {
 }
 
 private func splitElementIndex(_ token: String) -> (String, LegadoElementIndex?) {
+    // The original syntax uses colon-separated individual indices, while
+    // bracket syntax uses colons for a range. e.g. tag.dd!0:1:2 excludes
+    // three advertising/duplicate rows, not a CSS pseudo-class.
+    if let start = token.lastIndex(where: { $0 == "!" || $0 == "." }) {
+        let suffix = token[token.index(after: start)...]
+        let indices = suffix.split(separator: ":", omittingEmptySubsequences: false).map { Int($0) }
+        if indices.count > 1, indices.allSatisfy({ $0 != nil }) {
+            return (String(token[..<start]), LegadoElementIndex(excluding: token[start] == "!", items: indices.map { .single($0!) }))
+        }
+    }
     guard token.hasSuffix("]"), let open = token.lastIndex(of: "[") else { return (token, nil) }
     var body = String(token[token.index(after: open)..<token.index(before: token.endIndex)])
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1158,6 +1168,19 @@ func applyRuleFirst(_ htmlOrJson: String, _ rule: String, base: String) -> Strin
     return joined
 }
 
+func chapterFlag(_ item: String, rule: String, base: String) -> Bool {
+    let rule = rule.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard item.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("<"), isJavaScriptRule(rule) else {
+        return sourceRuleBoolean(applyRuleFirst(item, rule, base: base))
+    }
+    var script = String(rule.dropFirst(3))
+    if script.hasPrefix(":") { script.removeFirst() }
+    let value = LegadoJS.run(script, input: item, baseUrl: base, sourceKey: LegadoJSCtx.key,
+                             sourceUrl: LegadoJSCtx.sourceUrl, book: LegadoJSCtx.book,
+                             structuredResult: HtmlEl(open: "", inner: "", full: item))
+    return sourceRuleBoolean(value)
+}
+
 // Content is a string rule in Legado: a selector preceding @js receives all
 // matched values joined by newlines, not one independent JS call per node.
 // This matters for comic pages whose unrelated <script> nodes precede the one
@@ -1293,8 +1316,13 @@ extension LegadoSource {
             var js = String(t.dropFirst(3)); if js.hasPrefix(":") { js.removeFirst() }
             let out = LegadoJS.run(js, input: "", baseUrl: bookSourceUrl,
                                    sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl,
-                                   book: nil, page: 1)
+                                   book: nil, page: 1, expandTemplates: false)
             t = out.trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if t.hasPrefix("<js>"), let end = t.range(of: "</js>", options: .backwards) {
+            let script = String(t[t.index(t.startIndex, offsetBy: 4)..<end.lowerBound])
+            t = LegadoJS.run(script, input: "", baseUrl: bookSourceUrl,
+                             sourceKey: bookSourceUrl, sourceUrl: bookSourceUrl, expandTemplates: false)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
         } else if t.contains("<js>") {
             let out = Self.fillSearchTemplate(t, key: "", page: 1, sourceUrl: bookSourceUrl)
             t = out.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1606,7 +1634,7 @@ extension LegadoSource {
             var matched = 0
             for item in items {
                 let name = applyRuleFirst(item, ruleToc.chapterName, base: response.url)
-                let volume = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVolume") ?? "", base: response.url))
+                let volume = chapterFlag(item, rule: ruleToc.androidValue("isVolume") ?? "", base: response.url)
                 let rawAddress = applyRuleFirst(item, ruleToc.chapterUrl, base: response.url)
                 let heading = volume && (rawAddress.isEmpty || rawAddress.hasPrefix(name))
                 // Single-page poems/comics intentionally omit chapterUrl.
@@ -1620,8 +1648,8 @@ extension LegadoSource {
                     var chapter = BookChapter(id: identity, title: name, text: volume ? "" : "__URL__" + address, url: volume && address.isEmpty ? nil : address)
                     if SourceHTTP.options(address).url == response.url { chapter.rulePage = response }
                     chapter.isVolume = volume
-                    chapter.isVip = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isVip") ?? "", base: response.url))
-                    chapter.isPay = sourceRuleBoolean(applyRuleFirst(item, ruleToc.androidValue("isPay") ?? "", base: response.url))
+                    chapter.isVip = chapterFlag(item, rule: ruleToc.androidValue("isVip") ?? "", base: response.url)
+                    chapter.isPay = chapterFlag(item, rule: ruleToc.androidValue("isPay") ?? "", base: response.url)
                     chapter.updateTime = applyRuleFirst(item, ruleToc.androidValue("updateTime") ?? "", base: response.url)
                     chapter.ruleBook = .init(bookUrl: detailed.url, name: detailed.title, author: detailed.author,
                                              tocUrl: detailed.tocUrl ?? detailed.url, coverUrl: detailed.cover)

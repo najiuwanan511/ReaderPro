@@ -76,10 +76,14 @@ jobs:
               -only-testing:ReaderProTests/SourceEngineTests/testListScriptsKeepBookChangesBetweenFieldsAndIsolateItems \
               -only-testing:ReaderProTests/SourceEngineTests/testSinglePageNovelAndComicCanOmitTheChapterURLRule \
               -only-testing:ReaderProTests/SourceEngineTests/testLegacyJSONTemplatesResolveRealComicDetailURLRules \
+              -only-testing:ReaderProTests/SourceEngineTests/testComicChapterFlagsReceiveSelectableDOMElements \
+              -only-testing:ReaderProTests/JSImportAndResponseTests/testLoginResponseURLSupportsStringMethodsAndMethodCalls \
+              -only-testing:ReaderProTests/LegadoIndexRuleTests/testLegacyColonIndicesIncludeAndExcludeIndividualRows \
               -only-testing:ReaderProTests/SourceEngineTests/testRuleTemplatesRecursiveJSONAndStoredValues \
               -only-testing:ReaderProTests/SourceEngineTests/testRealPackJavaScriptRuleTemplatesExpandBeforeEvaluation \
               -only-testing:ReaderProTests/DiscoveryPaginationTests/testDiscoveryListScriptsSeeTheRequestedPageWithoutLeakingIt \
               -only-testing:ReaderProTests/DiscoveryPaginationTests/testDynamicCategoriesCanParseHTMLFromNestedScriptTemplates \
+              -only-testing:ReaderProTests/DiscoveryPaginationTests/testExploreScriptsPreserveDeferredRequestTemplatesAndEscapes \
               -resultBundlePath build/Source1332Compatibility.xcresult \
               CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO | tee build/source-1332-compatibility.log
           fi

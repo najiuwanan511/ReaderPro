@@ -502,6 +502,23 @@ final class SourceEngineTests: XCTestCase {
         XCTAssertEqual(books.map(\.url), ["https://cin.onl/v/42", "https://cin.onl/v/43"])
     }
 
+    func testComicChapterFlagsReceiveSelectableDOMElements() async throws {
+        var source = SourceTestFixtures.html()
+        source.bookSourceType = 2
+        source.ruleToc = try JSONDecoder().decode(LegadoSource.RuleSet.self, from: Data(#"{"chapterList":"ul@li","chapterName":"a@text","chapterUrl":"a@href","isVip":"@js:result.select('img').hasClass('detail-list-lock')"}"#.utf8))
+        let address = base + "/comic-flags"
+        var book = SourceBook(title: "漫画", url: address, sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl)
+        book.tocUrl = address
+        book.rulePage = SourcePage(text: #"<ul><li><a href="/free">免费章</a></li><li><a href="/vip">会员章<img class="detail-list-lock"></a></li></ul>"#, url: address)
+        let chapters = try await source.fetchChapters(book: book)
+        XCTAssertEqual(chapters.map(\.isVip), [false, true])
+        let result = LegadoJSCtx.$chapter.withValue(chapters[1]) {
+            LegadoJS.run("chapter.isVip() && chapter.isVip && !chapter.isPay() ? 'ok' : 'failed'", input: "", baseUrl: address, sourceKey: "", sourceUrl: source.bookSourceUrl)
+        }
+        XCTAssertEqual(result, "ok")
+        XCTAssertEqual(SourceScript.adaptingChapterFlagCalls(#"'chapter.isVip()'; // chapter.isPay()"#), #"'chapter.isVip()'; // chapter.isPay()"#)
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

@@ -119,8 +119,8 @@ final class LegadoJS {
                                   book: BookCtx?, page: Int, originalContent: String?,
                                   structuredResult: Any?, expandTemplates: Bool,
                                   urlContext: SourceJSURLContext?, response: SourcePage?) -> String {
-        let script = SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
-                                              page: page, sourceURL: sourceUrl, book: book) : js).trimmingCharacters(in: .whitespacesAndNewlines)
+        let script = SourceScript.adaptingChapterFlagCalls(SourceScript.adaptingJavaCalls(expandTemplates ? expandScriptRuleTemplates(js, input: originalContent ?? input, base: baseUrl, key: sourceKey,
+                                              page: page, sourceURL: sourceUrl, book: book) : js)).trimmingCharacters(in: .whitespacesAndNewlines)
         if script.isEmpty { return input }
         guard let ctx = JSContext() else { return input }
         guard let budget = SourceJSBudget.install(ctx) else {
@@ -138,7 +138,8 @@ final class LegadoJS {
         storeLock.unlock()
 
         // ---- 全局变量 ----
-        ctx.setObject(structuredResult ?? input, forKeyedSubscript: "result" as NSString)
+        if let element = structuredResult as? HtmlEl { ctx.setObject(element.full, forKeyedSubscript: "result" as NSString) }
+        else { ctx.setObject(structuredResult ?? input, forKeyedSubscript: "result" as NSString) }
         ctx.setObject(originalContent ?? input, forKeyedSubscript: "src" as NSString)
         ctx.setObject(baseUrl, forKeyedSubscript: "baseUrl" as NSString)
         ctx.setObject(sourceKey, forKeyedSubscript: "key" as NSString)
@@ -594,6 +595,8 @@ final class LegadoJS {
         }
         if structuredResult is [String] {
             ctx.evaluateScript("result = _elements(result)")
+        } else if structuredResult is HtmlEl {
+            ctx.evaluateScript("result = _element(result)")
         }
         let infoMap: @convention(block) (String, String) -> String = { operation, payload in
             ExploreInfo.bridge(sourceUrl, operation, payload)
@@ -722,8 +725,6 @@ final class LegadoJS {
             if let data = try? JSONSerialization.data(withJSONObject: payload), let json = String(data: data, encoding: .utf8) {
                 ctx.setObject(false, forKeyedSubscript: "_strictContentHTTP" as NSString)
                 let value = ctx.objectForKeyedSubscript("_response")?.call(withArguments: [json])
-                // StrResponse exposes url as a field in Android login checks.
-                value?.setObject(response.url, forKeyedSubscript: "url" as NSString)
                 ctx.setObject(value, forKeyedSubscript: "result" as NSString)
             }
         }
@@ -937,6 +938,15 @@ final class LegadoJS {
     function _response(data) {
         data = JSON.parse(data);
         if (data.error) throw new Error(data.error);
+        // Source packs mix StrResponse.url field access and Response.url().
+        // Keep method calls plus string coercion and String methods usable.
+        var address = new Proxy(function(){return data.url;}, {
+            get:function(target,key) {
+                if(key===Symbol.toPrimitive || key==='toString' || key==='valueOf') return function(){return data.url;};
+                var value=String(data.url)[key];
+                return typeof value==='function' ? value.bind(String(data.url)) : value===undefined ? target[key] : value;
+            }
+        });
         return {
             body: function() {
                 if(_strictContentHTTP && (data.status<200 || data.status>=300)) throw Error('HTTP '+data.status+'：正文脚本请求失败');
@@ -959,7 +969,7 @@ final class LegadoJS {
                 var value = data.headers[String(name).toLowerCase()];
                 return _array(value == null ? [] : Array.isArray(value) ? value : [String(value)]);
             },
-            url: function() { return data.url; },
+            url: address,
             raw: function() { return {
                 request:function() {return {url:function(){return data.url;}};},
                 headers:function(name) {
@@ -1033,6 +1043,7 @@ final class LegadoJS {
             attr:function(name){return this.length && typeof this[0].attr==='function' ? this[0].attr(name) : '';},
             html:function(){return this.map(function(e){return typeof e.html==='function' ? e.html() : String(e);}).join('\n');},
             outerHtml:function(){return this.map(String).join('\n');}, toString:function(){return this.outerHtml();},
+            hasClass:function(name){return this.some(function(e){return typeof e.hasClass==='function' && e.hasClass(name);});},
             select:function(selector){return _elements([].concat.apply([],this.map(function(e){return JSON.parse(java._select(String(e),selector)); })));}
         });
     }

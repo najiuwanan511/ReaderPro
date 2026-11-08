@@ -122,6 +122,23 @@ final class JSImportAndResponseTests: XCTestCase {
         XCTAssertEqual(result, "ok")
     }
 
+    func testLoginResponseURLSupportsStringMethodsAndMethodCalls() throws {
+        let response = SourcePage(text: "body", url: "https://response.test/final?q=1")
+        let failures = RuleFailures()
+        let result = LegadoJSCtx.$failures.withValue(failures) {
+            LegadoJS.run(#"""
+            if(result.url()!=='https://response.test/final?q=1') throw Error('url method');
+            if(result.url.indexOf('/final')<0 || !result.url.endsWith('q=1')) throw Error('string methods');
+            if(String(result.url)!==result.url() || result.url.length!==result.url().length) throw Error('string coercion');
+            result;
+            """#, input: "", baseUrl: response.url, sourceKey: "", sourceUrl: response.url, response: response)
+        }
+        try failures.check()
+        let output = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.utf8)) as? [String: Any])
+        XCTAssertEqual(output["url"] as? String, response.url)
+        XCTAssertEqual(output["text"] as? String, "body")
+    }
+
     func testRawResponseHeadersUsesCaseInsensitiveList() async {
         let result = await Task.detached { () -> (String, String) in
             let failures = RuleFailures()

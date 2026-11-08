@@ -76,13 +76,19 @@ final class DiscoveryPaginationTests: XCTestCase {
         var source = LegadoSource()
         source.bookSourceUrl = "https://nested-category.test"
         source.jsLib = #"function categoryTitle(){return org.jsoup.Jsoup.parse('<html><head></head><body><div><a>动态分类</a></div></body></html>').select('div a').text();}"#
-        source.exploreUrl = #"@js:JSON.stringify([{title:'{{categoryTitle()}}',url:'/list'}])"#
+        source.exploreUrl = #"@js:JSON.stringify([{title:categoryTitle(),url:'/list?page={{page}}'}])"#
         // Run inside the same asynchronous TaskLocal and nested JavaScript
         // path as the crashing source, including concurrent parsing calls.
         try await withThrowingTaskGroup(of: String.self) { group in
             for _ in 0..<8 {
                 group.addTask { [source] in
+                    let nested = try await source.withRules {
+                        LegadoJS.run("`{{categoryTitle()}}`", input: "", baseUrl: source.bookSourceUrl,
+                                     sourceKey: "", sourceUrl: source.bookSourceUrl)
+                    }
+                    XCTAssertEqual(nested, "动态分类")
                     let categories = try await source.resolvedExploreCategories()
+                    XCTAssertEqual(categories.first?.url, "/list?page={{page}}")
                     return categories.first?.title ?? ""
                 }
             }
@@ -91,6 +97,17 @@ final class DiscoveryPaginationTests: XCTestCase {
         let failures = RuleFailures()
         LegadoJSCtx.$failures.withValue(failures) { _ = LegadoDOM.css("<p>text</p>", "[") }
         XCTAssertThrowsError(try failures.check(), "Worker errors must still reach the original source context")
+    }
+
+    func testExploreScriptsPreserveDeferredRequestTemplatesAndEscapes() async throws {
+        let script = #"JSON.stringify([{title:'分类',url:'/list?page={{page}}&options={{JSON.stringify({a:"value"})}}'}])"#
+        for expression in ["@js:" + script, "<js>" + script + "</js>"] {
+            var source = LegadoSource()
+            source.bookSourceUrl = "https://deferred-explore.test"
+            source.exploreUrl = expression
+            let categories = try await source.resolvedExploreCategories()
+            XCTAssertEqual(categories.first?.url, #"/list?page={{page}}&options={{JSON.stringify({a:"value"})}}"#)
+        }
     }
     func testJSONCategoriesPreserveHeadingsControlsAndSourceStylesBeforeTextSeparators() throws {
         let text = #"""

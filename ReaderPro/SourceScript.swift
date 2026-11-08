@@ -92,6 +92,21 @@ enum SourceScript {
         return output
     }
 
+    static func adaptingChapterFlagCalls(_ script: String) -> String {
+        guard script.contains("chapter"), ["isVip", "isPay", "isVolume"].contains(where: { script.contains($0) }) else { return script }
+        let tokens = tokenize(script)
+        guard tokens.count >= 5 else { return script }
+        var output = script
+        for index in (0...(tokens.count - 5)).reversed() {
+            if tokens[index].text == "chapter", tokens[index + 1].text == ".",
+               ["isVip", "isPay", "isVolume"].contains(tokens[index + 2].text),
+               tokens[index + 3].text == "(", tokens[index + 4].text == ")" {
+                output.removeSubrange(tokens[index + 3].range.lowerBound..<tokens[index + 4].range.upperBound)
+            }
+        }
+        return output
+    }
+
     // A conservative byte-level preflight: it may request the full tokenizer
     // for text inside strings, regexes or comments, but must never suppress an
     // edit that tokenizer would make. All non-ASCII bytes are treated as
