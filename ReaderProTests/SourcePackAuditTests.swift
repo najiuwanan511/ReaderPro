@@ -87,11 +87,82 @@ private func runPackSearchAudit(_ sources: [LegadoSource], reportPrefix: String,
 }
 
 final class SourcePackAuditTests: XCTestCase {
+    func testEvery1332SourceCategoriesListsDetailsAndReadingChain() async throws {
+        let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
+        let sources = importSourcesDetailed(raw).sources
+        XCTAssertEqual(sources.count, 82)
+        let configText = try await fetchText(urlString: SourceTestFixtures.base + "/packs/audit-config")
+        struct Config: Decodable { var start: Int; var count: Int; var concurrency: Int }
+        let config = try JSONDecoder().decode(Config.self, from: Data(configText.utf8))
+        let start = max(0, min(config.start, sources.count))
+        let end = config.count > 0 ? min(sources.count, start + config.count) : sources.count
+        let inputs = Array(sources.enumerated())[start..<end].map { ($0.offset, $0.element) }
+        let audit = Pack1332FlowAudit()
+        print("SOURCE_1332_SCOPE start=\(start) end=\(end) concurrency=\(min(8, max(1, config.concurrency)))")
+        await streamConcurrentWork(inputs, concurrency: min(8, max(1, config.concurrency)), operation: { index, source in
+            await audit.start(index, source)
+            var categories: [ExploreCategory] = []
+            var categoryError = ""
+            if !source.effectiveDiscoverUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                do { categories = try await source.resolvedExploreCategories() }
+                catch { categoryError = sourceErrorMessage(error) }
+            }
+            var options = SourceValidationOptions()
+            options.timeout = 75
+            options.mediaPlayback = false
+            let report = await SourceValidation.run(source, keyword: source.isComic ? "一" : "我", options: options)
+            return Pack1332FlowRow(index: index, name: source.bookSourceName, sourceType: source.bookSourceType,
+                                   categoryCount: categories.count, navigableCategoryCount: categories.filter(\.canNavigate).count,
+                                   categoryError: categoryError, report: report)
+        }, update: { await audit.add($0) })
+        let rows = await audit.rows.sorted { $0.index < $1.index }
+        XCTAssertEqual(rows.count, inputs.count, "Every requested source needs a report, including failures")
+        XCTAssertEqual(Set(rows.map(\.index)).count, inputs.count)
+        let data = try JSONEncoder().encode(rows)
+        try data.write(to: FileManager.default.temporaryDirectory.appendingPathComponent("source-pack-1332-flow-audit.json"), options: .atomic)
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "source-pack-1332-flow-audit.json"; attachment.lifetime = .keepAlways; add(attachment)
+        print("SOURCE_1332_COMPLETE total=\(rows.count) passed=\(rows.filter { $0.report.status == .passed }.count) partial=\(rows.filter { $0.report.status == .partial }.count) failed=\(rows.filter { $0.report.status == .failed }.count)")
+    }
+
     func testSearchEverySourceInUserPackAndExportIndividualResults() async throws {
         let raw = try await fetchText(urlString: SourceTestFixtures.base + "/packs/user")
         let sources = importSourcesDetailed(raw).sources
         XCTAssertEqual(sources.count, 1466)
         try await runPackSearchAudit(sources, reportPrefix: "source-pack", test: self)
+    }
+}
+
+private struct Pack1332FlowRow: Codable, Sendable {
+    var index: Int
+    var name: String
+    var sourceType: Int
+    var categoryCount: Int
+    var navigableCategoryCount: Int
+    var categoryError: String
+    var report: SourceValidationReport
+}
+
+private actor Pack1332FlowAudit {
+    var rows: [Pack1332FlowRow] = []
+    var active: [Int: String] = [:]
+    private let checkpoint = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("source-pack-1332-flow-audit-progress.json")
+    func start(_ index: Int, _ source: LegadoSource) {
+        active[index] = source.bookSourceName
+        print("SOURCE_1332_START index=\(index) type=\(source.bookSourceType) name=\(source.bookSourceName)")
+        save()
+    }
+    func add(_ row: Pack1332FlowRow) {
+        active.removeValue(forKey: row.index)
+        rows.append(row)
+        print("SOURCE_1332_DONE index=\(row.index) categories=\(row.categoryCount) status=\(row.report.status.rawValue)")
+        save()
+    }
+    private func save() {
+        struct Progress: Encodable { var completed: Int; var active: [Int: String]; var results: [Pack1332FlowRow] }
+        if let data = try? JSONEncoder().encode(Progress(completed: rows.count, active: active, results: rows)) {
+            try? data.write(to: checkpoint, options: .atomic)
+        }
     }
 }
 
