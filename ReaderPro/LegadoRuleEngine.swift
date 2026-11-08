@@ -901,13 +901,26 @@ func applyRuleReplace(_ text: String, replaceRegex: String) -> String {
 
 // MARK: - Dispatcher
 
+func expandStoredRuleValues(_ rule: String) -> String {
+    guard let expression = try? NSRegularExpression(pattern: #"@get:\{([^}]+)\}"#, options: .caseInsensitive) else { return rule }
+    let original = rule as NSString
+    var result = rule
+    // Expand original tokens once. A stored title may itself contain @get or
+    // rule operators; those characters are data, not another extraction rule.
+    for match in expression.matches(in: rule, range: NSRange(location: 0, length: original.length)).reversed() {
+        guard let range = Range(match.range, in: result) else { continue }
+        result.replaceSubrange(range, with: LegadoJS.variable(original.substring(with: match.range(at: 1))))
+    }
+    return result
+}
+
 func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [String] {
     if rule.isEmpty { return [] }
     if rule == "@baseUrl" { return [base] }
     // Templates may contain JavaScript operators; expand them before splitting
     // the surrounding rule at || or &&.
-    if rule.contains("{{") {
-        var out = rule
+    if rule.contains("{{") || rule.range(of: "@get:{", options: .caseInsensitive) != nil {
+        var out = expandStoredRuleValues(rule)
         var count = 0
         while let start = out.range(of: "{{"), let end = out[start.upperBound...].range(of: "}}"), count < 100 {
             count += 1
@@ -1029,9 +1042,6 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
             r.removeSubrange(start.lowerBound...end)
             if r.isEmpty { return [htmlOrJson] }
         }
-        while let start = r.range(of: "@get:{"), let end = r[start.upperBound...].firstIndex(of: "}") {
-            r.replaceSubrange(start.lowerBound...end, with: LegadoJS.variable(String(r[start.upperBound..<end])))
-        }
     }
     // 1) 整段 JS 规则：@js:code
     if isJavaScriptRule(r) {
@@ -1072,10 +1082,10 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         }
         return out
     }
-    // Templates also occur in the replacement pattern itself. Expand the
-    // complete non-JS rule before separating its outer replacement fields.
-    let templated = r.contains("{{")
-    if templated { r = applyRuleNoReplace(htmlOrJson, r, base: base).first ?? "" }
+    // Split rule syntax before interpolation: stored titles/URLs containing
+    // ## must remain data. Android treats @get and {{}} as literal text in
+    // the main rule, while templates in replacement fields leave its selector
+    // mode intact.
     var main = r; var replacePattern: String? = nil; var replaceWith = ""; var replaceFirst = false
     if let range = ruleReplacementStart(r) {
         main = String(r[..<range.lowerBound])
@@ -1085,7 +1095,13 @@ func applyRule(_ htmlOrJson: String, _ rule: String, base: String) -> [String] {
         replaceWith = fields.count > 1 ? fields[1] : ""
         replaceFirst = fields.count > 2
     }
-    let vals = templated ? [main] : (main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base))
+    func expanded(_ value: String) -> String {
+        guard value.contains("{{") || value.range(of: "@get:{", options: .caseInsensitive) != nil else { return value }
+        return applyRuleNoReplace(htmlOrJson, value, base: base).first ?? ""
+    }
+    let vals = main.isEmpty ? [htmlOrJson] : applyRuleNoReplace(htmlOrJson, main, base: base)
+    replacePattern = replacePattern.map(expanded)
+    replaceWith = expanded(replaceWith)
     if let pat = replacePattern, !pat.isEmpty {
         return vals.map { replaceFirst ? applyRegexFirstMatch($0, pattern: pat, replacement: replaceWith)
                                        : applyRegexReplace($0, pattern: pat, replacement: replaceWith) }

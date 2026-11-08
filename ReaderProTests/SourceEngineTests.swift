@@ -392,6 +392,47 @@ final class SourceEngineTests: XCTestCase {
         }
     }
 
+    func testStoredDetailFieldsAreLiteralValuesAndReplacementKeepsItsSelector() throws {
+        let html = #"<h1>分类中的书</h1><p>作者：测试作者</p>"#
+        let failures = RuleFailures()
+        try LegadoJSCtx.$sourceUrl.withValue(base + "/stored-detail") {
+            try LegadoJSCtx.$failures.withValue(failures) {
+                _ = applyRule(html, #"@put:{n:'h1@text',a:'p@text'}"#, base: base)
+                XCTAssertEqual(applyRuleFirst(html, "@get:{n}", base: base), "分类中的书")
+                XCTAssertEqual(applyRuleFirst(html, "@GET:{a}##作者：", base: base), "测试作者")
+                LegadoJS.putVariable("prefix", "作者：")
+                XCTAssertEqual(applyRuleFirst(html, "p@text##@get:{prefix}", base: base), "测试作者")
+                XCTAssertEqual(applyRuleFirst(html, "p@text##{{'作者：'}}", base: base), "测试作者")
+                LegadoJS.putVariable("literal", "书名##副标题&&@get:{n}")
+                XCTAssertEqual(applyRuleFirst(html, "@get:{literal}", base: base), "书名##副标题&&@get:{n}")
+                XCTAssertEqual(applyRuleFirst(html, "{{'书名##副标题'}}", base: base), "书名##副标题")
+                try failures.check()
+            }
+        }
+    }
+
+    func testDetailInitializationRestoresStoredNovelAndComicFields() async throws {
+        // 国学经典 uses an @put-only init and @get fields. Exercise the same
+        // production detail path for both source types, without a remote site.
+        for type in [0, 2] {
+            var source = SourceTestFixtures.html()
+            source.bookSourceType = type
+            source.ruleBookInfo.initRule = #"@put:{n:'h1@text',a:'p@text',t:'a@href'}"#
+            source.ruleBookInfo.name = "@get:{n}"
+            source.ruleBookInfo.author = "@get:{a}##作者："
+            source.ruleBookInfo.tocUrl = "@get:{t}"
+            source.ruleBookInfo.intro = ""
+            source.ruleBookInfo.coverUrl = ""
+            let address = base + "/stored-detail/\(type)"
+            var sample = SourceBook(title: "", url: address, sourceName: source.bookSourceName, sourceUrl: source.bookSourceUrl)
+            sample.rulePage = SourcePage(text: #"<h1>初始化书名</h1><p>作者：测试作者</p><a href="/stored-toc">目录</a>"#, url: address)
+            let detail = try await source.fetchBookInfo(book: sample)
+            XCTAssertEqual(detail.title, "初始化书名")
+            XCTAssertEqual(detail.author, "测试作者")
+            XCTAssertEqual(detail.tocUrl, base + "/stored-toc")
+        }
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {
