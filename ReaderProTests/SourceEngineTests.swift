@@ -483,6 +483,25 @@ final class SourceEngineTests: XCTestCase {
         }
     }
 
+    func testLegacyJSONTemplatesResolveRealComicDetailURLRules() async throws {
+        let input = #"{"id":42,"comic_newid":"sample","values":[{"key":"a}b","id":7}]}"#
+        XCTAssertEqual(applyRuleFirst(input, "https://cin.onl/v/{$.id}", base: base), "https://cin.onl/v/42")
+        XCTAssertEqual(applyRuleFirst(input, "https://m.manhuatai.com/{$.comic_newid}/", base: base), "https://m.manhuatai.com/sample/")
+        XCTAssertEqual(applyRuleFirst(input, #"https://example.org/{$.values[?(@.key=='a}b')].id}/{$.id}"#, base: base), "https://example.org/7/42")
+        XCTAssertEqual(applyRuleFirst(input, "{$.id}##^4##9", base: base), "92")
+        XCTAssertEqual(applyRuleFirst(input, "{$.missing}||{$.id}", base: base), "42")
+        var source = SourceTestFixtures.json()
+        source.ruleSearch.bookList = "$.items[*]"
+        source.ruleSearch.name = "$.name"
+        source.ruleSearch.bookUrl = "https://cin.onl/v/{$.id}"
+        source.ruleSearch.author = ""
+        source.ruleSearch.coverUrl = ""
+        source.ruleSearch.intro = ""
+        let response = SourcePage(text: #"{"items":[{"id":42,"name":"甲"},{"id":43,"name":"乙"}]}"#, url: base + "/list")
+        let books = try await source.withRules { try source.parseBooks(response, rule: source.ruleSearch, stage: "列表") }
+        XCTAssertEqual(books.map(\.url), ["https://cin.onl/v/42", "https://cin.onl/v/43"])
+    }
+
     func testRealPackCompoundCSSExclusionsAndTableRows() throws {
         let failures = RuleFailures()
         try LegadoJSCtx.$failures.withValue(failures) {

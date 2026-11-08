@@ -915,6 +915,40 @@ func expandStoredRuleValues(_ rule: String) -> String {
     return result
 }
 
+// AnalyzeByJSonPath still accepts the older {$.path} form, used by 1332's
+// Cin and 漫画台吧 detail URLs. Balance quotes/braces rather than stopping at
+// the first } inside a quoted JSONPath filter or property name.
+func expandLegacyJSONTemplates(_ input: String, _ rule: String, base: String) -> String? {
+    let json = input.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard json.hasPrefix("{") || json.hasPrefix("[") else { return nil }
+    var rest = rule, output = "", found = false
+    while let start = rest.range(of: "{$.") {
+        var index = start.upperBound, depth = 1, quote: Character?, escaped = false
+        var end: String.Index?
+        while index < rest.endIndex {
+            let character = rest[index]
+            if let current = quote {
+                if escaped { escaped = false }
+                else if character == "\\" { escaped = true }
+                else if character == current { quote = nil }
+            } else if character == "'" || character == "\"" { quote = character }
+            else if character == "{" { depth += 1 }
+            else if character == "}" {
+                depth -= 1
+                if depth == 0 { end = index; break }
+            }
+            index = rest.index(after: index)
+        }
+        guard let end else { break }
+        found = true
+        output += String(rest[..<start.lowerBound])
+        let path = String(rest[rest.index(after: start.lowerBound)..<end])
+        output += applyRule(input, path, base: base).joined(separator: "\n")
+        rest = String(rest[rest.index(after: end)...])
+    }
+    return found ? output + rest : nil
+}
+
 func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [String] {
     if rule.isEmpty { return [] }
     if rule == "@baseUrl" { return [base] }
@@ -938,7 +972,9 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
         }
         return [out]
     }
-    if rule.hasPrefix("http://") || rule.hasPrefix("https://") || rule.hasPrefix("/") && !rule.hasPrefix("//") { return [rule] }
+    if rule.hasPrefix("http://") || rule.hasPrefix("https://") || rule.hasPrefix("/") && !rule.hasPrefix("//") {
+        return [expandLegacyJSONTemplates(input, rule, base: base) ?? rule]
+    }
     if rule.contains("%%") {
         // Legado interleaves lists by position (e.g. English line followed
         // by its Chinese translation); it iterates only the first nonempty
@@ -967,6 +1003,7 @@ func applyRuleNoReplace(_ input: String, _ rule: String, base: String) -> [Strin
         }
         return []
     }
+    if let legacy = expandLegacyJSONTemplates(input, rule, base: base) { return [legacy] }
     if rule.lowercased().hasPrefix("@xpath:") { return LegadoDOM.xpath(input, String(rule.dropFirst(7))) }
     if rule.hasPrefix("//") || rule.hasPrefix("./") { return LegadoDOM.xpath(input, rule) }
     if rule.hasPrefix("@css:") { return evalCss(input, String(rule.dropFirst(5))) }
