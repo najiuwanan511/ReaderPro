@@ -20,9 +20,9 @@ extension SourceFlowUITests {
         XCTAssertTrue(category.waitForExistence(timeout: 10))
     }
 
-    private func openVideo(_ app: XCUIApplication, error: Bool = false, web: Bool = false, hls: Bool = false) {
+    private func openVideo(_ app: XCUIApplication, error: Bool = false, web: Bool = false, hls: Bool = false, reset: Bool = true) {
         continueAfterFailure = false
-        app.launchArguments = ["--source-ui-fixture", "--reset-source-fixture", "--video-ui-fixture"] + (error ? ["--video-error-fixture"] : []) + (web ? ["--video-web-fixture"] : [])
+        app.launchArguments = ["--source-ui-fixture", "--video-ui-fixture"] + (reset ? ["--reset-source-fixture"] : []) + (error ? ["--video-error-fixture"] : []) + (web ? ["--video-web-fixture"] : [])
         if hls { app.launchArguments.append("--video-hls-fixture") }
         app.launch()
         app.tabBars.buttons["发现"].tap()
@@ -36,6 +36,66 @@ extension SourceFlowUITests {
         app.buttons["chapter-1"].tap()
         XCTAssertTrue(app.staticTexts["videoEpisodeTitle"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.staticTexts["videoEpisodeTitle"].label, "第2集")
+    }
+
+    private func videoSeconds(_ app: XCUIApplication) -> Int {
+        Int(app.staticTexts["videoPlaybackTime"].label.split(separator: " ").dropFirst().first ?? "") ?? 0
+    }
+    private func selectVideoRate(_ rate: String, app: XCUIApplication) {
+        let menu = app.buttons["videoSpeedMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 20)); menu.tap()
+        let choice = app.buttons["video-rate-\(rate)"]
+        XCTAssertTrue(choice.waitForExistence(timeout: 5)); choice.tap()
+    }
+
+    func testVideoSpeedSliderAndEpisodePickerPreserveSpeedAfterRelaunch() {
+        let app = XCUIApplication()
+        openVideo(app)
+        let slider = app.sliders["videoSeekSlider"]
+        XCTAssertTrue(slider.waitForExistence(timeout: 20))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: slider)], timeout: 20), .completed)
+        selectVideoRate("1.5", app: app)
+        let pause = app.buttons["videoPlayPause"]
+        XCTAssertTrue(pause.waitForExistence(timeout: 15))
+        XCTAssertEqual(pause.label, "暂停播放"); pause.tap()
+        XCTAssertEqual(pause.label, "继续播放")
+        let before = videoSeconds(app)
+        slider.adjust(toNormalizedSliderPosition: 0.65)
+        let sought = NSPredicate { _, _ in self.videoSeconds(app) > before + 2 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: sought, object: nil)], timeout: 15), .completed)
+        XCTAssertEqual(pause.label, "继续播放")
+        XCTAssertEqual(app.buttons["videoSpeedMenu"].value as? String, "1.5 倍")
+        pause.tap()
+        app.buttons["videoChooseEpisode"].tap()
+        XCTAssertTrue(app.buttons["video-picker-episode-2"].waitForExistence(timeout: 10))
+        app.buttons["video-picker-episode-2"].tap()
+        XCTAssertEqual(app.staticTexts["videoEpisodeTitle"].label, "第3集")
+        XCTAssertTrue(app.buttons["videoSpeedMenu"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.buttons["videoSpeedMenu"].value as? String, "1.5 倍")
+        let shot = XCTAttachment(screenshot: app.screenshot()); shot.name = "视频倍速进度条与选集"; shot.lifetime = .keepAlways; add(shot)
+        app.terminate()
+        openVideo(app, reset: false)
+        XCTAssertTrue(app.buttons["videoSpeedMenu"].waitForExistence(timeout: 20))
+        XCTAssertEqual(app.buttons["videoSpeedMenu"].value as? String, "1.5 倍")
+        selectVideoRate("1.0", app: app)
+    }
+
+    func testVideoHoldTemporarilyAcceleratesAndReleasesToPreferredRate() {
+        let app = XCUIApplication()
+        openVideo(app)
+        selectVideoRate("0.5", app: app)
+        let advanced = NSPredicate { _, _ in self.videoSeconds(app) >= 1 }
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: advanced, object: nil)], timeout: 20), .completed)
+        let picture = app.otherElements["chapterVideoPlayer"].firstMatch
+        XCTAssertTrue(picture.waitForExistence(timeout: 10))
+        let before = videoSeconds(app), start = Date()
+        picture.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.3)).press(forDuration: 4)
+        let elapsed = Date().timeIntervalSince(start)
+        XCTAssertGreaterThan(Double(videoSeconds(app) - before), elapsed * 0.7, "A held 2x picture must advance faster than the preferred 0.5x rate")
+        XCTAssertFalse(app.staticTexts["videoHoldIndicator"].exists)
+        XCTAssertEqual(app.buttons["videoSpeedMenu"].value as? String, "0.5 倍")
+        XCTAssertEqual(app.buttons["videoPlayPause"].label, "暂停播放")
+        selectVideoRate("1.0", app: app)
     }
 
     func testDiscoveryVideoChapterActuallyPlaysAndSwitchesEpisodes() {

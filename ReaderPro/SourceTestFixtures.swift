@@ -177,6 +177,7 @@ struct SourceFixtureRoot: View {
         if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {
             fixtureStore.pageTurn = 1
             UserDefaults.standard.set(SearchMatchMode.fuzzy.rawValue, forKey: SearchMatchMode.storageKey)
+            UserDefaults.standard.set(1.0, forKey: "video.playbackRate")
         }
         _store = StateObject(wrappedValue: fixtureStore)
         if ProcessInfo.processInfo.arguments.contains("--reset-source-fixture") {

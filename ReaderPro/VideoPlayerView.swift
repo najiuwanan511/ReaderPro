@@ -7,95 +7,6 @@ func videoURLFromChapter(_ text: String) -> String {
     text.hasPrefix("__URL__") ? String(text.dropFirst(7)) : text
 }
 
-final class VideoPlayerModel: ObservableObject {
-    let player = AVPlayer()
-    @Published var status = "等待播放"
-    @Published var error = ""
-    @Published var currentTime: TimeInterval = 0
-    private var itemObservation: NSKeyValueObservation?
-    private var stateObservation: NSKeyValueObservation?
-    private var timeObserver: Any?
-    private var endObserver: NSObjectProtocol?
-    var onEnded: (() -> Void)?
-    private let controlID = UUID()
-
-    init() {
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 600), queue: .main) { [weak self] time in
-            guard let self else { return }
-            self.currentTime = time.seconds.isFinite ? time.seconds : 0
-            MediaPlaybackControls.shared.update(owner: self.controlID, time: self.currentTime, duration: self.player.currentItem?.duration.seconds ?? 0, rate: self.player.rate)
-        }
-        stateObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-            DispatchQueue.main.async {
-                guard let self, self.error.isEmpty else { return }
-                switch player.timeControlStatus {
-                case .playing: self.status = "正在播放"
-                case .waitingToPlayAtSpecifiedRate: self.status = "正在缓冲…"
-                default: self.status = "已暂停"
-                }
-            }
-        }
-    }
-
-    deinit {
-        MediaPlaybackControls.shared.release(owner: controlID)
-        if let timeObserver { player.removeTimeObserver(timeObserver) }
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }
-    }
-
-    func stop() {
-        MediaPlaybackControls.shared.release(owner: controlID)
-        itemObservation = nil
-        if let endObserver { NotificationCenter.default.removeObserver(endObserver) }; endObserver = nil
-        player.pause(); player.replaceCurrentItem(with: nil)
-        currentTime = 0; error = ""; status = "正在解析播放地址…"
-    }
-
-    func play(_ request: URLRequest, title: String = "视频", author: String = "") {
-        guard let url = request.url else { error = "播放地址无效"; return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        var options: [String: Any] = ["AVURLAssetHTTPHeaderFieldsKey": request.allHTTPHeaderFields ?? [:]]
-        options[AVURLAssetHTTPCookiesKey] = HTTPCookieStorage.shared.cookies(for: url) ?? []
-        let item = AVPlayerItem(asset: AVURLAsset(url: url, options: options))
-        error = ""; status = "正在缓冲…"
-        itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-            DispatchQueue.main.async {
-                guard let self, self.player.currentItem === item else { return }
-                if item.status == .failed {
-                    self.error = "视频播放失败：" + (item.error.map(sourceErrorMessage) ?? "地址不可用或格式不受系统支持")
-                    self.status = "播放失败"
-                }
-            }
-        }
-        endObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main) { [weak self] _ in
-            guard let self, self.player.currentItem === item else { return }
-            self.onEnded?()
-        }
-        player.replaceCurrentItem(with: item)
-        MediaPlaybackControls.shared.activate(owner: controlID, title: title, author: author,
-            play: { [weak self] in self?.player.play() }, pause: { [weak self] in self?.player.pause() },
-            isPlaying: { [weak self] in guard let self else { return false }; return self.player.rate > 0 || self.player.timeControlStatus == .waitingToPlayAtSpecifiedRate },
-            toggle: { [weak self] in guard let self else { return }; if self.player.rate > 0 { self.player.pause() } else { self.player.play() } },
-            seek: { [weak self] seconds in guard seconds.isFinite, seconds >= 0 else { return }; self?.player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600)) },
-            skip: { [weak self] seconds in guard let self else { return }; self.player.seek(to: CMTime(seconds: max(0, self.currentTime + seconds), preferredTimescale: 600)) }, next: onEnded)
-        player.play()
-    }
-}
-
-struct NativeVideoPlayer: UIViewControllerRepresentable {
-    let player: AVPlayer
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.player = player
-        controller.showsPlaybackControls = true
-        controller.allowsPictureInPicturePlayback = true
-        return controller
-    }
-    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) { controller.player = nil }
-}
-
 // Web-based players and rule-generated HTML stay in the app, including iframe
 // players. Each episode owns a new web view so old playback cannot continue.
 struct EpisodeWebPlayer: UIViewRepresentable {
@@ -220,6 +131,7 @@ struct VideoPlayerView: View {
     let store: BookStore?
     @StateObject private var model = VideoPlayerModel()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var episodeIndex: Int
     @State private var resource: SourceVideoResource?
     @State private var retry = 0
@@ -228,12 +140,12 @@ struct VideoPlayerView: View {
     @State private var webStatus = "正在加载网页播放器…"
     @State private var danmaku: [DanmakuEntry] = []
     @State private var showVideoSettings = false
+    @State private var showEpisodes = false
     @State private var showLogin = false
     @State private var showEditor = false
     @State private var showSourceAction = false
     @State private var paymentAction = false
     @AppStorage("video.showDanmaku") private var showDanmaku = true
-    @AppStorage("video.playbackRate") private var playbackRate = 1.0
     @AppStorage("video.danmakuFontSize") private var danmakuFontSize = 16.0
     @AppStorage("video.danmakuOpacity") private var danmakuOpacity = 0.85
     @AppStorage("video.danmakuDuration") private var danmakuDuration = 8.0
@@ -259,21 +171,29 @@ struct VideoPlayerView: View {
                 Color.black
                 if let resource {
                     switch resource {
-                    case .native: NativeVideoPlayer(player: model.player)
+                    case .native: NativeVideoPlayer(model: model)
                     case .web, .html, .dash:
                         EpisodeWebPlayer(resource: resource, sourceRegex: source?.ruleContent.androidValue("sourceRegex") ?? "", onStatus: { webStatus = $0 }, onMedia: { request in
                             self.resource = .native(request); model.play(request, title: book.title, author: book.author)
                         }).id("\(episodeIndex)-\(retry)")
                     }
                 }
-                if showDanmaku, !danmaku.isEmpty { DanmakuOverlay(entries: danmaku, currentTime: model.currentTime) }
+                if showDanmaku, !danmaku.isEmpty { DanmakuOverlay(entries: danmaku, currentTime: model.currentTime).allowsHitTesting(false) }
                 if loading { ProgressView().tint(.white) }
             }.aspectRatio(16 / 9, contentMode: .fit).accessibilityIdentifier("chapterVideoPlayer")
             VStack(alignment: .leading, spacing: 8) {
-                Text(chapters.indices.contains(episodeIndex) ? chapters[episodeIndex].title : book.title).font(.headline)
-                    .accessibilityIdentifier("videoEpisodeTitle")
+                HStack {
+                    Text(chapters.indices.contains(episodeIndex) ? chapters[episodeIndex].title : book.title).font(.headline)
+                        .accessibilityIdentifier("videoEpisodeTitle")
+                    Spacer()
+                    Button { showEpisodes = true } label: { Label("选集", systemImage: "list.bullet") }
+                        .accessibilityIdentifier("videoChooseEpisode")
+                }
                 Text(status).font(.caption).foregroundStyle(resolveError.isEmpty && model.error.isEmpty ? Color.secondary : .red)
                     .accessibilityIdentifier("videoPlaybackStatus")
+                if case .some(.native) = resource {
+                    VideoPlaybackControls(model: model).id("\(episodeIndex)-\(retry)")
+                }
                 HStack {
                     Text("已播放 \(Int(model.currentTime)) 秒").font(.caption).monospacedDigit().accessibilityIdentifier("videoPlaybackTime")
                     Spacer()
@@ -282,19 +202,7 @@ struct VideoPlayerView: View {
                         .disabled(chapters.readableIndex(from: episodeIndex + 1) == nil).accessibilityIdentifier("videoNextEpisode")
                 }
             }.padding(16)
-            List {
-                Section("选集 · \(chapters.count) 集") {
-                    ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
-                        Button { episodeIndex = index } label: {
-                            HStack {
-                                Text(chapter.displayTitle).foregroundStyle(index == episodeIndex ? AppTheme.accent : .primary)
-                                Spacer()
-                                if index == episodeIndex { Image(systemName: "play.fill").foregroundStyle(AppTheme.accent) }
-                            }
-                        }.disabled(chapter.isVolume).accessibilityIdentifier("video-episode-\(index)")
-                    }
-                }
-            }.listStyle(.plain)
+            episodeList(inPicker: false)
         }
         .background(AppTheme.surface)
         .navigationTitle(book.title).navigationBarTitleDisplayMode(.inline)
@@ -334,7 +242,12 @@ struct VideoPlayerView: View {
         .sheet(isPresented: $showVideoSettings) {
             NavigationStack {
                 Form {
-                    Section("播放") { Picker("倍速", selection: $playbackRate) { ForEach([0.5, 0.75, 1, 1.25, 1.5, 2], id: \.self) { Text("\($0, specifier: "%.2g") 倍").tag($0) } } }
+                    Section("播放") {
+                        Picker("倍速", selection: Binding(get: { model.playbackRate }, set: { model.setPlaybackRate($0) })) {
+                            ForEach(VideoPlayerModel.playbackRates, id: \.self) { Text("\($0, specifier: "%.2g") 倍").tag($0) }
+                        }
+                        Text("播放时长按画面临时使用 2 倍速，松手恢复所选倍速。")
+                    }
                     Section("弹幕") {
                         Toggle("显示弹幕", isOn: $showDanmaku)
                         LabeledContent("字号", value: "\(Int(danmakuFontSize))"); Slider(value: $danmakuFontSize, in: 12...30, step: 1)
@@ -344,9 +257,41 @@ struct VideoPlayerView: View {
                 }.navigationTitle("播放器设置").toolbar { Button("完成") { showVideoSettings = false } }
             }
         }
-        .onChange(of: playbackRate) { _, rate in if model.player.rate > 0 { model.player.rate = Float(rate) } }
+        .sheet(isPresented: $showEpisodes) {
+            NavigationStack {
+                episodeList(inPicker: true).navigationTitle("选集")
+                    .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { showEpisodes = false } } }
+            }.presentationDetents([.medium, .large])
+        }
+        .onChange(of: scenePhase) { _, phase in if phase != .active { model.endBoost() } }
         .task(id: "\(episodeIndex)-\(retry)") { await loadEpisode() }
         .onDisappear { model.stop() }
+    }
+
+    private func episodeList(inPicker: Bool) -> some View {
+        ScrollViewReader { proxy in
+            List {
+                Section("选集 · \(chapters.filter { !$0.isVolume }.count) 集") {
+                    ForEach(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                        Button {
+                            episodeIndex = index
+                            if inPicker { showEpisodes = false }
+                        } label: {
+                            HStack {
+                                Text(chapter.displayTitle).foregroundStyle(index == episodeIndex ? AppTheme.accent : .primary)
+                                Spacer()
+                                if index == episodeIndex { Image(systemName: "play.fill").foregroundStyle(AppTheme.accent) }
+                            }
+                        }.disabled(chapter.isVolume)
+                            .accessibilityIdentifier("\(inPicker ? "video-picker-episode" : "video-episode")-\(index)")
+                            .accessibilityValue(index == episodeIndex ? "当前集" : "")
+                            .id(index)
+                    }
+                }
+            }.listStyle(.plain)
+                .task { await Task.yield(); proxy.scrollTo(episodeIndex, anchor: .top) }
+                .onChange(of: episodeIndex) { _, index in proxy.scrollTo(index, anchor: .top) }
+        }
     }
     private func loadEpisode() async {
         model.stop(); danmaku = []; resource = nil; loading = true; resolveError = ""; webStatus = "正在加载网页播放器…"
@@ -376,7 +321,7 @@ struct VideoPlayerView: View {
             else { resolved = try SourceVideoResource.make(videoURLFromChapter(chapter.text), base: chapter.url ?? videoURLFromChapter(chapter.text), headers: [:]) }
             guard !Task.isCancelled, episodeIndex == index else { return }
             resource = resolved; loading = false
-            if case .native(let request) = resolved { model.play(request, title: book.title + " · " + chapters[index].title, author: book.author); model.player.rate = Float(playbackRate) }
+            if case .native(let request) = resolved { model.play(request, title: book.title + " · " + chapters[index].title, author: book.author) }
             if activeSource != nil { store?.mediaCache.preload(bookID: book.id, from: index) }
         } catch {
             guard !Task.isCancelled, episodeIndex == index else { return }

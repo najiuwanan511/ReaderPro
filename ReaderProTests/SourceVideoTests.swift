@@ -1,7 +1,83 @@
 import XCTest
+import AVFoundation
 @testable import ReaderPro
 
 final class SourceVideoTests: XCTestCase {
+    @MainActor private func waitForVideo(_ condition: () -> Bool, file: StaticString = #filePath, line: UInt = #line) async throws {
+        let end = Date().addingTimeInterval(20)
+        while !condition() && Date() < end { try await Task.sleep(nanoseconds: 50_000_000) }
+        XCTAssertTrue(condition(), file: file, line: line)
+    }
+
+    @MainActor func testNativePlayerKeepsRateAcrossPauseHoldSeekAndEpisodeReplacement() async throws {
+        let suite = "ReaderPro-video-controls-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let model = VideoPlayerModel(defaults: defaults)
+        defer { model.stop(); defaults.removePersistentDomain(forName: suite) }
+        func request(_ episode: Int) -> URLRequest {
+            var request = URLRequest(url: URL(string: SourceTestFixtures.base + "/video/episode\(episode).mp4")!)
+            request.setValue("ReaderPro", forHTTPHeaderField: "X-Video")
+            request.setValue(SourceTestFixtures.base + "/video/book", forHTTPHeaderField: "Referer")
+            return request
+        }
+        model.setPlaybackRate(1.5)
+        model.play(request(1))
+        try await waitForVideo { model.canSeek && model.player.rate > 0 }
+        XCTAssertEqual(model.player.defaultRate, 1.5)
+        XCTAssertEqual(model.player.rate, 1.5)
+        model.pause(); model.setPlaybackRate(0.75)
+        XCTAssertEqual(model.player.rate, 0, "Changing speed while paused must not start playback")
+        XCTAssertFalse(model.beginBoost())
+        model.resume()
+        XCTAssertTrue(model.beginBoost())
+        XCTAssertEqual(model.player.rate, 2)
+        XCTAssertEqual(model.player.defaultRate, 0.75)
+        XCTAssertEqual(defaults.double(forKey: "video.playbackRate"), 0.75)
+        model.endBoost()
+        XCTAssertEqual(model.player.rate, 0.75)
+        XCTAssertTrue(model.beginBoost())
+        model.pause(); model.endBoost()
+        XCTAssertFalse(model.isBoosting)
+        XCTAssertEqual(model.player.rate, 0)
+        let target = min(5, model.duration / 2)
+        model.seek(to: target)
+        try await waitForVideo { !model.isSeeking }
+        XCTAssertEqual(model.currentTime, target, accuracy: 0.3)
+        XCTAssertEqual(model.player.rate, 0, "Seeking a paused video must keep it paused")
+        let before = model.currentTime
+        model.seek(to: .nan)
+        XCTAssertEqual(model.currentTime, before)
+        model.seek(to: model.duration * 0.8)
+        model.play(request(2))
+        try await waitForVideo { model.canSeek && model.player.rate > 0 && !model.isSeeking }
+        XCTAssertLessThan(model.currentTime, 2, "The previous episode's seek completion must not move the new episode")
+        XCTAssertEqual(model.player.rate, 0.75)
+        XCTAssertEqual(model.playbackRate, 0.75)
+        model.stop()
+        XCTAssertFalse(model.isBoosting); XCTAssertFalse(model.canSeek)
+        XCTAssertEqual(model.duration, 0)
+        XCTAssertEqual(model.currentTime, 0)
+    }
+
+    @MainActor func testNativeSpeedPreferenceRestoresAndSystemSpeedChangesAreSaved() async throws {
+        let suite = "ReaderPro-video-rates-" + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defaults.set(1.25, forKey: "video.playbackRate")
+        let model = VideoPlayerModel(defaults: defaults)
+        defer { model.stop(); defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(model.playbackRate, 1.25)
+        XCTAssertEqual(model.player.defaultRate, 1.25)
+        model.setPlaybackRate(.infinity); model.setPlaybackRate(-1)
+        XCTAssertEqual(model.playbackRate, 1.25)
+        model.player.defaultRate = 1.5 // AVKit's full-screen speed menu.
+        try await waitForVideo { model.playbackRate == 1.5 }
+        XCTAssertEqual(defaults.double(forKey: "video.playbackRate"), 1.5)
+        XCTAssertEqual(model.player.rate, 0)
+        XCTAssertFalse(model.beginBoost())
+        model.seek(to: 100)
+        XCTAssertEqual(model.currentTime, 0)
+    }
+
     func testScriptPlayerCapturesTheSignedURLWithoutRefetchingChapterRules() async throws {
         var source = SourceTestFixtures.video()
         source.ruleContent.content = "@js:throw Error('must not extract a direct player URL again')"
