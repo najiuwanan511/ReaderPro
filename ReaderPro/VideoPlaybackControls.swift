@@ -4,6 +4,7 @@ struct VideoPlaybackControls: View {
     @ObservedObject var model: VideoPlayerModel
     @State private var scrubbing = false
     @State private var draft = 0.0
+    @State private var showRates = false
 
     private var position: Double { scrubbing ? draft : model.currentTime }
     private func time(_ seconds: Double) -> String {
@@ -35,19 +36,32 @@ struct VideoPlaybackControls: View {
                     .disabled(model.player.currentItem == nil || !model.error.isEmpty)
                     .accessibilityLabel(model.isPlaying ? "暂停播放" : "继续播放")
                     .accessibilityIdentifier("videoPlayPause")
-                Menu {
-                    ForEach(VideoPlayerModel.playbackRates, id: \.self) { rate in
-                        Button { model.setPlaybackRate(rate) } label: {
-                            if rate == model.playbackRate { Label("\(rate, specifier: "%g") 倍", systemImage: "checkmark") }
-                            else { Text("\(rate, specifier: "%g") 倍") }
-                        }.accessibilityIdentifier("video-rate-\(rate)")
-                    }
-                } label: { Text("\(model.playbackRate, specifier: "%g") 倍速").monospacedDigit() }
+                Button { showRates = true } label: {
+                    Text("\(model.playbackRate, specifier: "%g") 倍速").monospacedDigit().frame(minHeight: 32)
+                }
                     .accessibilityIdentifier("videoSpeedMenu")
                     .accessibilityValue("\(model.playbackRate, specifier: "%g") 倍")
                 Spacer()
                 Text(model.duration > 0 ? "长按画面 2 倍速" : "直播或暂不可快进").font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .sheet(isPresented: $showRates) {
+            NavigationStack {
+                List(VideoPlayerModel.playbackRates, id: \.self) { rate in
+                    Button {
+                        model.setPlaybackRate(rate)
+                        showRates = false
+                    } label: {
+                        HStack {
+                            Text("\(rate, specifier: "%g") 倍")
+                            Spacer()
+                            if rate == model.playbackRate { Image(systemName: "checkmark") }
+                        }.contentShape(Rectangle())
+                    }.accessibilityIdentifier("video-rate-\(rate)")
+                }
+                .navigationTitle("播放倍速").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { showRates = false } } }
+            }.presentationDetents([.medium])
         }
     }
 }
