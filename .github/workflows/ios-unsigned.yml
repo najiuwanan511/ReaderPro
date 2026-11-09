@@ -70,6 +70,8 @@ jobs:
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryOpensCompleteDirectoryAndChapterDirectly \
             -only-testing:ReaderProUITests/SourceFlowUITests/testDiscoveryStartReadingUsesFullScreenAndReturnsToDirectory \
             -only-testing:ReaderProUITests/SourceFlowUITests/testSearchOpensDirectory \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testVideoHoldTemporarilyAcceleratesAndReleasesToPreferredRate \
+            -only-testing:ReaderProUITests/SourceFlowUITests/testVideoSpeedSliderAndEpisodePickerPreserveSpeedAfterRelaunch \
             -only-testing:ReaderProUITests/SourceImportLoginUITests \
             -only-testing:ReaderProUITests/ReaderSettingsUITests/testSourceConcurrencySettingsPersistAfterRelaunch \
             -only-testing:ReaderProUITests/SearchAndPreviewUITests \
