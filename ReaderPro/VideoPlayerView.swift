@@ -165,18 +165,20 @@ struct VideoPlayerView: View {
         if !model.error.isEmpty { return model.error }
         switch resource { case .web, .html: return webStatus; default: return model.status }
     }
+    private var usesWebPlayer: Bool {
+        switch resource { case .web, .html, .dash: return true; default: return false }
+    }
     var body: some View {
         VStack(spacing: 0) {
             ZStack {
                 Color.black
-                if let resource {
-                    switch resource {
-                    case .native: NativeVideoPlayer(model: model)
-                    case .web, .html, .dash:
+                if usesWebPlayer, let resource {
                         EpisodeWebPlayer(resource: resource, sourceRegex: source?.ruleContent.androidValue("sourceRegex") ?? "", onStatus: { webStatus = $0 }, onMedia: { request in
                             self.resource = .native(request); model.play(request, title: book.title, author: book.author)
                         }).id("\(episodeIndex)-\(retry)")
-                    }
+                } else {
+                    // Keep one AVKit controller through native episode loads.
+                    NativeVideoPlayer(model: model)
                 }
                 if showDanmaku, !danmaku.isEmpty { DanmakuOverlay(entries: danmaku, currentTime: model.currentTime).allowsHitTesting(false) }
                 if loading { ProgressView().tint(.white) }

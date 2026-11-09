@@ -9,24 +9,33 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(model: model) }
     func makeUIViewController(context: Context) -> AVPlayerViewController {
+        makePlayerController(coordinator: context.coordinator)
+    }
+    // Configure AVKit before restoring the preference: loading its controls
+    // can select the system's initial 1x speed on the associated player.
+    func makePlayerController(coordinator: Coordinator) -> AVPlayerViewController {
+        let preferredRate = model.playbackRate
         let controller = AVPlayerViewController()
-        controller.player = model.player
         controller.showsPlaybackControls = true
         controller.allowsPictureInPicturePlayback = true
         controller.speeds = VideoPlayerModel.playbackRates.map { AVPlaybackSpeed(rate: Float($0), localizedName: String(format: "%g 倍", $0)) }
-        controller.delegate = context.coordinator
-        context.coordinator.attach(to: controller.view)
+        controller.player = model.player
+        controller.delegate = coordinator
+        coordinator.attach(to: controller.view)
+        coordinator.applyRate(preferredRate, to: controller)
         return controller
     }
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        context.coordinator.synchronizeRate(with: controller)
         context.coordinator.updateIndicator()
     }
     static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: Coordinator) {
-        coordinator.detach(); controller.delegate = nil; controller.player = nil
+        coordinator.disconnect(controller)
     }
 
     final class Coordinator: NSObject, UIGestureRecognizerDelegate, AVPlayerViewControllerDelegate {
         private weak var model: VideoPlayerModel?
+        private var appliedRate: Double?
         private lazy var hold: UILongPressGestureRecognizer = {
             let gesture = UILongPressGestureRecognizer(target: self, action: #selector(holding(_:)))
             gesture.minimumPressDuration = 0.45
@@ -62,6 +71,20 @@ struct NativeVideoPlayer: UIViewControllerRepresentable {
             updateIndicator()
         }
         func updateIndicator() { indicator.isHidden = model?.isBoosting != true }
+        func applyRate(_ rate: Double, to controller: AVPlayerViewController) {
+            if let speed = controller.speeds.first(where: { $0.rate == Float(rate) }) { controller.selectSpeed(speed) }
+            model?.setPlaybackRate(rate)
+            appliedRate = rate
+        }
+        func synchronizeRate(with controller: AVPlayerViewController) {
+            guard let model, model.playbackRate != appliedRate else { return }
+            applyRate(model.playbackRate, to: controller)
+        }
+        func disconnect(_ controller: AVPlayerViewController) {
+            let preferredRate = model?.playbackRate
+            detach(); controller.delegate = nil; controller.player = nil
+            if let preferredRate { model?.setPlaybackRate(preferredRate) }
+        }
         func detach() {
             model?.endBoost(); hold.view?.removeGestureRecognizer(hold)
             indicator.removeFromSuperview()
